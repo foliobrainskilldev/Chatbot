@@ -1,0 +1,52 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// NOVO: Tabela para guardar a sessão do WhatsApp no PostgreSQL
+model SessaoBaileys {
+  id    String @id
+  data  String
+}
+
+model Cliente {
+  id           String        @id
+  nome         String?
+  falarHumano  Boolean       @default(false)
+  agendamentos Agendamento[]
+}
+
+model Servico {
+  id           Int           @id @default(autoincrement())
+  nome         String
+  preco        Float
+  duracaoMin   Int
+  agendamentos Agendamento[]
+}
+
+model Barbeiro {
+  id           Int           @id @default(autoincrement())
+  nome         String
+  agendamentos Agendamento[]
+}
+
+model Agendamento {
+  id           Int       @id @default(autoincrement())
+  dataHora     DateTime
+  status       String    @default("AGENDADO") // AGENDADO, CANCELADO, CONCLUIDO
+  
+  clienteId    String
+  cliente      Cliente   @relation(fields: [clienteId], references: [id])
+  
+  servicoId    Int
+  servico      Servico   @relation(fields: [servicoId], references: [id])
+  
+  barbeiroId   Int?
+  barbeiro     Barbeiro? @relation(fields: [barbeiroId], references: [id])
+  
+  criadoEm     DateTime  @default(now())
+}

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel - Bot da Barbearia</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; text-align: center; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        h1 { color: #25D366; }
+        .status { font-weight: bold; padding: 10px; border-radius: 5px; background: #e9ecef; margin-bottom: 20px; }
+        .methods { display: flex; justify-content: space-around; margin-bottom: 20px; }
+        .method-box { width: 45%; border: 1px solid #ccc; padding: 20px; border-radius: 8px; background: #fafafa; }
+        img { max-width: 100%; border-radius: 10px; margin-top: 10px; }
+        input { width: 90%; padding: 10px; margin-top: 10px; border: 1px solid #ccc; border-radius: 5px; text-align: center; }
+        button { background-color: #25D366; color: white; border: none; padding: 10px 20px; margin-top: 15px; border-radius: 5px; cursor: pointer; font-weight: bold; width: 100%; }
+        button:hover { background-color: #128C7E; }
+        #pairing-code-display { font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #128C7E; margin-top: 15px; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>💈 Bot WhatsApp - Barbearia</h1>
+        <div class="status">Status da Conexão: <span id="status-text">Aguardando... ⏳</span></div>
+
+        <div id="login-section" class="methods">
+            <!-- Coluna 1: QR CODE -->
+            <div class="method-box">
+                <h3>Opção 1: QR Code</h3>
+                <p>Abra o WhatsApp, vá em Dispositivos Conectados e leia o código abaixo:</p>
+                <img id="qr-image" src="" alt="Aguardando QR Code..." style="display: none;">
+            </div>
+
+            <!-- Coluna 2: CÓDIGO DE PAREAMENTO -->
+            <div class="method-box">
+                <h3>Opção 2: Nº de Telefone</h3>
+                <p>Insira o número do WhatsApp do Bot (com código do país):</p>
+                <input type="text" id="phone-number" placeholder="Ex: 258841234567">
+                <button onclick="requestPairingCode()">Gerar Código</button>
+                <div id="pairing-code-display"></div>
+            </div>
+        </div>
+
+        <div id="connected-section" class="hidden">
+            <h2>🎉 Bot Conectado com Sucesso!</h2>
+            <p>O seu bot já está a receber mensagens dos clientes.</p>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+
+        // Recebe mudanças de status
+        socket.on('status', (statusStr) => {
+            document.getElementById('status-text').innerText = statusStr;
+        });
+
+        // Recebe o QR Code e exibe na tela
+        socket.on('qr_code', (qrBase64) => {
+            const img = document.getElementById('qr-image');
+            img.src = qrBase64;
+            img.style.display = 'block';
+        });
+
+        // Recebe o Código de Pareamento do servidor
+        socket.on('codigo_pareamento', (codigo) => {
+            // Separa no meio com um hífen (padrão do WhatsApp)
+            const codigoFormatado = codigo.match(/.{1,4}/g).join('-'); 
+            document.getElementById('pairing-code-display').innerText = codigoFormatado;
+        });
+
+        // Caso dê erro ao gerar o código
+        socket.on('erro', (msg) => {
+            alert(msg);
+        });
+
+        // Esconde a parte de login quando conecta
+        socket.on('conectado', () => {
+            document.getElementById('login-section').classList.add('hidden');
+            document.getElementById('connected-section').classList.remove('hidden');
+        });
+
+        // Envia o número para o servidor solicitar o código de pareamento
+        function requestPairingCode() {
+            const num = document.getElementById('phone-number').value;
+            if (!num) return alert("Por favor, introduza o número de telefone.");
+            document.getElementById('pairing-code-display').innerText = "A gerar...";
+            socket.emit('solicitar_codigo', num);
+        }
+    </script>
+</body>
+</html>
