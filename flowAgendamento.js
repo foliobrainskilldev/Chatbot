@@ -1,6 +1,7 @@
 const { prisma } = require('./db');
 const { getProximosDiasUteis, getHorariosDisponiveis } = require('./dateUtils');
-const { parse, format } = require('date-fns');
+const { parse } = require('date-fns');
+const { sendInteractiveMenu, sendDelayedText } = require('./botUtils');
 
 async function handleAgendamento(sock, jid, textMessage, senderNumber, stateMachine, STEPS) {
     const userState = stateMachine.get(senderNumber);
@@ -9,91 +10,82 @@ async function handleAgendamento(sock, jid, textMessage, senderNumber, stateMach
 
     if (msg.toLowerCase() === '0') {
         stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
-        await sock.sendMessage(jid, { text: 'Operação cancelada. A voltar ao menu...' });
+        await sendDelayedText(sock, jid, 'Operação cancelada. A voltar ao menu...');
         return;
     }
 
     switch (step) {
         case STEPS.AGENDAMENTO_SERVICO:
             const servicos = await prisma.servico.findMany();
-            const servicoEscolhido = servicos[parseInt(msg) - 1];
+            const servicoEscolhido = servicos.find(s => s.id.toString() === msg);
+            
             if (!servicoEscolhido) {
-                await sock.sendMessage(jid, { text: 'Opção inválida. Escolhe um número da lista ou 0 para cancelar.' });
+                await sendDelayedText(sock, jid, 'Opção inválida.');
                 return;
             }
             userState.data.servico = servicoEscolhido;
             userState.step = STEPS.AGENDAMENTO_BARBEIRO;
             
             const barbeiros = await prisma.barbeiro.findMany();
-            let txtBarb = `Ótima escolha! 💈\nCom qual barbeiro pretendes cortar?\n\n`;
-            barbeiros.forEach((b, i) => txtBarb += `${i + 1}️⃣ - ${b.nome}\n`);
-            txtBarb += `${barbeiros.length + 1}️⃣ - Qualquer disponível\n\n0️⃣ - Cancelar`;
+            let optBarbeiros = barbeiros.map(b => ({ id: b.id.toString(), title: b.nome }));
+            optBarbeiros.push({ id: 'qualquer', title: 'Qualquer disponível' }, { id: '0', title: '❌ Cancelar' });
             
-            await sock.sendMessage(jid, { text: txtBarb });
+            await sendInteractiveMenu(sock, jid, 'Ótima escolha! 💈\nCom qual barbeiro preferes?', optBarbeiros);
             break;
 
         case STEPS.AGENDAMENTO_BARBEIRO:
             const barbs = await prisma.barbeiro.findMany();
-            const indexBarb = parseInt(msg) - 1;
-            if (msg !== '0' && indexBarb !== barbs.length && !barbs[indexBarb]) {
-                await sock.sendMessage(jid, { text: 'Opção inválida. Tenta novamente.' });
-                return;
-            }
+            let barbeiroSelecionado = null;
+            if (msg !== 'qualquer') barbeiroSelecionado = barbs.find(b => b.id.toString() === msg);
             
-            userState.data.barbeiro = indexBarb === barbs.length ? null : barbs[indexBarb];
+            userState.data.barbeiro = barbeiroSelecionado;
             userState.step = STEPS.AGENDAMENTO_DATA;
 
             const dias = getProximosDiasUteis(5);
             userState.data.diasDisponiveis = dias;
-            let txtData = `📅 Escolhe uma data:\n\n`;
-            dias.forEach((d, i) => txtData += `${i + 1}️⃣ - ${d}\n`);
-            txtData += `\n0️⃣ - Cancelar`;
+            let optDias = dias.map(d => ({ id: d, title: d }));
+            optDias.push({ id: '0', title: '❌ Cancelar' });
 
-            await sock.sendMessage(jid, { text: txtData });
+            await sendInteractiveMenu(sock, jid, '📅 Escolhe uma data:', optDias);
             break;
 
         case STEPS.AGENDAMENTO_DATA:
             const diasDisp = userState.data.diasDisponiveis;
-            const dataEscolhida = diasDisp[parseInt(msg) - 1];
-            if (!dataEscolhida) {
-                await sock.sendMessage(jid, { text: 'Data inválida.' });
-                return;
-            }
-            userState.data.dataString = dataEscolhida;
+            if (!diasDisp.includes(msg)) return;
+
+            userState.data.dataString = msg;
             userState.step = STEPS.AGENDAMENTO_HORA;
 
-            const horasLivres = await getHorariosDisponiveis(
-                prisma, dataEscolhida, userState.data.servico.duracaoMin, userState.data.barbeiro?.id
-            );
+            const horasLivres = await getHorariosDisponiveis(prisma, msg, userState.data.servico.duracaoMin, userState.data.barbeiro?.id);
 
             if (horasLivres.length === 0) {
                 userState.step = STEPS.AGENDAMENTO_DATA;
-                await sock.sendMessage(jid, { text: '⚠️ Pedimos desculpa, mas não há horários livres neste dia para este serviço.\nPor favor, escolhe outra data:' });
+                await sendDelayedText(sock, jid, '⚠️ Sem horários livres neste dia. Escolhe outra data, por favor:');
                 return;
             }
 
             userState.data.horasLivres = horasLivres;
-            let txtHora = `🕑 Horários disponíveis para ${dataEscolhida}:\n\n`;
-            horasLivres.forEach((h, i) => txtHora += `${i + 1}️⃣ - ${h}\n`);
-            txtHora += `\n0️⃣ - Cancelar`;
+            let optHoras = horasLivres.map(h => ({ id: h, title: h }));
+            optHoras.push({ id: '0', title: '❌ Cancelar' });
 
-            await sock.sendMessage(jid, { text: txtHora });
+            await sendInteractiveMenu(sock, jid, `🕑 Horários para ${msg}:`, optHoras);
             break;
 
         case STEPS.AGENDAMENTO_HORA:
-            const horaEscolhida = userState.data.horasLivres[parseInt(msg) - 1];
-            if (!horaEscolhida) {
-                await sock.sendMessage(jid, { text: 'Horário inválido.' });
-                return;
-            }
-            userState.data.horaString = horaEscolhida;
+            if (!userState.data.horasLivres.includes(msg)) return;
+            
+            userState.data.horaString = msg;
             userState.step = STEPS.AGENDAMENTO_CONFIRMAR;
 
             const srv = userState.data.servico;
             const brb = userState.data.barbeiro ? userState.data.barbeiro.nome : 'Qualquer um';
-            const resumo = `📝 *Confirma os dados do Agendamento:*\n\n✂️ Serviço: ${srv.nome} (${srv.preco} MT)\n💈 Barbeiro: ${brb}\n📅 Data: ${userState.data.dataString}\n🕑 Hora: ${horaEscolhida}\n\n1️⃣ - Confirmar\n0️⃣ - Cancelar`;
+            const resumo = `📝 *Confirma os dados:*\n\n✂️ Serviço: ${srv.nome}\n💈 Barbeiro: ${brb}\n📅 Data: ${userState.data.dataString}\n🕑 Hora: ${msg}`;
             
-            await sock.sendMessage(jid, { text: resumo });
+            // Aqui tem apenas 2 opções, o WhatsApp vai renderizar os botões lindamente no chat!
+            await sendInteractiveMenu(sock, jid, resumo, [
+                { id: '1', title: '✅ Confirmar' },
+                { id: '0', title: '❌ Cancelar' }
+            ]);
             break;
 
         case STEPS.AGENDAMENTO_CONFIRMAR:
@@ -110,35 +102,29 @@ async function handleAgendamento(sock, jid, textMessage, senderNumber, stateMach
                     }
                 });
 
-                await sock.sendMessage(jid, { text: '✅ *Agendamento Confirmado com sucesso!*\nMuito obrigado pela preferência, aguardamos por ti. Para voltar ao menu principal, basta digitar "Menu".' });
+                await sendDelayedText(sock, jid, '✅ *Confirmado!*\nObrigado pela preferência. Para voltares ao menu, digita "Menu".');
                 stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
-            } else {
-                await sock.sendMessage(jid, { text: 'Opção inválida. Digita 1 para Confirmar ou 0 para Cancelar.' });
             }
             break;
     }
 }
 
 async function iniciarAgendamento(sock, jid, senderNumber, stateMachine, STEPS) {
-    // Regra: Máximo de 2 agendamentos futuros
-    const agendamentosFuturos = await prisma.agendamento.count({
+    const agendamentos = await prisma.agendamento.count({
         where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } }
     });
 
-    if (agendamentosFuturos >= 2) {
-        await sock.sendMessage(jid, { text: '⚠️ Atenção: Já tens 2 agendamentos futuros.\nPara marcar um novo, por favor cancela um dos existentes (Opção 4 do Menu).' });
+    if (agendamentos >= 2) {
+        await sendDelayedText(sock, jid, '⚠️ Já tens 2 agendamentos futuros. Cancela um antes de marcar outro.');
         return;
     }
 
     const servicos = await prisma.servico.findMany();
-    let texto = `✂️ *Qual serviço pretendes agendar?*\n\n`;
-    servicos.forEach((s, i) => {
-        texto += `${i + 1}️⃣ - ${s.nome} (${s.preco} MT)\n`;
-    });
-    texto += `\n0️⃣ - Cancelar`;
+    let optServicos = servicos.map(s => ({ id: s.id.toString(), title: s.nome, description: `${s.preco} MT` }));
+    optServicos.push({ id: '0', title: '❌ Cancelar' });
 
     stateMachine.set(senderNumber, { step: STEPS.AGENDAMENTO_SERVICO, data: {} });
-    await sock.sendMessage(jid, { text: texto });
+    await sendInteractiveMenu(sock, jid, '✂️ Qual serviço pretendes?', optServicos);
 }
 
 module.exports = { iniciarAgendamento, handleAgendamento };
