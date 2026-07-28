@@ -19,17 +19,23 @@ const STEPS = {
 async function handleMessage(sock, msg) {
     const jid = msg.key.remoteJid;
     
-    // Extração Inteligente de Texto ou Clique num Botão
+    // Extração Super Inteligente (Capta texto, botões novos e botões antigos do iOS/Android)
     let textMessage = "";
-    if (msg.message.conversation) {
+    const type = Object.keys(msg.message)[0];
+    
+    if (type === 'conversation') {
         textMessage = msg.message.conversation;
-    } else if (msg.message.extendedTextMessage) {
+    } else if (type === 'extendedTextMessage') {
         textMessage = msg.message.extendedTextMessage.text;
-    } else if (msg.message.interactiveResponseMessage) {
+    } else if (type === 'interactiveResponseMessage') {
         try {
             const btnParams = JSON.parse(msg.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson);
-            textMessage = btnParams.id; // Retorna o ID oculto do botão (1, 2, 3...)
+            textMessage = btnParams.id;
         } catch(e) {}
+    } else if (type === 'buttonsResponseMessage') {
+        textMessage = msg.message.buttonsResponseMessage.selectedButtonId;
+    } else if (type === 'listResponseMessage') {
+        textMessage = msg.message.listResponseMessage.singleSelectReply.selectedRowId;
     }
 
     if (!textMessage) return;
@@ -37,6 +43,7 @@ async function handleMessage(sock, msg) {
     const senderNumber = jid.split('@')[0];
     const cliente = await getOrCreateCliente(senderNumber);
 
+    // MODO HUMANO
     if (cliente.falarHumano) {
         if (textMessage.trim().toLowerCase() === '#sair') {
             await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: false } });
@@ -45,23 +52,38 @@ async function handleMessage(sock, msg) {
         return; 
     }
 
-    // PREVENÇÃO DE SPAM: Se o bot já está a processar algo para este cliente, ignora a mensagem
-    let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {}, isProcessing: false };
+    // PREVENÇÃO DE SPAM E ESTADO
+    let userState = stateMachine.get(senderNumber);
+    const isNewSession = !userState; // Deteta se é a primeira mensagem da pessoa
+    
+    if (!userState) {
+        userState = { step: STEPS.MENU_PRINCIPAL, data: {}, isProcessing: false };
+    }
+
     if (userState.isProcessing) return; 
 
-    // Tranca o cliente
+    // Tranca o cliente para evitar processamento duplicado
     userState.isProcessing = true;
     stateMachine.set(senderNumber, userState);
 
     try {
-        if (textMessage.trim().toLowerCase() === 'menu') {
+        const msgLower = textMessage.trim().toLowerCase();
+        
+        // Palavras de escape (Saudações universais)
+        const saudacoes = ['oi', 'ola', 'olá', 'bom dia', 'boa tarde', 'boa noite', 'menu', 'voltar', 'inicio'];
+
+        // SE for uma saudação OU for a primeira mensagem do utilizador -> Envia apenas o Menu
+        if (saudacoes.includes(msgLower) || (isNewSession && userState.step === STEPS.MENU_PRINCIPAL)) {
             userState.step = STEPS.MENU_PRINCIPAL;
             userState.data = {};
-        }
-
-        if (userState.step.startsWith('AGENDAMENTO_')) {
+            await sendMenu(sock, jid);
+        } 
+        // Lida com o Agendamento
+        else if (userState.step.startsWith('AGENDAMENTO_')) {
             await handleAgendamento(sock, jid, textMessage, senderNumber, stateMachine, STEPS);
-        } else {
+        } 
+        // Lida com o resto
+        else {
             switch (userState.step) {
                 case STEPS.MENU_PRINCIPAL:
                     await handleMenuPrincipal(sock, jid, textMessage, senderNumber);
@@ -71,13 +93,13 @@ async function handleMessage(sock, msg) {
                     break;
                 default:
                     await sendMenu(sock, jid);
-                    stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {}, isProcessing: false });
-                    return;
+                    userState.step = STEPS.MENU_PRINCIPAL;
+                    userState.data = {};
             }
         }
     } catch (error) {
-        console.error(`❌ Erro:`, error);
-        await sendDelayedText(sock, jid, 'Ocorreu um erro. Por favor, digita "Menu" para recomeçar.');
+        console.error(`❌ Erro no bot para o número ${senderNumber}:`, error);
+        await sendDelayedText(sock, jid, 'Ocorreu um erro interno. Por favor, digita "Menu" para recomeçar.');
     } finally {
         // Destranca o cliente no final
         userState = stateMachine.get(senderNumber);
@@ -90,14 +112,14 @@ async function handleMessage(sock, msg) {
 
 async function sendMenu(sock, jid) {
     const menuOptions = [
-        { id: '1', title: 'Agendar horário' },
-        { id: '2', title: 'Ver preços e serviços' },
-        { id: '3', title: 'Meus agendamentos' },
-        { id: '4', title: 'Cancelar horário' },
-        { id: '5', title: 'Localização / Horário' },
-        { id: '6', title: 'Falar com atendente' }
+        { id: '1', title: 'Agendar horário', description: 'Marcar um novo corte' },
+        { id: '2', title: 'Ver preços e serviços', description: 'Tabela de preços' },
+        { id: '3', title: 'Meus agendamentos', description: 'Ver próximas idas' },
+        { id: '4', title: 'Cancelar horário', description: 'Desmarcar agendamento' },
+        { id: '5', title: 'Localização / Horário', description: 'Como chegar' },
+        { id: '6', title: 'Falar com atendente', description: 'Transferir para humano' }
     ];
-    await sendInteractiveMenu(sock, jid, '*Bem-vindo(a) à Barbearia!* ✂️💈\nComo podemos te ajudar hoje?', menuOptions);
+    await sendInteractiveMenu(sock, jid, '*Bem-vindo(a) à Barbearia!* ✂️💈\nComo podemos ajudar-te hoje?', menuOptions);
 }
 
 async function handleMenuPrincipal(sock, jid, textMessage, senderNumber) {
@@ -123,7 +145,7 @@ async function handleMenuPrincipal(sock, jid, textMessage, senderNumber) {
             await sendDelayedText(sock, jid, 'A transferir para um atendente... 👨‍💻\n\n*(Para voltar ao bot digita #sair)*');
             break;
         default:
-            await sendDelayedText(sock, jid, 'Opção inválida.');
+            await sendDelayedText(sock, jid, 'Desculpa, não entendi. Por favor, escolhe uma opção válida.');
             await sendMenu(sock, jid);
             break;
     }
