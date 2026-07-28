@@ -6,18 +6,23 @@ const usePrismaAuthState = require('./usePrismaAuthState');
 const { handleMessage } = require('./messageHandler');
 
 let sock;
+let currentStatus = 'A arrancar o sistema... ⏳';
+let lastQR = null;
+let ioInstance;
 
 async function connectToWhatsApp(io) {
+    ioInstance = io;
     await seedDatabase();
     
-    // Substituímos a função local pela que guarda no Banco de Dados Postgres
     const { state, saveCreds } = await usePrismaAuthState(prisma);
 
     sock = makeWASocket({
         auth: state,
         printQRInTerminal: true,
         logger: pino({ level: 'silent' }),
-        browser: Browsers.ubuntu('Chrome') 
+        // O Browser precisa ser Chrome no Mac/Linux para o código de pareamento funcionar
+        browser: Browsers.macOS('Chrome'), 
+        generateHighQualityLinkPreview: true
     });
 
     sock.ev.on('connection.update', async (update) => {
@@ -25,28 +30,33 @@ async function connectToWhatsApp(io) {
 
         if (qr) {
             try {
-                const qrImage = await qrcode.toDataURL(qr);
-                io.emit('qr_code', qrImage);
+                lastQR = await qrcode.toDataURL(qr);
+                currentStatus = 'A aguardar QR Code ou Código de Pareamento 📱';
+                io.emit('qr_code', lastQR);
+                io.emit('status', currentStatus);
             } catch (err) {
                 console.error("Erro ao gerar QR Code", err);
             }
         }
 
         if (connection === 'close') {
-            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            io.emit('status', 'Desconectado ❌');
+            const statusCode = lastDisconnect.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            
             if (shouldReconnect) {
-                connectToWhatsApp(io);
+                currentStatus = 'Conexão perdida. A reconectar... 🔄';
+                io.emit('status', currentStatus);
+                setTimeout(() => connectToWhatsApp(io), 5000);
             } else {
-                console.log('❌ Sessão terminada pelo utilizador (Logged Out).');
-                // Se o cliente deslogou no telemóvel, limpamos as credenciais do banco
+                currentStatus = 'Sessão encerrada ou inválida ❌. Limpe a sessão!';
+                io.emit('status', currentStatus);
                 await prisma.sessaoBaileys.deleteMany(); 
-                io.emit('status', 'Sessão encerrada. Reinicie o servidor.');
             }
         } else if (connection === 'open') {
-            io.emit('status', 'Conectado ✅');
+            currentStatus = 'Conectado ✅';
+            io.emit('status', currentStatus);
             io.emit('conectado', true); 
-            console.log('✅ Bot conectado e pronto a operar no WhatsApp!');
+            console.log('✅ Bot conectado e pronto a operar!');
         }
     });
 
@@ -60,10 +70,29 @@ async function connectToWhatsApp(io) {
 }
 
 async function solicitarCodigoPareamento(numero) {
-    if (!sock) throw new Error("O sistema do WhatsApp ainda não arrancou.");
+    if (!sock) throw new Error("O bot ainda não iniciou completamente.");
+    
+    // Remove tudo que não seja número (incluindo o +)
     const numeroLimpo = numero.replace(/[^0-9]/g, '');
+    
+    // TRUQUE VITAL: O Baileys precisa de um atraso de 2 segundos antes de pedir o código
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
     const codigo = await sock.requestPairingCode(numeroLimpo);
     return codigo;
 }
 
-module.exports = { connectToWhatsApp, solicitarCodigoPareamento };
+async function limparSessao() {
+    console.log("A limpar sessão a pedido do utilizador...");
+    if (sock) {
+        try { sock.logout(); } catch(e){}
+    }
+    await prisma.sessaoBaileys.deleteMany();
+    // Força o Render a reiniciar a aplicação com uma base limpa
+    process.exit(1); 
+}
+
+const getStatus = () => currentStatus;
+const getLastQR = () => lastQR;
+
+module.exports = { connectToWhatsApp, solicitarCodigoPareamento, limparSessao, getStatus, getLastQR };
