@@ -1,7 +1,8 @@
 const { prisma } = require('./db');
 const { format } = require('date-fns');
+const { sendDelayedText } = require('./botUtils');
 
-async function verPrecosEServicos(sock, jid) {
+async function verPrecosEServicos(sockIgnorado, jid) {
     const servicos = await prisma.servico.findMany();
     let texto = `📋 *Nossos Serviços e Preços:*\n\n`;
     
@@ -9,22 +10,18 @@ async function verPrecosEServicos(sock, jid) {
         texto += `✂️ *${s.nome}*\n💰 Preço: ${s.preco} MT\n⏱️ Duração: ${s.duracaoMin} min\n\n`;
     });
     
-    await sock.sendMessage(jid, { text: texto });
+    await sendDelayedText(null, jid, texto);
 }
 
-async function verMeusAgendamentos(sock, jid, senderNumber) {
+async function verMeusAgendamentos(sockIgnorado, jid, senderNumber) {
     const agendamentos = await prisma.agendamento.findMany({
-        where: { 
-            clienteId: senderNumber, 
-            status: 'AGENDADO',
-            dataHora: { gte: new Date() } // Apenas futuros
-        },
+        where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } },
         include: { servico: true, barbeiro: true },
         orderBy: { dataHora: 'asc' }
     });
 
     if (agendamentos.length === 0) {
-        await sock.sendMessage(jid, { text: 'Não tens nenhum agendamento futuro no momento. 🗓️' });
+        await sendDelayedText(null, jid, 'Não tens nenhum agendamento futuro no momento. 🗓️');
         return;
     }
 
@@ -35,7 +32,7 @@ async function verMeusAgendamentos(sock, jid, senderNumber) {
         texto += `*${index + 1}.* ${ag.servico.nome}\n🕑 Data: ${dataStr}\n💈 Barbeiro: ${barbeiroNome}\n\n`;
     });
 
-    await sock.sendMessage(jid, { text: texto });
+    await sendDelayedText(null, jid, texto);
 }
 
 module.exports = { verPrecosEServicos, verMeusAgendamentos };
