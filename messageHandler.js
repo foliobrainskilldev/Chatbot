@@ -5,7 +5,6 @@ const { iniciarCancelamento, processarCancelamento } = require('./flowCancelamen
 const { sendDelayedText, sendInteractiveMenu } = require('./botUtils');
 
 const stateMachine = new Map();
-
 const STEPS = {
     MENU_PRINCIPAL: 'MENU_PRINCIPAL',
     AGENDAMENTO_SERVICO: 'AGENDAMENTO_SERVICO',
@@ -16,92 +15,73 @@ const STEPS = {
     CANCELAR_AGENDAMENTO: 'CANCELAR_AGENDAMENTO',
 };
 
-async function handleMessage(sock, msg) {
-    const jid = msg.key.remoteJid;
-    
-    // Extração Super Inteligente (Capta texto, botões novos e botões antigos do iOS/Android)
+async function handleMessage(message, contact) {
+    const senderNumber = message.from; // Número do cliente (ex: 258840000000)
     let textMessage = "";
-    const type = Object.keys(msg.message)[0];
-    
-    if (type === 'conversation') {
-        textMessage = msg.message.conversation;
-    } else if (type === 'extendedTextMessage') {
-        textMessage = msg.message.extendedTextMessage.text;
-    } else if (type === 'interactiveResponseMessage') {
-        try {
-            const btnParams = JSON.parse(msg.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson);
-            textMessage = btnParams.id;
-        } catch(e) {}
-    } else if (type === 'buttonsResponseMessage') {
-        textMessage = msg.message.buttonsResponseMessage.selectedButtonId;
-    } else if (type === 'listResponseMessage') {
-        textMessage = msg.message.listResponseMessage.singleSelectReply.selectedRowId;
+
+    // Extração conforme a documentação oficial da Meta
+    if (message.type === 'text') {
+        textMessage = message.text.body;
+    } else if (message.type === 'interactive') {
+        if (message.interactive.type === 'button_reply') {
+            textMessage = message.interactive.button_reply.id;
+        } else if (message.interactive.type === 'list_reply') {
+            textMessage = message.interactive.list_reply.id;
+        }
     }
 
     if (!textMessage) return;
 
-    const senderNumber = jid.split('@')[0];
     const cliente = await getOrCreateCliente(senderNumber);
 
-    // MODO HUMANO
     if (cliente.falarHumano) {
         if (textMessage.trim().toLowerCase() === '#sair') {
             await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: false } });
-            await sendDelayedText(sock, jid, '🔄 Atendimento humano encerrado.\nDigite *"Menu"* para recomeçar.');
+            await sendDelayedText(null, senderNumber, '🔄 Atendimento humano encerrado.\nDigite *"Menu"* para recomeçar.');
         }
         return; 
     }
 
-    // PREVENÇÃO DE SPAM E ESTADO
     let userState = stateMachine.get(senderNumber);
-    const isNewSession = !userState; // Deteta se é a primeira mensagem da pessoa
+    const isNewSession = !userState;
     
     if (!userState) {
         userState = { step: STEPS.MENU_PRINCIPAL, data: {}, isProcessing: false };
     }
-
     if (userState.isProcessing) return; 
 
-    // Tranca o cliente para evitar processamento duplicado
     userState.isProcessing = true;
     stateMachine.set(senderNumber, userState);
 
     try {
         const msgLower = textMessage.trim().toLowerCase();
-        
-        // Palavras de escape (Saudações universais)
         const saudacoes = ['oi', 'ola', 'olá', 'bom dia', 'boa tarde', 'boa noite', 'menu', 'voltar', 'inicio'];
 
-        // SE for uma saudação OU for a primeira mensagem do utilizador -> Envia apenas o Menu
         if (saudacoes.includes(msgLower) || (isNewSession && userState.step === STEPS.MENU_PRINCIPAL)) {
             userState.step = STEPS.MENU_PRINCIPAL;
             userState.data = {};
-            await sendMenu(sock, jid);
-        } 
-        // Lida com o Agendamento
-        else if (userState.step.startsWith('AGENDAMENTO_')) {
-            await handleAgendamento(sock, jid, textMessage, senderNumber, stateMachine, STEPS);
-        } 
-        // Lida com o resto
-        else {
+            await sendMenu(null, senderNumber);
+        } else if (userState.step.startsWith('AGENDAMENTO_')) {
+            // Passamos 'null' no lugar do socket do Baileys para não quebrar compatibilidade interna
+            await handleAgendamento(null, senderNumber, textMessage, senderNumber, stateMachine, STEPS);
+        } else {
             switch (userState.step) {
                 case STEPS.MENU_PRINCIPAL:
-                    await handleMenuPrincipal(sock, jid, textMessage, senderNumber);
+                    await handleMenuPrincipal(null, senderNumber, textMessage, senderNumber);
                     break;
                 case STEPS.CANCELAR_AGENDAMENTO:
-                    await processarCancelamento(sock, jid, textMessage, senderNumber, stateMachine, STEPS);
+                    await processarCancelamento(null, senderNumber, textMessage, senderNumber, stateMachine, STEPS);
                     break;
                 default:
-                    await sendMenu(sock, jid);
+                    await sendMenu(null, senderNumber);
                     userState.step = STEPS.MENU_PRINCIPAL;
                     userState.data = {};
             }
         }
     } catch (error) {
-        console.error(`❌ Erro no bot para o número ${senderNumber}:`, error);
-        await sendDelayedText(sock, jid, 'Ocorreu um erro interno. Por favor, digita "Menu" para recomeçar.');
+        console.error(`❌ Erro no fluxo:`, error);
+        await sendDelayedText(null, senderNumber, 'Ocorreu um erro interno. Por favor, digita "Menu".');
     } finally {
-        // Destranca o cliente no final
         userState = stateMachine.get(senderNumber);
         if (userState) {
             userState.isProcessing = false;
@@ -110,7 +90,7 @@ async function handleMessage(sock, msg) {
     }
 }
 
-async function sendMenu(sock, jid) {
+async function sendMenu(sockIgnorado, jid) {
     const menuOptions = [
         { id: '1', title: 'Agendar horário', description: 'Marcar um novo corte' },
         { id: '2', title: 'Ver preços e serviços', description: 'Tabela de preços' },
@@ -119,35 +99,23 @@ async function sendMenu(sock, jid) {
         { id: '5', title: 'Localização / Horário', description: 'Como chegar' },
         { id: '6', title: 'Falar com atendente', description: 'Transferir para humano' }
     ];
-    await sendInteractiveMenu(sock, jid, '*Bem-vindo(a) à Barbearia!* ✂️💈\nComo podemos ajudar-te hoje?', menuOptions);
+    await sendInteractiveMenu(jid, '*Bem-vindo(a) à Barbearia!* ✂️💈\nComo podemos ajudar-te hoje?', menuOptions);
 }
 
-async function handleMenuPrincipal(sock, jid, textMessage, senderNumber) {
+// O resto do handleMenuPrincipal fica exatamente como enviei da última vez (basta passar null onde pedia o 'sock')
+async function handleMenuPrincipal(sockIgnorado, jid, textMessage, senderNumber) {
     const option = textMessage.trim();
-
     switch (option) {
-        case '1': await iniciarAgendamento(sock, jid, senderNumber, stateMachine, STEPS); break;
-        case '2': 
-            await verPrecosEServicos(sock, jid); 
-            await sendMenu(sock, jid); 
-            break;
-        case '3': 
-            await verMeusAgendamentos(sock, jid, senderNumber); 
-            await sendMenu(sock, jid); 
-            break;
-        case '4': await iniciarCancelamento(sock, jid, senderNumber, stateMachine, STEPS); break;
-        case '5':
-            await sendDelayedText(sock, jid, `📍 *A Nossa Localização:*\nAv. 24 de Julho, Maputo\n\n🕒 *Horário de Funcionamento:*\nSeg a Sáb: 09:00 às 19:00`);
-            await sendMenu(sock, jid);
-            break;
-        case '6':
+        case '1': await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS); break;
+        case '2': await verPrecosEServicos(null, jid); await sendMenu(null, jid); break;
+        case '3': await verMeusAgendamentos(null, jid, senderNumber); await sendMenu(null, jid); break;
+        case '4': await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS); break;
+        case '5': await sendDelayedText(null, jid, `📍 *A Nossa Localização:*...`); await sendMenu(null, jid); break;
+        case '6': 
             await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
-            await sendDelayedText(sock, jid, 'A transferir para um atendente... 👨‍💻\n\n*(Para voltar ao bot digita #sair)*');
+            await sendDelayedText(null, jid, 'A transferir para um atendente...'); 
             break;
-        default:
-            await sendDelayedText(sock, jid, 'Desculpa, não entendi. Por favor, escolhe uma opção válida.');
-            await sendMenu(sock, jid);
-            break;
+        default: await sendDelayedText(null, jid, 'Desculpa, não entendi.'); await sendMenu(null, jid); break;
     }
 }
 

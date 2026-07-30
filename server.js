@@ -1,48 +1,47 @@
 const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const path = require('path');
-const { connectToWhatsApp, solicitarCodigoPareamento, limparSessao, getStatus, getLastQR } = require('./index.js');
+const { handleMessage } = require('./messageHandler');
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
+app.use(express.json());
 
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+// Token de verificação que vais definir na Meta e no Render
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'barbearia_secreta_2024';
+
+// 1. Rota GET para a Meta verificar o Webhook
+app.get('/webhook', (req, res) => {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+        console.log('✅ Webhook verificado pela Meta!');
+        res.status(200).send(challenge);
+    } else {
+        res.sendStatus(403);
+    }
 });
 
-app.get('/ping', (req, res) => {
-    res.status(200).send('Pong! O bot da barbearia está acordado.');
-});
+// 2. Rota POST onde chegam as mensagens dos clientes
+app.post('/webhook', async (req, res) => {
+    const body = req.body;
 
-io.on('connection', (socket) => {
-    console.log('💻 Painel Web acedido.');
-    
-    // Envia o estado atual IMEDIATAMENTE quando a pessoa abre o site
-    socket.emit('status', getStatus());
-    const qr = getLastQR();
-    if (qr) socket.emit('qr_code', qr);
-    if (getStatus() === 'Conectado ✅') socket.emit('conectado', true);
-
-    socket.on('solicitar_codigo', async (numero) => {
-        try {
-            const codigo = await solicitarCodigoPareamento(numero);
-            socket.emit('codigo_pareamento', codigo);
-        } catch (error) {
-            console.error("Erro ao gerar código:", error);
-            socket.emit('erro', 'Falha ao gerar o código. Garante que digitaste o código do país (ex: 25884...).');
+    if (body.object) {
+        if (body.entry && body.entry[0].changes && body.entry[0].changes[0].value.messages && body.entry[0].changes[0].value.messages[0]) {
+            const message = body.entry[0].changes[0].value.messages[0];
+            const contact = body.entry[0].changes[0].value.contacts[0];
+            
+            // Passa a mensagem para a nossa inteligência
+            await handleMessage(message, contact);
         }
-    });
-
-    socket.on('limpar_sessao', async () => {
-        await limparSessao();
-    });
+        res.sendStatus(200);
+    } else {
+        res.sendStatus(404);
+    }
 });
 
-connectToWhatsApp(io);
+app.get('/ping', (req, res) => res.send('Bot da Barbearia (API Oficial) está vivo!'));
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`🌐 Servidor a rodar na porta: ${PORT}`);
+app.listen(PORT, () => {
+    console.log(`\n🚀 Servidor Webhook a rodar na porta: ${PORT}\n`);
 });
