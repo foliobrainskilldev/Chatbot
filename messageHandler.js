@@ -29,29 +29,30 @@ async function handleMessage(message, contact) {
 
     if (!textMessage) return;
     
-    console.log(`[PASSO 1] Lendo mensagem de ${senderNumber}: "${textMessage}"`);
+    console.log(`\n[PASSO 1] Lendo mensagem de ${senderNumber}: "${textMessage}"`);
 
     try {
-        console.log(`[PASSO 2] Buscando Cliente na Base de Dados (Prisma)...`);
+        console.log(`[PASSO 2] Buscando Cliente...`);
         let cliente = await getOrCreateCliente(senderNumber);
-        console.log(`[PASSO 3] Cliente Encontrado com sucesso!`);
 
         if (cliente.falarHumano) {
             if (textMessage.trim().toLowerCase() === '#sair') {
+                console.log(`[PASSO 3.1] Bot acordou! Atendimento Humano desativado.`);
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: false } });
-                await sendDelayedText(null, senderNumber, '🔄 Atendimento humano encerrado. Bem vindo de volta! Digite *"Menu"* para ver as opções.');
+                await sendDelayedText(null, senderNumber, '🔄 Atendimento automático restaurado! Diga *"Oi"* ou *"Menu"* para prosseguir.');
+            } else {
+                console.log(`[⚠️ AVISO] Bot silenciado. Utilizador no modo Humano.`);
             }
             return; 
         }
 
         let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {} };
-        // Atualizamos o state machine (Sem trava agressiva anti-spam para não causar bloqueios fantasma)
         stateMachine.set(senderNumber, userState);
 
         const msgLower = textMessage.trim().toLowerCase();
         const cmdsIntuitosUI= ['menu', 'início', 'inicio', 'voltar', 'cancelar tudo', '0'];
 
-        console.log(`[PASSO 4] Estado Atual do Utilizador: ${userState.step}`);
+        console.log(`[PASSO 4] Estado Atual: ${userState.step}`);
 
         if (cmdsIntuitosUI.includes(msgLower)) {
              userState.step = STEPS.MENU_PRINCIPAL;
@@ -59,13 +60,13 @@ async function handleMessage(message, contact) {
              await sendMenu(null, senderNumber);
         }
         else if (userState.step.startsWith('AGENDAMENTO_')) {
-            console.log(`[PASSO 5] Encaminhando para o Fluxo de Agendamento.`);
+            console.log(`[PASSO 5] Fluxo de Agendamento nativo em curso.`);
             await handleAgendamento(null, senderNumber, textMessage, senderNumber, stateMachine, STEPS);
         }
         else {
              switch (userState.step) {
                   case STEPS.MENU_PRINCIPAL:
-                      console.log(`[PASSO 5] Encaminhando para Inteligência Artificial (Groq).`);
+                      console.log(`[PASSO 5] Encaminhando à IA (Groq)...`);
                       await handleEstrategiaLLMSalvos(null, senderNumber, textMessage, senderNumber);
                       break;
                   case STEPS.CANCELAR_AGENDAMENTO:
@@ -78,7 +79,7 @@ async function handleMessage(message, contact) {
         }
         
     } catch (error) {
-        console.error(`❌ Erro Crítico no Engine Central:`, error);
+        console.error(`❌ Erro no Engine Central:`, error);
     }
 }
 
@@ -89,7 +90,7 @@ async function sendMenu(sockIgnorado, jid) {
         { id: '3', title: 'A Minha Agenda', description: 'Check dos apontamentos' },
         { id: '4', title: 'Cancelar Marcas', description: 'Pausar Canceladas!' },
         { id: '5', title: 'Av., Mapa / Hrs', description: 'Geocalização' },
-        { id: '6', title: 'Trans. p/ Funcionário', description: 'Atendimento Orgânico Humano.' }
+        { id: '6', title: 'Falar com Humano', description: 'Atendimento Orgânico.' }
     ];
     await sendInteractiveMenu(jid, '*Portal Da Barbearia ✂️*\nÉ bem prático! Podes simplesmente prosseguir tocando num botão abaixo 👇', menuOptions);
 }
@@ -97,7 +98,6 @@ async function sendMenu(sockIgnorado, jid) {
 async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber) {
     const option = textMessage.trim();
     
-    // Fallbacks para quem clica direto num dos botões do Menu (ID numéricos)
     switch (option) {
         case '1': await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS); break;
         case '2': await verPrecosEServicos(null, jid); break; 
@@ -109,22 +109,28 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             await sendDelayedText(null, jid, 'Estamos acoplados agr! Vai vir alguem aí pra você ao teclado espere um cheirinho...'); break;
             
         default: 
-            console.log(`🤖 | [PASSO 6] Chat Orgânico Acionado! Preparando memórias...`);
+            console.log(`🤖 | [PASSO 6] Chat IA Acionado!`);
             
+            // 1. Guarda a fala atual do utilizador
             await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber }});
             
-            const asConversasPassadasGostosDelaDbMemorie = await prisma.mensagemIA.findMany({
-                   where: { clienteId: senderNumber }, orderBy: { criadoEm: 'asc' }, take: 10 
+            // 2. CORREÇÃO CRUCIAL: Busca apenas as 4 ÚLTIMAS mensagens de forma decrescente para não trazer velharia e depois volta a virar
+            const historicoCru = await prisma.mensagemIA.findMany({
+                   where: { clienteId: senderNumber }, 
+                   orderBy: { criadoEm: 'desc' }, 
+                   take: 4 
             });
+            const asConversasPassadasGostosDelaDbMemorie = historicoCru.reverse();
+            
             const constCortesG = await prisma.agendamento.count({ where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } }});
             
-            console.log(`[PASSO 7] Enviando para a LPU GROQ... Aguardando raciocínio.`);
+            console.log(`[PASSO 7] Enviando para a GROQ...`);
             const textIArid = await responderComGroq(textMessage, constCortesG, asConversasPassadasGostosDelaDbMemorie);
             
-            console.log(`[PASSO 8] Resposta da GROQ Recebida: ${textIArid.substring(0, 30)}...`);
+            console.log(`[PASSO 8] Resposta da GROQ: ${textIArid.substring(0, 40)}...`);
             const intentCheck = textIArid.trim().toUpperCase();
 
-            // Roteamento baseado na Intenção da IA
+            // 3. Roteamento baseado na Intenção Oculta
             if (intentCheck.includes('/AGENDAR')) {
                 await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);
             } else if (intentCheck.includes('/CANCELAR')) {
@@ -141,10 +147,10 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             } else if (intentCheck.includes('/MENU')) {
                 await sendMenu(null, jid);
             } else {
-                // É apenas uma conversa normal! Guarda no SQL e exibe para o cliente
+                // Conversa Normal
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: textIArid, clienteId: senderNumber }});
                 await sendDelayedText(null, jid, textIArid);
-                console.log(`[PASSO FINAL] Mensagem de texto enviada ao WhatsApp com sucesso!`);
+                console.log(`[PASSO FINAL] Resposta humanizada enviada!`);
             }
             break;
     }
