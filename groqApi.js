@@ -9,7 +9,6 @@ async function responderComGroq(mensagemCliente, contextAgendamentos = 0, histor
     
     if (!process.env.GROQ_API_KEY) return "Infelizmente estarei cego momentaneamente, avança pelo menu.";
 
-    // Cérebro de IA Conversacional e NLP (Processamento de Linguagem Natural) 🧠
     const INSTRUCOES_BLINDADAS_CONTEXTO = `És um assistente virtual prestativo, educado e simpático de uma Barbearia em Moçambique. O teu papel é conversar com o cliente de forma natural, tirar dúvidas com calma e guiá-lo.
 O cliente tem atualmente ${contextAgendamentos} marcações ativas.
 
@@ -43,28 +42,29 @@ EXEMPLOS DE COMPORTAMENTO CORRETO:
 Se tiveres de responder com texto, sê breve (2 a 3 linhas no máximo), direto e empático no português de Moçambique. Nunca mistures um COMANDO (ex: /AGENDAR) com texto na mesma resposta.`;
 
     try {
-        console.log(`🧠 Invocando Motor Pensador da GROQ: (Conversa NLP & Intenção...)`);
-
         const constructMessagesFlowEngineLpu = [
             { role: "system", content: INSTRUCOES_BLINDADAS_CONTEXTO }
         ];
 
         if (historicoAnterior && historicoAnterior.length > 0) {
             historicoAnterior.forEach(linhaOld => {
-                constructMessagesFlowEngineLpu.push({ role: linhaOld.role, content: linhaOld.content });
+                // Prevenção de quebra de memória vazia:
+                if(linhaOld.content) {
+                    constructMessagesFlowEngineLpu.push({ role: linhaOld.role, content: linhaOld.content });
+                }
             });
         }
+        
         constructMessagesFlowEngineLpu.push({ role: "user", content: mensagemCliente });
-
 
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant", 
             messages: constructMessagesFlowEngineLpu,
-            temperature: 0.3, // Temperatura balanceada: permite conversa natural mas mantém precisão nos comandos
+            temperature: 0.3,
             max_tokens: 300 
         });
         
-        return resposta.choices[0].message.content;
+        return resposta.choices[0]?.message?.content || "/MENU";
 
     } catch (erro) {
         console.error("❌ ERRO NA CHAMADA GROQ: ", erro?.response?.data || erro.message);
