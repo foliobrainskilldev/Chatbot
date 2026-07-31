@@ -4,11 +4,12 @@ const { verPrecosEServicos, verMeusAgendamentos } = require('./flowConsultas');
 const { iniciarCancelamento, processarCancelamento } = require('./flowCancelamento');
 const { sendDelayedText, sendInteractiveMenu } = require('./botUtils');
 const { responderComGroq } = require('./groqApi');
-const { markAsRead } = require('./whatsappApi'); // Importa o tick azul
+const { markAsReadAndTyping } = require('./whatsappApi'); // Importa a nova função combinada!
 
 const stateMachine = new Map();
 const STEPS = {
     MENU_PRINCIPAL: 'MENU_PRINCIPAL',
+    PEDIR_NOME: 'PEDIR_NOME', 
     AGENDAMENTO_SERVICO: 'AGENDAMENTO_SERVICO',
     AGENDAMENTO_BARBEIRO: 'AGENDAMENTO_BARBEIRO',
     AGENDAMENTO_DATA: 'AGENDAMENTO_DATA',
@@ -20,10 +21,11 @@ const STEPS = {
 async function handleMessage(message, contact) {
     const senderNumber = message.from; 
     let textMessage = "";
+    const jid = senderNumber;
 
-    // 1. Aciona instantaneamente os "Ticks Azuis" de lido no telemóvel do cliente!
+    // 1. Aciona instantaneamente: "Ticks Azuis" + Status "Escrevendo..." 🚀
     if (message.id) {
-        await markAsRead(message.id);
+        await markAsReadAndTyping(message.id);
     }
 
     if (message.type === 'text') {
@@ -43,12 +45,48 @@ async function handleMessage(message, contact) {
         if (cliente.falarHumano) {
             if (textMessage.trim().toLowerCase() === '#sair') {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: false } });
-                await sendDelayedText(null, senderNumber, '🔄 Atendimento automático restaurado! Diga *"Oi"* ou *"Menu"* para prosseguir.');
+                await sendDelayedText(null, jid, '🔄 Atendimento automático restaurado! Diga *"Oi"* ou *"Menu"* para prosseguir.');
             }
             return; 
         }
 
         let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {} };
+        
+        // =========================================================================
+        // FLUXO DE NOME NATURAL
+        // =========================================================================
+        if (!cliente.nome && userState.step === STEPS.MENU_PRINCIPAL) {
+            const historicoCru = await prisma.mensagemIA.count({ where: { clienteId: senderNumber } });
+            if (historicoCru === 0) {
+                userState.step = STEPS.PEDIR_NOME;
+                stateMachine.set(senderNumber, userState);
+                await sendDelayedText(null, jid, 'Olá! 👋 Bem-vindo à nossa Barbearia!\nÉ um prazer ter-te por aqui. Para o nosso atendimento ser mais amigável, como gostarias de ser chamado? 😊');
+                return;
+            }
+        }
+
+        if (userState.step === STEPS.PEDIR_NOME) {
+            const nomeFornecido = textMessage.trim();
+            await prisma.cliente.update({ where: { id: senderNumber }, data: { nome: nomeFornecido } });
+            
+            userState.step = STEPS.MENU_PRINCIPAL;
+            stateMachine.set(senderNumber, userState);
+            
+            await prisma.mensagemIA.create({ data: { role: 'user', content: `O meu nome é ${nomeFornecido}`, clienteId: senderNumber }});
+
+            const btnPrimeiraVez = [
+                { id: 'btn_servicos', title: 'Serviços e Preços' }, 
+                { id: 'btn_duvidas', title: 'Dúvidas frequentes' },
+                { id: 'btn_equipe', title: 'Falar com a equipe' }
+            ];
+            const textoBoasVindas = `Muito prazer, ${nomeFornecido}! ✨\n\nEscolhe uma das opções abaixo para começarmos:`;
+            
+            await sendInteractiveMenu(null, jid, textoBoasVindas, btnPrimeiraVez);
+            await prisma.mensagemIA.create({ data: { role: 'assistant', content: textoBoasVindas, clienteId: senderNumber }});
+            return;
+        }
+        // =========================================================================
+
         stateMachine.set(senderNumber, userState);
 
         const msgLower = textMessage.trim().toLowerCase();
@@ -57,25 +95,24 @@ async function handleMessage(message, contact) {
         if (cmdsIntuitosUI.includes(msgLower)) {
              userState.step = STEPS.MENU_PRINCIPAL;
              userState.data = {};
-             await sendMenu(null, senderNumber);
+             await sendMenu(null, jid);
         }
-        // SE o cliente clicou num serviço no modal de Preços, injeta o utilizador na fase 2 de agendamento!
         else if (textMessage.startsWith('srv_')) {
             const servicoId = textMessage.replace('srv_', '');
             userState.step = STEPS.AGENDAMENTO_SERVICO;
             stateMachine.set(senderNumber, userState);
-            await handleAgendamento(null, senderNumber, servicoId, senderNumber, stateMachine, STEPS);
+            await handleAgendamento(null, jid, servicoId, senderNumber, stateMachine, STEPS);
         }
         else if (userState.step.startsWith('AGENDAMENTO_')) {
-            await handleAgendamento(null, senderNumber, textMessage, senderNumber, stateMachine, STEPS);
+            await handleAgendamento(null, jid, textMessage, senderNumber, stateMachine, STEPS);
         }
         else {
              switch (userState.step) {
                   case STEPS.MENU_PRINCIPAL:
-                      await handleEstrategiaLLMSalvos(null, senderNumber, textMessage, senderNumber);
+                      await handleEstrategiaLLMSalvos(null, jid, textMessage, senderNumber);
                       break;
                   case STEPS.CANCELAR_AGENDAMENTO:
-                      await processarCancelamento(null, senderNumber, textMessage, senderNumber, stateMachine, STEPS);
+                      await processarCancelamento(null, jid, textMessage, senderNumber, stateMachine, STEPS);
                       break;
                   default:
                       userState.step = STEPS.MENU_PRINCIPAL; userState.data = {};
@@ -96,7 +133,7 @@ async function sendMenu(sockIgnorado, jid) {
         { id: '5', title: 'Av., Mapa / Hrs', description: 'Geocalização' },
         { id: '6', title: 'Falar com Humano', description: 'Atendimento Orgânico.' }
     ];
-    await sendInteractiveMenu(jid, '*Portal Da Barbearia ✂️*\nÉ bem prático! Podes simplesmente prosseguir tocando num botão abaixo 👇', menuOptions);
+    await sendInteractiveMenu(null, jid, '*Portal Da Barbearia ✂️*\nÉ bem prático! Podes simplesmente prosseguir tocando num botão abaixo 👇', menuOptions);
 }
 
 async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber) {
@@ -108,7 +145,7 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
         case 'btn_servicos':
             await verPrecosEServicos(null, jid); 
             await prisma.mensagemIA.create({ data: { role: 'user', content: "Mostre os serviços e preços", clienteId: senderNumber }});
-            await prisma.mensagemIA.create({ data: { role: 'assistant', content: "Aqui estão os nossos preços.", clienteId: senderNumber }});
+            await prisma.mensagemIA.create({ data: { role: 'assistant', content: "Aqui estão os nossos serviços e preços.", clienteId: senderNumber }});
             break; 
         case '3': await verMeusAgendamentos(null, jid, senderNumber); break; 
         case '4': await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS); break;
@@ -133,29 +170,16 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
                    take: 4 
             });
 
-            if (historicoCru.length === 0) {
-                await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber }});
-                
-                const btnPrimeiraVez = [
-                    { id: 'btn_servicos', title: 'Serviços e Preços' }, 
-                    { id: 'btn_duvidas', title: 'Dúvidas frequentes' },
-                    { id: 'btn_equipe', title: 'Falar com a equipe' }
-                ];
-                const textoBoasVindas = `Olá! 👋 Bem-vindo à nossa Barbearia!\nÉ um prazer ter-te por aqui. \n\nEscolhe uma das opções abaixo para começarmos:`;
-                
-                await sendInteractiveMenu(jid, textoBoasVindas, btnPrimeiraVez);
-                await prisma.mensagemIA.create({ data: { role: 'assistant', content: textoBoasVindas, clienteId: senderNumber }});
-                return; 
-            }
-
             let statusRetorno = "NOVO";
-            const ultimaMsgData = new Date(historicoCru[0].criadoEm);
-            const hoje = new Date();
-            
-            if (ultimaMsgData.toDateString() === hoje.toDateString()) {
-                statusRetorno = "RETORNO_MESMO_DIA"; 
-            } else {
-                statusRetorno = "RETORNO_OUTRO_DIA"; 
+            if (historicoCru.length > 0) {
+                const ultimaMsgData = new Date(historicoCru[0].criadoEm);
+                const hoje = new Date();
+                
+                if (ultimaMsgData.toDateString() === hoje.toDateString()) {
+                    statusRetorno = "RETORNO_MESMO_DIA"; 
+                } else {
+                    statusRetorno = "RETORNO_OUTRO_DIA"; 
+                }
             }
             
             await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber }});

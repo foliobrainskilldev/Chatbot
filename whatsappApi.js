@@ -11,16 +11,19 @@ const api = axios.create({
     }
 });
 
-// Marca a mensagem como Lida (Ticks Azuis)
-async function markAsRead(messageId) {
+// Nova Função Unificada: Ticks Azuis + "Escrevendo..." 🚀
+async function markAsReadAndTyping(messageId) {
     try {
         await api.post('/messages', {
             messaging_product: 'whatsapp',
             status: 'read',
-            message_id: messageId
+            message_id: messageId,
+            typing_indicator: {
+                type: 'text'
+            }
         });
     } catch (error) {
-        console.error("Erro ao marcar como lida:", error.response?.data || error.message);
+        console.error("Erro ao marcar como lida e escrevendo:", error.response?.data || error.message);
     }
 }
 
@@ -75,4 +78,4 @@ async function sendInteractiveMenu(to, text, options) {
     }
 }
 
-module.exports = { sendText, sendInteractiveMenu, markAsRead };
+module.exports = { sendText, sendInteractiveMenu, markAsReadAndTyping };
