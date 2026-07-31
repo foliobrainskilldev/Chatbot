@@ -5,19 +5,41 @@ const groq = new OpenAI({
     baseURL: "https://api.groq.com/openai/v1",
 });
 
-async function responderComGroq(mensagemCliente, contextAgendamentos = 0, historicoAnterior, statusRetorno = "NOVO") {
+// Nova função para extrair SOMENTE o nome caso o cliente responda com frases longas
+async function extrairNomeComGroq(textoCliente) {
+    if (!process.env.GROQ_API_KEY) return "IGNORAR";
+
+    try {
+        const resposta = await groq.chat.completions.create({
+            model: "llama-3.1-8b-instant",
+            messages: [
+                { role: "system", content: "O utilizador está a responder como gostaria de ser chamado. A tua única função é extrair o PRIMEIRO NOME dele. Se ele disser 'O meu nome é Acácio', 'Podes me chamar de João' ou 'Sou a Maria', respondes SÓ com o nome ('Acácio', 'João', 'Maria'). Se ele disser algo que CLARAMENTE NÃO É UM NOME (ex: 'menu', 'agendar', 'quero marcar', 'ola'), responde EXATAMENTE com a palavra: IGNORAR." },
+                { role: "user", content: textoCliente }
+            ],
+            temperature: 0.1,
+            max_tokens: 15
+        });
+        return resposta.choices[0]?.message?.content.trim() || "IGNORAR";
+    } catch (erro) {
+        return "IGNORAR";
+    }
+}
+
+async function responderComGroq(mensagemCliente, contextAgendamentos = 0, historicoAnterior, statusRetorno = "NOVO", nomeCliente = "") {
     
     if (!process.env.GROQ_API_KEY) return "Infelizmente estarei cego momentaneamente, avança pelo menu.";
 
     const INSTRUCOES_BLINDADAS_CONTEXTO = `És o Assistente Virtual Inteligente de uma Barbearia em Moçambique.
 Objetivo: Acionar comandos ocultos ou conversar de forma extremamente natural e humana.
 
+NOME DO CLIENTE: "${nomeCliente || 'Amigo'}"
 ESTADO TEMPORAL DESTE CLIENTE AGORA: "${statusRetorno}"
 
 REGRA DE SAUDAÇÕES E CONTINUAÇÕES:
-1. SE for "RETORNO_MESMO_DIA": O cliente já esteve a falar contigo HOJE. É proibido dizer "Bom dia/tarde". Sê contínuo: "O que mais te posso ajudar?", "Estou aqui, podes falar".
-2. SE for "RETORNO_OUTRO_DIA": Cumprimenta de forma calorosa.
-3. NÃO SEJAS ROBÓTICO. 
+1. Trata o cliente pelo seu nome (${nomeCliente}) de vez em quando, para manteres a empatia, mas sem pareceres repetitivo.
+2. SE for "RETORNO_MESMO_DIA": O cliente já esteve a falar contigo HOJE. É proibido dizer "Bom dia/tarde". Sê contínuo: "O que mais te posso ajudar?", "Diz lá, ${nomeCliente}".
+3. SE for "RETORNO_OUTRO_DIA": Cumprimenta de forma calorosa.
+4. NÃO SEJAS ROBÓTICO. 
 
 🚨 REGRAS DE COMANDOS DE SISTEMA (MUITO IMPORTANTE):
 Se o cliente demonstrar intenção de fazer alguma das ações abaixo, tens de responder EXATAMENTE E APENAS com a palavra-chave correspondente.
@@ -50,7 +72,7 @@ Lembrança final: O cliente tem ${contextAgendamentos} marcações ativas. NUNCA
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant", 
             messages: constructMessagesFlowEngineLpu,
-            temperature: 0.2, // Baixei a temperatura de 0.3 para 0.2 para evitar que a IA fuja das regras
+            temperature: 0.2, 
             max_tokens: 250 
         });
         
@@ -62,4 +84,4 @@ Lembrança final: O cliente tem ${contextAgendamentos} marcações ativas. NUNCA
     }
 }
 
-module.exports = { responderComGroq };
+module.exports = { responderComGroq, extrairNomeComGroq };
