@@ -1,16 +1,20 @@
 const { prisma } = require('./db');
 const { format } = require('date-fns');
-const { sendDelayedText } = require('./botUtils');
+const { sendDelayedText, sendInteractiveMenu } = require('./botUtils');
 
 async function verPrecosEServicos(sockIgnorado, jid) {
     const servicos = await prisma.servico.findMany();
-    let texto = `📋 *Nossos Serviços e Preços:*\n\n`;
     
-    servicos.forEach(s => {
-        texto += `✂️ *${s.nome}*\n💰 Preço: ${s.preco} MT\n⏱️ Duração: ${s.duracaoMin} min\n\n`;
-    });
+    // Converte a tabela de texto num Modal (Lista de Botões)
+    let optServicos = servicos.map(s => ({
+        id: 'srv_' + s.id, // O prefixo srv_ dirá ao bot para iniciar agendamento se o cliente clicar
+        title: s.nome,
+        description: `${s.preco} MT - ⏱️ ${s.duracaoMin} min`
+    }));
     
-    await sendDelayedText(null, jid, texto);
+    optServicos.push({ id: '0', title: 'Voltar ao Menu' });
+
+    await sendInteractiveMenu(null, jid, '📋 *Nossos Serviços e Preços:*\nSe quiseres marcar um destes cortes agora, basta clicares nele! 👇', optServicos);
 }
 
 async function verMeusAgendamentos(sockIgnorado, jid, senderNumber) {
@@ -27,7 +31,6 @@ async function verMeusAgendamentos(sockIgnorado, jid, senderNumber) {
 
     let texto = `📅 *Os teus próximos agendamentos:*\n\n`;
     agendamentos.forEach((ag, index) => {
-        // Envolvemos o 'às' em ' ' para isolar o termo ao Date-fns
         const dataStr = format(ag.dataHora, "dd/MM/yyyy 'às' HH:mm");
         const barbeiroNome = ag.barbeiro ? ag.barbeiro.nome : 'Qualquer um';
         texto += `*${index + 1}.* ${ag.servico.nome}\n🕑 Data: ${dataStr}\n💈 Barbeiro: ${barbeiroNome}\n\n`;
