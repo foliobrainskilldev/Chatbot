@@ -27,7 +27,8 @@ async function verMeusAgendamentos(sockIgnorado, jid, senderNumber) {
 
     let texto = `📅 *Os teus próximos agendamentos:*\n\n`;
     agendamentos.forEach((ag, index) => {
-        const dataStr = format(ag.dataHora, 'dd/MM/yyyy às HH:mm');
+        // Envolvemos o 'às' em ' ' para isolar o termo ao Date-fns
+        const dataStr = format(ag.dataHora, "dd/MM/yyyy 'às' HH:mm");
         const barbeiroNome = ag.barbeiro ? ag.barbeiro.nome : 'Qualquer um';
         texto += `*${index + 1}.* ${ag.servico.nome}\n🕑 Data: ${dataStr}\n💈 Barbeiro: ${barbeiroNome}\n\n`;
     });
