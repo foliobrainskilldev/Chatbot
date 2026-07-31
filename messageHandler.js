@@ -31,14 +31,7 @@ async function handleMessage(message, contact) {
 
     let cliente = await getOrCreateCliente(senderNumber);
 
-    // APANHAR DE FACTO OS SEUS PRONÚNCIADOS REAIS DOS NOMES WHATSAPP (Sincroniza sem Precisares Perguntado!) 🚀🔥
-    if (contact?.profile?.name && cliente.nome !== contact.profile.name) {
-         cliente = await prisma.cliente.update({
-              where: { id: senderNumber },
-              data: { nome: contact.profile.name }
-         });
-    }
-
+    // [REMOVIDA] A captura automática do nome de perfil para evitar falhas onde a IA chama o cliente com base no seu status ou com o perfil de outra pessoa.
 
     if (cliente.falarHumano) {
         if (textMessage.trim().toLowerCase() === '#sair') {
@@ -73,7 +66,8 @@ async function handleMessage(message, contact) {
         else {
              switch (userState.step) {
                   case STEPS.MENU_PRINCIPAL:
-                      await handleEstrategiaLLMSalvos(null, senderNumber, textMessage, senderNumber, cliente);
+                      // Passamos ao processador sem tentar forçar a injeção do nome não definido
+                      await handleEstrategiaLLMSalvos(null, senderNumber, textMessage, senderNumber);
                       break;
                   case STEPS.CANCELAR_AGENDAMENTO:
                       await processarCancelamento(null, senderNumber, textMessage, senderNumber, stateMachine, STEPS);
@@ -107,7 +101,7 @@ async function sendMenu(sockIgnorado, jid) {
 }
 
 
-async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber, dataClientebaseRawInfoRealWApp) {
+async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber) {
     const option = textMessage.trim();
     
     switch (option) {
@@ -125,29 +119,46 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             
             console.log(`🤖 | Chat Orgânico C. LLAMA-GroqLPU! de ${senderNumber}`);
             
-            //  --- P R I S M A    I n t e l   ( E N G L Y P T A M E N T   S  D S  C  I V B ). !
-            
-            // 1. GUARDAMOS PRO MUNDO MEMÓRIA SQL DA CONVERSA ACTUAL DESSE CLIENT!
+            // 1. GUARDAMOS A MEMÓRIA DA MENSAGEM DO USUÁRIO
             await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber }});
             
-            // 2. BUSCA AS MEMORIZADAS RECIENTES (Pra contextual). Puxe SÒ O SEU histórico (Where client_ID limit. Máxima Performance da Máquina, Buscaremos 6 unicos registo ultimos da chat DB dele limit/asc desc limit!)
+            // 2. BUSCA AS MEMORIZADAS RECENTES
             const asConversasPassadasGostosDelaDbMemorie = await prisma.mensagemIA.findMany({
                    where: { clienteId: senderNumber }, orderBy: { criadoEm: 'asc' }, take: 10 
             });
-            // O Quants Cortes Marcadas Perto Presenta para a LLM entender estado no Groqs
             const constCortesG = await prisma.agendamento.count({ where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } }});
 
             
-            // 3. E CHAMAMOO O "Jarro das Águas" P Groqs a Pura I.A e as conversinhas e O Profile do whatsApps! 🚀
-            const textIArid = await responderComGroq(textMessage, (dataClientebaseRawInfoRealWApp.nome || "Meu Amigo"), constCortesG, asConversasPassadasGostosDelaDbMemorie);
+            // 3. ENVIAMOS À IA E RECEBEMOS A INTENÇÃO OU O TEXTO
+            const textIArid = await responderComGroq(textMessage, constCortesG, asConversasPassadasGostosDelaDbMemorie);
             
-            
-            // 4 . CONVERTÊMO SALVO SQL (Assistentes Groqq!). A WHAAP Resps IAs. P Ela n se fazer esquecer daqui d horas !! : 
-            await prisma.mensagemIA.create({ data: { role: 'assistant', content: textIArid, clienteId: senderNumber }});
-             
+            const intentCheck = textIArid.trim().toUpperCase();
 
-            // Finalmente Dispara o Output da Metr. WhtAp UI. : A API Fake "Writing..." Espera lá 2 sec.. : 
-            await sendDelayedText(null, jid, textIArid);
+            // 4. AÇÃO SEGUNDO A INTENÇÃO DETETADA (Routing Dinâmico Natural)
+            if (intentCheck.includes('/AGENDAR')) {
+                await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);
+            } else if (intentCheck.includes('/CANCELAR')) {
+                await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS);
+            } else if (intentCheck.includes('/PRECOS')) {
+                await verPrecosEServicos(null, jid);
+                await sendMenu(null, jid);
+            } else if (intentCheck.includes('/AGENDA')) {
+                await verMeusAgendamentos(null, jid, senderNumber);
+                await sendMenu(null, jid);
+            } else if (intentCheck.includes('/LOCAL')) {
+                await sendDelayedText(null, jid, `📍 *Viajante - Como nos achar:* \n> Av. 24 de Julho (Encontra Maputo/PT), 🕒 Seg as Sb : (09 as 19)`);
+                await sendMenu(null, jid);
+            } else if (intentCheck.includes('/HUMANO')) {
+                await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
+                await sendDelayedText(null, jid, 'Estamos acoplados agr! Vai vir alguem aí pra você ao teclado espere um cheirinho...');
+            } else if (intentCheck.includes('/MENU')) {
+                await sendMenu(null, jid);
+            } else {
+                // Se a IA decidiu que é apenas bate-papo: 
+                // Salvamos no SQL para contexto futuro e disparamos para o usuário!
+                await prisma.mensagemIA.create({ data: { role: 'assistant', content: textIArid, clienteId: senderNumber }});
+                await sendDelayedText(null, jid, textIArid);
+            }
             break;
     }
 }

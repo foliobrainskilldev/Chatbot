@@ -5,29 +5,41 @@ const groq = new OpenAI({
     baseURL: "https://api.groq.com/openai/v1",
 });
 
-async function responderComGroq(mensagemCliente, nomeUserDb, contextAgendamentos = 0, historicoAnterior) {
+async function responderComGroq(mensagemCliente, contextAgendamentos = 0, historicoAnterior) {
     
-    if (!process.env.GROQ_API_KEY) return "Infelizmente estarei cega momentaneamente, avança pelo menu.";
+    if (!process.env.GROQ_API_KEY) return "Infelizmente estarei cego momentaneamente, avança pelo menu.";
 
-    // O Cérebro Blindado à Barbearia com Informações vivas deste Cliente de Cada Vez 🎯 : 
-    const INSTRUCOES_BLINDADAS_CONTEXTO = `
-És Atendente oficial e gentil moçambicano duma incrível Barbearia Moçambique, foca numa língua local e cordial mas educada do Português Moçambicano, 
-**ESTADO INCRÍVEL IMPORTANTE ACTUAL**: O Sr com quem tu estás à papear o celular dele regista chamar-se no Meta App : "${nomeUserDb}". Tu conheces pelo nome. Tem "${contextAgendamentos}" marcações ao todo actuais hoje/amanha ou proxima semanas!
-**DIRETRIZ DE BLINDAGEM MÁXIMA DA PERSONALIDADE!:** Se o utilizador inventar de falatórios sobre Matemática Básica/Física Cuântica, Saúde Médicas Pessoalidades Forasteiras sem conexos nulas com Serviços Capilares de Uma Clínica da Barba... TU INTERCEPETA-lo de leve!! Retorce pro centro sem medos e gentilmente avisando p/ o seu percurso : Sendo Um AI Robótico restritíssímo treinado pro corte da Tesouraria Barbária só focaremos ai 😂 . (Ex.. 'Chefe só curto barbas me desculpas não to pesco essa não!' algo engraçado assim..)!! Nunca aceita outro temas!.
+    // O Cérebro Blindado à Barbearia com sistema de deteção de intenção! 🎯
+    const INSTRUCOES_BLINDADAS_CONTEXTO = `És um assistente virtual oficial e gentil de uma Barbearia em Moçambique. O teu papel é conversar com o cliente de forma natural, tirar dúvidas e, principalmente, direcioná-lo para os fluxos do sistema quando ele demonstrar o que quer fazer.
+O cliente tem atualmente ${contextAgendamentos} marcações ativas.
 
-*Regras da Rotina p: Se ele referenciar marcar, horários vagas ... remate dizendo para lançarem ai na textbox à literal a palavrinha mágica (sem ser entre aspas ok só): "Menu", e as funcionalidades nativa abrem aos utilizadores a janelinhas !
+IMPORTANTE: Não sabes o nome do cliente a menos que ele o diga. Não assumas nomes de perfis de whatsapp ou números. És a inteligência do atendimento, não um barbeiro da loja.
 
-Não cuspas blocos intensos maçadores textuais imensos sem piedades!. Curta E directa. Põe Smiles 😊 e empolgação`;
+Regra de Ouro - Deteção de Intenção (Foco Máximo):
+Se o cliente expressar vontade de realizar uma destas ações, NÃO respondas com nenhum texto conversacional. Responde APENAS E ESTRITAMENTE com a palavra-chave correspondente:
+- Querer agendar, marcar um corte, fazer a barba: /AGENDAR
+- Querer cancelar uma marcação ou corte: /CANCELAR
+- Querer saber preços, serviços ou valores: /PRECOS
+- Querer ver as suas marcações ou horários agendados: /AGENDA
+- Querer saber a localização, mapa ou horário da barbearia: /LOCAL
+- Pedir para falar com um humano, atendente, ou pessoa real: /HUMANO
+- Pedir o menu principal de opções: /MENU
+
+Exemplo: Se o cliente disser "Quero cortar o cabelo amanhã", a tua resposta DEVE ser apenas: /AGENDAR
+Exemplo 2: Se o cliente disser "Qual o valor da barba?", a tua resposta DEVE ser apenas: /PRECOS
+Exemplo 3: Se disser "cancele por favor", a tua resposta DEVE ser: /CANCELAR
+
+Se a mensagem for apenas uma saudação ("Oi", "Bom dia", "Tudo bem?") ou uma pergunta geral, responde de forma amigável, educada e MUITO curta (máximo 2 linhas).
+Nunca fales sobre outros assuntos além da barbearia (matemática, política, etc.). Se ele desviar, traz de volta ao tema de forma bem-humorada.`;
 
     try {
-        console.log(`🧠 Invocando Motor Pensador da GROQ: (C/ Historico e Lembretes...)`);
+        console.log(`🧠 Invocando Motor Pensador da GROQ: (Deteção de Intenções...)`);
 
-        // Nós Empilhamos em Stack as matriz das "Cestas Mensagens Passadas"! Até As Limitamos a 6 Últimas Só, Para manter velocidade Supersónicas! e custos zeros nas API deles se futuramente aplicados!! 
         const constructMessagesFlowEngineLpu = [
             { role: "system", content: INSTRUCOES_BLINDADAS_CONTEXTO }
         ];
 
-        // Varremos p I.A entenderem-se as escritas que tiveram ai atrás
+        // Varremos para I.A entenderem-se as escritas passadas (Sem sobrecarregar a memória)
         if (historicoAnterior && historicoAnterior.length > 0) {
             historicoAnterior.forEach(linhaOld => {
                 constructMessagesFlowEngineLpu.push({ role: linhaOld.role, content: linhaOld.content });
@@ -39,7 +51,7 @@ Não cuspas blocos intensos maçadores textuais imensos sem piedades!. Curta E d
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant", 
             messages: constructMessagesFlowEngineLpu,
-            temperature: 0.5, // Resposta bastante Lógica, Controlada em Restrição e Conservativa Anti Hallucination !
+            temperature: 0.2, // Temperatura baixa para garantir que a IA não falhe os comandos /AGENDAR, /CANCELAR, etc.
             max_tokens: 300 
         });
         
@@ -47,7 +59,7 @@ Não cuspas blocos intensos maçadores textuais imensos sem piedades!. Curta E d
 
     } catch (erro) {
         console.error("❌ ERRO NA CHAMADA GROQ: ", erro?.response?.data || erro.message);
-        return "Neste instante exato ocorreu lapso da rede de comunicações. Para segurança digita somente a palavra 'Menu' 🙏🏽";
+        return "/MENU"; // Em caso de falha da API, força sempre a abertura do menu para proteger o utilizador.
     }
 }
 
