@@ -32,16 +32,12 @@ async function handleMessage(message, contact) {
     console.log(`\n[PASSO 1] Lendo mensagem de ${senderNumber}: "${textMessage}"`);
 
     try {
-        console.log(`[PASSO 2] Buscando Cliente...`);
         let cliente = await getOrCreateCliente(senderNumber);
 
         if (cliente.falarHumano) {
             if (textMessage.trim().toLowerCase() === '#sair') {
-                console.log(`[PASSO 3.1] Bot acordou! Atendimento Humano desativado.`);
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: false } });
                 await sendDelayedText(null, senderNumber, '🔄 Atendimento automático restaurado! Diga *"Oi"* ou *"Menu"* para prosseguir.');
-            } else {
-                console.log(`[⚠️ AVISO] Bot silenciado. Utilizador no modo Humano.`);
             }
             return; 
         }
@@ -52,21 +48,17 @@ async function handleMessage(message, contact) {
         const msgLower = textMessage.trim().toLowerCase();
         const cmdsIntuitosUI= ['menu', 'início', 'inicio', 'voltar', 'cancelar tudo', '0'];
 
-        console.log(`[PASSO 4] Estado Atual: ${userState.step}`);
-
         if (cmdsIntuitosUI.includes(msgLower)) {
              userState.step = STEPS.MENU_PRINCIPAL;
              userState.data = {};
              await sendMenu(null, senderNumber);
         }
         else if (userState.step.startsWith('AGENDAMENTO_')) {
-            console.log(`[PASSO 5] Fluxo de Agendamento nativo em curso.`);
             await handleAgendamento(null, senderNumber, textMessage, senderNumber, stateMachine, STEPS);
         }
         else {
              switch (userState.step) {
                   case STEPS.MENU_PRINCIPAL:
-                      console.log(`[PASSO 5] Encaminhando à IA (Groq)...`);
                       await handleEstrategiaLLMSalvos(null, senderNumber, textMessage, senderNumber);
                       break;
                   case STEPS.CANCELAR_AGENDAMENTO:
@@ -77,7 +69,6 @@ async function handleMessage(message, contact) {
                       break;
               }
         }
-        
     } catch (error) {
         console.error(`❌ Erro no Engine Central:`, error);
     }
@@ -98,59 +89,96 @@ async function sendMenu(sockIgnorado, jid) {
 async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber) {
     const option = textMessage.trim();
     
+    // Tratamento dos Botões da Primeira Interação e do Menu Principal
     switch (option) {
         case '1': await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS); break;
-        case '2': await verPrecosEServicos(null, jid); break; 
+        case '2': 
+        case 'btn_servicos':
+            await verPrecosEServicos(null, jid); 
+            // Guardamos a ação na memória para a IA saber o que aconteceu
+            await prisma.mensagemIA.create({ data: { role: 'user', content: "Mostre os serviços e preços", clienteId: senderNumber }});
+            await prisma.mensagemIA.create({ data: { role: 'assistant', content: "Aqui estão os nossos preços.", clienteId: senderNumber }});
+            break; 
         case '3': await verMeusAgendamentos(null, jid, senderNumber); break; 
         case '4': await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS); break;
         case '5': await sendDelayedText(null, jid, `📍 *Viajante - Como nos achar:* \n> Av. 24 de Julho (Encontra Maputo/PT), 🕒 Seg as Sb : (09 as 19)`); break;
+        
+        case 'btn_duvidas':
+            await sendDelayedText(null, jid, 'Podes perguntar-me o que quiseres! Qual é a tua dúvida sobre a nossa barbearia?');
+            await prisma.mensagemIA.create({ data: { role: 'user', content: "Tenho dúvidas frequentes.", clienteId: senderNumber }});
+            await prisma.mensagemIA.create({ data: { role: 'assistant', content: "Podes perguntar-me o que quiseres!", clienteId: senderNumber }});
+            break;
+
         case '6': 
+        case 'btn_equipe':
             await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
-            await sendDelayedText(null, jid, 'Estamos acoplados agr! Vai vir alguem aí pra você ao teclado espere um cheirinho...'); break;
+            await sendDelayedText(null, jid, 'Atendimento transferido! Um de nossos barbeiros já vem te responder. Aguarda só um pouquinho...'); 
+            break;
             
         default: 
-            console.log(`🤖 | [PASSO 6] Chat IA Acionado!`);
-            
-            // 1. Guarda a fala atual do utilizador
-            await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber }});
-            
-            // 2. CORREÇÃO CRUCIAL: Busca apenas as 4 ÚLTIMAS mensagens de forma decrescente para não trazer velharia e depois volta a virar
+            // ----- VERIFICAÇÃO DO HISTÓRICO (NOVOS VS RETORNOS) -----
             const historicoCru = await prisma.mensagemIA.findMany({
                    where: { clienteId: senderNumber }, 
                    orderBy: { criadoEm: 'desc' }, 
                    take: 4 
             });
-            const asConversasPassadasGostosDelaDbMemorie = historicoCru.reverse();
+
+            // É A PRIMEIRA VEZ DE SEMPRE QUE O UTILIZADOR FALA CONNOSCO? (Dispara os 3 Botões na Vertical)
+            if (historicoCru.length === 0) {
+                console.log(`[PASSO 6] É a primeira vez do cliente ${senderNumber}! Enviando boas vindas.`);
+                
+                await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber }});
+                
+                const btnPrimeiraVez = [
+                    { id: 'btn_servicos', title: 'Ver serviços e preços' },
+                    { id: 'btn_duvidas', title: 'Dúvidas frequentes' },
+                    { id: 'btn_equipe', title: 'Falar com a equipe' }
+                ];
+                const textoBoasVindas = `Olá! 👋 Bem-vindo à nossa Barbearia!\nÉ um prazer ter-te por aqui. \n\nEscolhe uma das opções abaixo para começarmos:`;
+                
+                await sendInteractiveMenu(jid, textoBoasVindas, btnPrimeiraVez);
+                await prisma.mensagemIA.create({ data: { role: 'assistant', content: textoBoasVindas, clienteId: senderNumber }});
+                return; // Cortamos aqui. A IA (Groq) não precisa de pensar nesta etapa.
+            }
+
+            // SE NÃO FOR A PRIMEIRA VEZ, VAMOS VERIFICAR QUANTO TEMPO PASSOU
+            let statusRetorno = "NOVO";
+            const ultimaMsgData = new Date(historicoCru[0].criadoEm);
+            const hoje = new Date();
             
+            if (ultimaMsgData.toDateString() === hoje.toDateString()) {
+                statusRetorno = "RETORNO_MESMO_DIA"; // Falou connosco há horas/minutos
+            } else {
+                statusRetorno = "RETORNO_OUTRO_DIA"; // Falou connosco ontem ou noutro dia
+            }
+
+            console.log(`[PASSO 6] Cliente Existente. Status: ${statusRetorno}`);
+            
+            await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber }});
+            
+            const asConversasPassadas = historicoCru.reverse();
             const constCortesG = await prisma.agendamento.count({ where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } }});
             
-            console.log(`[PASSO 7] Enviando para a GROQ...`);
-            const textIArid = await responderComGroq(textMessage, constCortesG, asConversasPassadasGostosDelaDbMemorie);
+            // Enviamos à IA a informação de que o cliente já nos conhece!
+            const textIArid = await responderComGroq(textMessage, constCortesG, asConversasPassadas, statusRetorno);
             
-            console.log(`[PASSO 8] Resposta da GROQ: ${textIArid.substring(0, 40)}...`);
             const intentCheck = textIArid.trim().toUpperCase();
 
-            // 3. Roteamento baseado na Intenção Oculta
-            if (intentCheck.includes('/AGENDAR')) {
-                await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);
-            } else if (intentCheck.includes('/CANCELAR')) {
-                await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS);
-            } else if (intentCheck.includes('/PRECOS')) {
-                await verPrecosEServicos(null, jid);
-            } else if (intentCheck.includes('/AGENDA')) {
-                await verMeusAgendamentos(null, jid, senderNumber);
-            } else if (intentCheck.includes('/LOCAL')) {
-                await sendDelayedText(null, jid, `📍 *Nossa Localização:* \n> Av. 24 de Julho (Encontra Maputo/PT), 🕒 Seg as Sáb : (09h às 19h)`);
-            } else if (intentCheck.includes('/HUMANO')) {
+            // Roteamento baseado na Intenção Oculta
+            if (intentCheck.includes('/AGENDAR')) await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);
+            else if (intentCheck.includes('/CANCELAR')) await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS);
+            else if (intentCheck.includes('/PRECOS')) await verPrecosEServicos(null, jid);
+            else if (intentCheck.includes('/AGENDA')) await verMeusAgendamentos(null, jid, senderNumber);
+            else if (intentCheck.includes('/LOCAL')) await sendDelayedText(null, jid, `📍 *Nossa Localização:* \n> Av. 24 de Julho (Encontra Maputo/PT), 🕒 Seg as Sáb : (09h às 19h)`);
+            else if (intentCheck.includes('/HUMANO')) {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
                 await sendDelayedText(null, jid, 'Atendimento transferido! Um de nossos barbeiros já vem te responder. Aguarda só um pouquinho...');
-            } else if (intentCheck.includes('/MENU')) {
-                await sendMenu(null, jid);
-            } else {
-                // Conversa Normal
+            } 
+            else if (intentCheck.includes('/MENU')) await sendMenu(null, jid);
+            else {
+                // É só conversa! 
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: textIArid, clienteId: senderNumber }});
                 await sendDelayedText(null, jid, textIArid);
-                console.log(`[PASSO FINAL] Resposta humanizada enviada!`);
             }
             break;
     }

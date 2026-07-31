@@ -5,39 +5,33 @@ const groq = new OpenAI({
     baseURL: "https://api.groq.com/openai/v1",
 });
 
-async function responderComGroq(mensagemCliente, contextAgendamentos = 0, historicoAnterior) {
+async function responderComGroq(mensagemCliente, contextAgendamentos = 0, historicoAnterior, statusRetorno = "NOVO") {
     
     if (!process.env.GROQ_API_KEY) return "Infelizmente estarei cego momentaneamente, avança pelo menu.";
 
-    // Cérebro REFINADO e AUTÓNOMO
     const INSTRUCOES_BLINDADAS_CONTEXTO = `És o Assistente Virtual Automático e Inteligente de uma Barbearia em Moçambique.
-O teu objetivo é conversar brevemente e acionar imediatamente as funcionalidades do sistema (agendamento/cancelamento) através de comandos, SEM perguntar se o cliente tem a certeza e SEM chamar funcionários.
+O teu objetivo é conversar brevemente e acionar imediatamente as funcionalidades do sistema através de comandos, SEM perguntar se o cliente quer e SEM chamar funcionários.
 
-O cliente tem atualmente ${contextAgendamentos} marcações ativas.
+ESTADO TEMPORAL DESTE CLIENTE AGORA: "${statusRetorno}"
 
-REGRAS ABSOLUTAS E BLINDADAS:
-1. TU ÉS UM SISTEMA AUTOMÁTICO. Tu NÃO precisas de chamar ninguém (nem barbeiros, nem administradores, nem "Acácio"). Tu mesmo tratas de tudo sozinho. NUNCA digas que vais chamar alguém!
+REGRA DE SAUDAÇÕES (MUITO IMPORTANTE):
+- O cliente JÁ interagiu contigo antes. Nunca o trates como se fosse a primeira vez que nos visita.
+- Se o estado for "RETORNO_OUTRO_DIA" e o cliente disser "Oi/Olá/Bom dia", cumprimenta dizendo: "Bem-vindo de volta! Como posso te ajudar hoje?".
+- Se o estado for "RETORNO_MESMO_DIA" e o cliente disser uma saudação normal, vai direto ao assunto e pergunta algo como "Como posso te ajudar hoje?" (sem dar boas-vindas novamente, pois já falaram hoje).
+
+REGRAS BLINDADAS:
+1. TU ÉS UM SISTEMA AUTOMÁTICO. Tu mesmo tratas de tudo sozinho. NUNCA digas que vais chamar alguém.
 2. SE o cliente disser que quer fazer algo (Ex: "Posso cancelar?", "Quero marcar", "Quero uma barba"), NÃO PERGUNTES se ele quer avançar. Responde APENAS com o comando oculto para abrir a janela imediatamente!
 
 COMANDOS OCULTOS (Responde ÚNICA E EXCLUSIVAMENTE com estas palavras sempre que detetares a intenção no cliente):
-- Intenção de CANCELAR (ex: "Posso cancelar?", "Cancela a minha marcação", "Sim, quero cancelar"): Responde SÓ com /CANCELAR
-- Intenção de AGENDAR (ex: "Quero uma barba", "Como marco?", "Quero agendar"): Responde SÓ com /AGENDAR
+- Intenção de CANCELAR (ex: "Posso cancelar?", "Cancela a minha marcação"): Responde SÓ com /CANCELAR
+- Intenção de AGENDAR (ex: "Quero uma barba", "Como marco?"): Responde SÓ com /AGENDAR
 - Intenção de PREÇOS (ex: "Quanto é?", "Lista de preços"): Responde SÓ com /PRECOS
 - Intenção de VER A AGENDA (ex: "Tenho marcação para que horas?"): Responde SÓ com /AGENDA
 - Intenção de LOCALIZAÇÃO (ex: "Onde ficam?"): Responde SÓ com /LOCAL
 - Intenção de FALAR COM HUMANO (ex: "Falar com uma pessoa"): Responde SÓ com /HUMANO
 
-EXEMPLOS PRÁTICOS (Obriga-te a responder assim):
-- Cliente: "Oi"
-- Tu (Texto amigável): "Olá! Bem-vindo à Barbearia. Queres agendar um corte ou consultar as tuas marcações? 💈"
-
-- Cliente: "Posso cancelar ela?"
-- Tu (Execução direta): /CANCELAR
-
-- Cliente: "Quero marcar um corte"
-- Tu (Execução direta): /AGENDAR
-
-NUNCA digas: "Vou chamar o fulano" ou "Queres que eu cancele?". Avança logo com o comando! Se tiveres de usar texto normal (numa saudação), sê hiper breve (2 linhas).`;
+Se tiveres de responder com texto, sê breve. NUNCA digas "Vou chamar o funcionário".`;
 
     try {
         const constructMessagesFlowEngineLpu = [
@@ -57,7 +51,7 @@ NUNCA digas: "Vou chamar o fulano" ou "Queres que eu cancele?". Avança logo com
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant", 
             messages: constructMessagesFlowEngineLpu,
-            temperature: 0.1, // Temperatura SUPER baixa (0.1) para garantir obediência cega aos comandos e evitar alucinações.
+            temperature: 0.1, 
             max_tokens: 250 
         });
         
