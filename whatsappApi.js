@@ -11,8 +11,19 @@ const api = axios.create({
     }
 });
 
+// Cache temporário para reativarmos o typing_indicator com o mesmo ID
+const lastMessageIds = new Map();
+
 // Nova Função Unificada: Ticks Azuis + "Escrevendo..." 🚀
-async function markAsReadAndTyping(messageId) {
+async function markAsReadAndTyping(messageId, to) {
+    if (messageId && to) {
+        lastMessageIds.set(to, messageId);
+    } else if (to && !messageId) {
+        messageId = lastMessageIds.get(to);
+    }
+
+    if (!messageId) return;
+
     try {
         await api.post('/messages', {
             messaging_product: 'whatsapp',
@@ -25,6 +36,11 @@ async function markAsReadAndTyping(messageId) {
     } catch (error) {
         console.error("Erro ao marcar como lida e escrevendo:", error.response?.data || error.message);
     }
+}
+
+// Dispara o estado "A escrever..." usando a memória cache da ultima mensagem
+async function sendTypingIndicator(to) {
+    await markAsReadAndTyping(null, to);
 }
 
 async function sendText(to, text) {
@@ -78,4 +94,4 @@ async function sendInteractiveMenu(to, text, options) {
     }
 }
 
-module.exports = { sendText, sendInteractiveMenu, markAsReadAndTyping };
+module.exports = { sendText, sendInteractiveMenu, markAsReadAndTyping, sendTypingIndicator };

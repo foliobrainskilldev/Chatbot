@@ -24,8 +24,9 @@ async function handleMessage(message, contact) {
     const jid = senderNumber;
 
     // 1. Aciona instantaneamente: "Ticks Azuis" + Status "Escrevendo..." 🚀
+    // Alterado: Agora enviamos o senderNumber para gravar o número no cache do typing
     if (message.id) {
-        await markAsReadAndTyping(message.id);
+        await markAsReadAndTyping(message.id, senderNumber);
     }
 
     if (message.type === 'text') {
