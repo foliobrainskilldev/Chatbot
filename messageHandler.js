@@ -4,6 +4,7 @@ const { verPrecosEServicos, verMeusAgendamentos } = require('./flowConsultas');
 const { iniciarCancelamento, processarCancelamento } = require('./flowCancelamento');
 const { sendDelayedText, sendInteractiveMenu } = require('./botUtils');
 const { responderComGroq } = require('./groqApi');
+const { markAsRead } = require('./whatsappApi'); // Importa o tick azul
 
 const stateMachine = new Map();
 const STEPS = {
@@ -19,6 +20,11 @@ const STEPS = {
 async function handleMessage(message, contact) {
     const senderNumber = message.from; 
     let textMessage = "";
+
+    // 1. Aciona instantaneamente os "Ticks Azuis" de lido no telemóvel do cliente!
+    if (message.id) {
+        await markAsRead(message.id);
+    }
 
     if (message.type === 'text') {
         textMessage = message.text.body;
@@ -52,6 +58,13 @@ async function handleMessage(message, contact) {
              userState.step = STEPS.MENU_PRINCIPAL;
              userState.data = {};
              await sendMenu(null, senderNumber);
+        }
+        // SE o cliente clicou num serviço no modal de Preços, injeta o utilizador na fase 2 de agendamento!
+        else if (textMessage.startsWith('srv_')) {
+            const servicoId = textMessage.replace('srv_', '');
+            userState.step = STEPS.AGENDAMENTO_SERVICO;
+            stateMachine.set(senderNumber, userState);
+            await handleAgendamento(null, senderNumber, servicoId, senderNumber, stateMachine, STEPS);
         }
         else if (userState.step.startsWith('AGENDAMENTO_')) {
             await handleAgendamento(null, senderNumber, textMessage, senderNumber, stateMachine, STEPS);
@@ -89,13 +102,11 @@ async function sendMenu(sockIgnorado, jid) {
 async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber) {
     const option = textMessage.trim();
     
-    // Tratamento dos Botões da Primeira Interação e do Menu Principal
     switch (option) {
         case '1': await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS); break;
         case '2': 
         case 'btn_servicos':
             await verPrecosEServicos(null, jid); 
-            // Guardamos a ação na memória para a IA saber o que aconteceu
             await prisma.mensagemIA.create({ data: { role: 'user', content: "Mostre os serviços e preços", clienteId: senderNumber }});
             await prisma.mensagemIA.create({ data: { role: 'assistant', content: "Aqui estão os nossos preços.", clienteId: senderNumber }});
             break; 
@@ -116,21 +127,17 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             break;
             
         default: 
-            // ----- VERIFICAÇÃO DO HISTÓRICO (NOVOS VS RETORNOS) -----
             const historicoCru = await prisma.mensagemIA.findMany({
                    where: { clienteId: senderNumber }, 
                    orderBy: { criadoEm: 'desc' }, 
                    take: 4 
             });
 
-            // É A PRIMEIRA VEZ DE SEMPRE QUE O UTILIZADOR FALA CONNOSCO? (Dispara os 3 Botões na Vertical)
             if (historicoCru.length === 0) {
-                console.log(`[PASSO 6] É a primeira vez do cliente ${senderNumber}! Enviando boas vindas.`);
-                
                 await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber }});
                 
                 const btnPrimeiraVez = [
-                    { id: 'btn_servicos', title: 'Serviços e Preços' }, // <-- CORRIGIDO PARA TER MENOS DE 20 CARACTERES
+                    { id: 'btn_servicos', title: 'Serviços e Preços' }, 
                     { id: 'btn_duvidas', title: 'Dúvidas frequentes' },
                     { id: 'btn_equipe', title: 'Falar com a equipe' }
                 ];
@@ -138,33 +145,27 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
                 
                 await sendInteractiveMenu(jid, textoBoasVindas, btnPrimeiraVez);
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: textoBoasVindas, clienteId: senderNumber }});
-                return; // Cortamos aqui. A IA (Groq) não precisa de pensar nesta etapa.
+                return; 
             }
 
-            // SE NÃO FOR A PRIMEIRA VEZ, VAMOS VERIFICAR QUANTO TEMPO PASSOU
             let statusRetorno = "NOVO";
             const ultimaMsgData = new Date(historicoCru[0].criadoEm);
             const hoje = new Date();
             
             if (ultimaMsgData.toDateString() === hoje.toDateString()) {
-                statusRetorno = "RETORNO_MESMO_DIA"; // Falou connosco há horas/minutos
+                statusRetorno = "RETORNO_MESMO_DIA"; 
             } else {
-                statusRetorno = "RETORNO_OUTRO_DIA"; // Falou connosco ontem ou noutro dia
+                statusRetorno = "RETORNO_OUTRO_DIA"; 
             }
-
-            console.log(`[PASSO 6] Cliente Existente. Status: ${statusRetorno}`);
             
             await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber }});
             
             const asConversasPassadas = historicoCru.reverse();
             const constCortesG = await prisma.agendamento.count({ where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } }});
             
-            // Enviamos à IA a informação de que o cliente já nos conhece!
             const textIArid = await responderComGroq(textMessage, constCortesG, asConversasPassadas, statusRetorno);
-            
             const intentCheck = textIArid.trim().toUpperCase();
 
-            // Roteamento baseado na Intenção Oculta
             if (intentCheck.includes('/AGENDAR')) await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);
             else if (intentCheck.includes('/CANCELAR')) await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS);
             else if (intentCheck.includes('/PRECOS')) await verPrecosEServicos(null, jid);
@@ -176,7 +177,6 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             } 
             else if (intentCheck.includes('/MENU')) await sendMenu(null, jid);
             else {
-                // É só conversa! 
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: textIArid, clienteId: senderNumber }});
                 await sendDelayedText(null, jid, textIArid);
             }

@@ -1,54 +1,42 @@
 const { prisma } = require('./db');
 const { format } = require('date-fns');
-const { sendInteractiveMenu, sendDelayedText } = require('./botUtils');
+const { sendDelayedText, sendInteractiveMenu } = require('./botUtils');
 
-async function iniciarCancelamento(sockIgnorado, jid, senderNumber, stateMachine, STEPS) {
+async function verPrecosEServicos(sockIgnorado, jid) {
+    const servicos = await prisma.servico.findMany();
+    
+    // Converte a tabela de texto num Modal (Lista de Botões)
+    let optServicos = servicos.map(s => ({
+        id: 'srv_' + s.id, // O prefixo srv_ dirá ao bot para iniciar agendamento se o cliente clicar
+        title: s.nome,
+        description: `${s.preco} MT - ⏱️ ${s.duracaoMin} min`
+    }));
+    
+    optServicos.push({ id: '0', title: 'Voltar ao Menu' });
+
+    await sendInteractiveMenu(null, jid, '📋 *Nossos Serviços e Preços:*\nSe quiseres marcar um destes cortes agora, basta clicares nele! 👇', optServicos);
+}
+
+async function verMeusAgendamentos(sockIgnorado, jid, senderNumber) {
     const agendamentos = await prisma.agendamento.findMany({
         where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } },
-        include: { servico: true },
+        include: { servico: true, barbeiro: true },
         orderBy: { dataHora: 'asc' }
     });
 
     if (agendamentos.length === 0) {
-        await sendDelayedText(null, jid, 'Não tens agendamentos futuros para cancelar.');
-        stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
+        await sendDelayedText(null, jid, 'Não tens nenhum agendamento futuro no momento. 🗓️');
         return;
     }
 
-    let opcoes = agendamentos.map((ag, i) => ({
-        id: String(i + 1),
-        title: ag.servico.nome,
-        description: format(ag.dataHora, 'dd/MM/yyyy HH:mm')
-    }));
-    opcoes.push({ id: '0', title: 'Voltar ao Menu' });
-
-    stateMachine.set(senderNumber, { step: STEPS.CANCELAR_AGENDAMENTO, data: { agendamentos } });
-    await sendInteractiveMenu(jid, '🗑️ *Cancelar Agendamento*\nQual horário pretendes cancelar?', opcoes);
-}
-
-async function processarCancelamento(sockIgnorado, jid, textMessage, senderNumber, stateMachine, STEPS) {
-    const userState = stateMachine.get(senderNumber);
-    const escolha = parseInt(textMessage.trim());
-
-    if (escolha === 0) {
-        stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
-        await sendDelayedText(null, jid, 'Cancelamento abortado. A voltar ao menu...');
-        return;
-    }
-
-    const agendamentoAlvo = userState.data.agendamentos[escolha - 1];
-    if (!agendamentoAlvo) {
-        await sendDelayedText(null, jid, 'Opção inválida.');
-        return;
-    }
-
-    await prisma.agendamento.update({
-        where: { id: agendamentoAlvo.id },
-        data: { status: 'CANCELADO' }
+    let texto = `📅 *Os teus próximos agendamentos:*\n\n`;
+    agendamentos.forEach((ag, index) => {
+        const dataStr = format(ag.dataHora, "dd/MM/yyyy 'às' HH:mm");
+        const barbeiroNome = ag.barbeiro ? ag.barbeiro.nome : 'Qualquer um';
+        texto += `*${index + 1}.* ${ag.servico.nome}\n🕑 Data: ${dataStr}\n💈 Barbeiro: ${barbeiroNome}\n\n`;
     });
 
-    await sendDelayedText(null, jid, '✅ O teu agendamento foi cancelado com sucesso!');
-    stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
+    await sendDelayedText(null, jid, texto);
 }
 
-module.exports = { iniciarCancelamento, processarCancelamento };
+module.exports = { verPrecosEServicos, verMeusAgendamentos };

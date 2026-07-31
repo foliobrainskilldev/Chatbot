@@ -1,6 +1,5 @@
 const axios = require('axios');
 
-// Variáveis de ambiente que terás de configurar no Render
 const META_TOKEN = process.env.META_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 
@@ -11,6 +10,19 @@ const api = axios.create({
         'Content-Type': 'application/json'
     }
 });
+
+// Marca a mensagem como Lida (Ticks Azuis)
+async function markAsRead(messageId) {
+    try {
+        await api.post('/messages', {
+            messaging_product: 'whatsapp',
+            status: 'read',
+            message_id: messageId
+        });
+    } catch (error) {
+        console.error("Erro ao marcar como lida:", error.response?.data || error.message);
+    }
+}
 
 async function sendText(to, text) {
     try {
@@ -35,13 +47,11 @@ async function sendInteractiveMenu(to, text, options) {
         };
 
         if (options.length <= 3) {
-            // Formato de Botões Rápidos
             interactiveObj.action.buttons = options.map(opt => ({
                 type: "reply",
                 reply: { id: opt.id, title: opt.title }
             }));
         } else {
-            // Formato de Lista (Menu)
             interactiveObj.action.button = "Ver Opções 📋";
             interactiveObj.action.sections = [{
                 title: "Escolha uma opção",
@@ -65,4 +75,4 @@ async function sendInteractiveMenu(to, text, options) {
     }
 }
 
-module.exports = { sendText, sendInteractiveMenu };
+module.exports = { sendText, sendInteractiveMenu, markAsRead };

@@ -1,14 +1,13 @@
 const { sendText, sendInteractiveMenu: metaInteractiveMenu } = require('./whatsappApi');
 
-// Função Utilitária Privada da Engrenagem Artificial Delay Aleatório Mítico: 
 const aguardar = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function sendDelayedText(arg1, arg2, arg3) {
     const jid = arg3 !== undefined ? arg2 : arg1;
     const text = arg3 !== undefined ? arg3 : arg2;
     
-    // CALCULA UMA DEMORA DE "FALSIFICAÇÃO ORGÂNICA HUMANA" ENRE 1000 a 4500 Milisegundos
-    const compassoRandomSegundos = Math.floor(Math.random() * (4500 - 1500 + 1)) + 1500;
+    // DELAY EXATO DE 2000ms a 5000ms (2 a 5 segundos)
+    const compassoRandomSegundos = Math.floor(Math.random() * (5000 - 2000 + 1)) + 2000;
     await aguardar(compassoRandomSegundos);
     
     await sendText(jid, text);
@@ -19,8 +18,9 @@ async function sendInteractiveMenu(arg1, arg2, arg3, arg4) {
     const text = arg4 !== undefined ? arg3 : arg2;
     const options = arg4 !== undefined ? arg4 : arg3;
 
-    // Atrasar com sutilezas da leitura UI pro Menus pesados 
-    await aguardar(1000); 
+    // Delay de simulação antes de enviar menus
+    const compassoRandomSegundos = Math.floor(Math.random() * (4000 - 2000 + 1)) + 2000;
+    await aguardar(compassoRandomSegundos); 
 
     if (!options || !Array.isArray(options)) {
         await sendText(jid, text);
