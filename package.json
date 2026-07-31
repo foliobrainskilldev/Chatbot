@@ -1,12 +1,12 @@
 {
   "name": "bot-barbearia-mz-oficial",
-  "version": "3.0.0",
-  "description": "Bot de WhatsApp (Meta API) com IA Inteligente",
+  "version": "4.0.0",
+  "description": "Bot de WhatsApp (Meta API) com IA Inteligente (Groq) e Memória",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build": "npm install && npx prisma generate && npx prisma db push",
-    "db:push": "npx prisma db push"
+    "build": "npm install && npx prisma generate && npx prisma db push --accept-data-loss",
+    "db:push": "npx prisma db push --accept-data-loss"
   },
   "dependencies": {
     "@prisma/client": "^5.10.0",
