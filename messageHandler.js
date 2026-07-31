@@ -4,7 +4,7 @@ const { verPrecosEServicos, verMeusAgendamentos } = require('./flowConsultas');
 const { iniciarCancelamento, processarCancelamento } = require('./flowCancelamento');
 const { sendDelayedText, sendInteractiveMenu } = require('./botUtils');
 const { responderComGroq } = require('./groqApi');
-const { markAsReadAndTyping } = require('./whatsappApi'); // Importa a nova função combinada!
+const { markAsReadAndTyping } = require('./whatsappApi');
 
 const stateMachine = new Map();
 const STEPS = {
@@ -23,8 +23,6 @@ async function handleMessage(message, contact) {
     let textMessage = "";
     const jid = senderNumber;
 
-    // 1. Aciona instantaneamente: "Ticks Azuis" + Status "Escrevendo..." 🚀
-    // Alterado: Agora enviamos o senderNumber para gravar o número no cache do typing
     if (message.id) {
         await markAsReadAndTyping(message.id, senderNumber);
     }
@@ -43,11 +41,20 @@ async function handleMessage(message, contact) {
     try {
         let cliente = await getOrCreateCliente(senderNumber);
 
-        if (cliente.falarHumano) {
-            if (textMessage.trim().toLowerCase() === '#sair') {
+        // =========================================================================
+        // COMANDO DE SAÍDA GLOBAL PARA REVERTER ATENDIMENTO HUMANO
+        // =========================================================================
+        if (textMessage.trim().toLowerCase() === '#sair') {
+            if (cliente.falarHumano) {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: false } });
-                await sendDelayedText(null, jid, '🔄 Atendimento automático restaurado! Diga *"Oi"* ou *"Menu"* para prosseguir.');
             }
+            await sendDelayedText(null, jid, '🔄 Atendimento automático restaurado! Podes utilizar o menu abaixo ou conversar comigo.');
+            await sendMenu(null, jid);
+            return; 
+        }
+
+        if (cliente.falarHumano) {
+            // Se já está com o humano e não disse #sair, apenas ignora para o humano falar.
             return; 
         }
 
@@ -161,7 +168,7 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
         case '6': 
         case 'btn_equipe':
             await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
-            await sendDelayedText(null, jid, 'Atendimento transferido! Um de nossos barbeiros já vem te responder. Aguarda só um pouquinho...'); 
+            await sendDelayedText(null, jid, 'Atendimento transferido! Um de nossos barbeiros já vem te responder. Aguarda só um pouquinho...\n\n(Para voltares ao atendimento automático a qualquer momento, digita *#sair*)'); 
             break;
             
         default: 
@@ -191,6 +198,7 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             const textIArid = await responderComGroq(textMessage, constCortesG, asConversasPassadas, statusRetorno);
             const intentCheck = textIArid.trim().toUpperCase();
 
+            // Lógica de proteção caso a IA traga espaços extras ou pontuações
             if (intentCheck.includes('/AGENDAR')) await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);
             else if (intentCheck.includes('/CANCELAR')) await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS);
             else if (intentCheck.includes('/PRECOS')) await verPrecosEServicos(null, jid);
@@ -198,7 +206,7 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             else if (intentCheck.includes('/LOCAL')) await sendDelayedText(null, jid, `📍 *Nossa Localização:* \n> Av. 24 de Julho (Encontra Maputo/PT), 🕒 Seg as Sáb : (09h às 19h)`);
             else if (intentCheck.includes('/HUMANO')) {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
-                await sendDelayedText(null, jid, 'Atendimento transferido! Um de nossos barbeiros já vem te responder. Aguarda só um pouquinho...');
+                await sendDelayedText(null, jid, 'Atendimento transferido! Um de nossos barbeiros já vem te responder. Aguarda só um pouquinho...\n\n(Para voltares ao atendimento automático, digita *#sair*)');
             } 
             else if (intentCheck.includes('/MENU')) await sendMenu(null, jid);
             else {
