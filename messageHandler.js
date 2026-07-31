@@ -31,19 +31,16 @@ async function handleMessage(message, contact) {
 
     let cliente = await getOrCreateCliente(senderNumber);
 
-    // [REMOVIDA] A captura automática do nome de perfil para evitar falhas onde a IA chama o cliente com base no seu status ou com o perfil de outra pessoa.
-
     if (cliente.falarHumano) {
         if (textMessage.trim().toLowerCase() === '#sair') {
             await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: false } });
-            await sendDelayedText(null, senderNumber, '🔄 Atendimento humano encerrado. Bem vindo d´novo Digite *"Menu"*!');
+            await sendDelayedText(null, senderNumber, '🔄 Atendimento humano encerrado. Bem vindo de volta! Digite *"Menu"* para ver as opções.');
         }
         return; 
     }
 
     let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {}, isProcessing: false };
 
-    // ANTI ESPETAMENTO GOLPES BOTS SPAMM 🚨:
     if (userState.isProcessing) return; 
 
     userState.isProcessing = true;
@@ -51,8 +48,6 @@ async function handleMessage(message, contact) {
 
     try {
         const msgLower = textMessage.trim().toLowerCase();
-        
-        // Bloqueio Força bruta das Inteligências para WIDGET.
         const cmdsIntuitosUI= ['menu', 'início', 'inicio', 'voltar', 'cancelar tudo', '0'];
 
         if (cmdsIntuitosUI.includes(msgLower)) {
@@ -66,7 +61,6 @@ async function handleMessage(message, contact) {
         else {
              switch (userState.step) {
                   case STEPS.MENU_PRINCIPAL:
-                      // Passamos ao processador sem tentar forçar a injeção do nome não definido
                       await handleEstrategiaLLMSalvos(null, senderNumber, textMessage, senderNumber);
                       break;
                   case STEPS.CANCELAR_AGENDAMENTO:
@@ -92,70 +86,62 @@ async function sendMenu(sockIgnorado, jid) {
     const menuOptions = [
         { id: '1', title: 'Agendar', description: 'Cortar/Marcar novo!' },
         { id: '2', title: 'Serviços & Mt', description: 'Tabela C/ preçários ' },
-        { id: '3', title: 'A Minha Agenda', description: 'Check dos apontamento.' },
+        { id: '3', title: 'A Minha Agenda', description: 'Check dos apontamentos' },
         { id: '4', title: 'Cancelar Marcas', description: 'Pausar Canceladas!' },
         { id: '5', title: 'Av., Mapa / Hrs', description: 'Geocalização' },
         { id: '6', title: 'Trans. p/ Funcionário', description: 'Atendimento Orgânico Humano.' }
     ];
-    await sendInteractiveMenu(jid, '*Portal Da Barbearia ✂️*\nÉ bem prático! Podes simplesmente prosseguir tocando um ponto ao baixo de interesse 👇', menuOptions);
+    await sendInteractiveMenu(jid, '*Portal Da Barbearia ✂️*\nÉ bem prático! Podes simplesmente prosseguir tocando num botão abaixo 👇', menuOptions);
 }
-
 
 async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber) {
     const option = textMessage.trim();
     
+    // Fallbacks para quem clica direto num dos botões do Menu (ID numéricos)
     switch (option) {
         case '1': await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS); break;
-        case '2': await verPrecosEServicos(null, jid); await sendMenu(null, jid); break;
-        case '3': await verMeusAgendamentos(null, jid, senderNumber); await sendMenu(null, jid); break;
+        case '2': await verPrecosEServicos(null, jid); break; // Removido o spam do Menu
+        case '3': await verMeusAgendamentos(null, jid, senderNumber); break; // Removido o spam do Menu
         case '4': await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS); break;
-        case '5': 
-            await sendDelayedText(null, jid, `📍 *Viajante - Como nos achar:* \n> Av. 24 de Julho (Encontra Maputo/PT), 🕒 Seg as Sb : (09 as 19)`); await sendMenu(null, jid); break;
+        case '5': await sendDelayedText(null, jid, `📍 *Viajante - Como nos achar:* \n> Av. 24 de Julho (Encontra Maputo/PT), 🕒 Seg as Sb : (09 as 19)`); break;
         case '6': 
             await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
             await sendDelayedText(null, jid, 'Estamos acoplados agr! Vai vir alguem aí pra você ao teclado espere um cheirinho...'); break;
             
         default: 
-            
             console.log(`🤖 | Chat Orgânico C. LLAMA-GroqLPU! de ${senderNumber}`);
             
-            // 1. GUARDAMOS A MEMÓRIA DA MENSAGEM DO USUÁRIO
+            // 1. Guardar a fala do Cliente
             await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber }});
             
-            // 2. BUSCA AS MEMORIZADAS RECENTES
+            // 2. Procurar histórico para contexto fluído
             const asConversasPassadasGostosDelaDbMemorie = await prisma.mensagemIA.findMany({
                    where: { clienteId: senderNumber }, orderBy: { criadoEm: 'asc' }, take: 10 
             });
             const constCortesG = await prisma.agendamento.count({ where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } }});
-
             
-            // 3. ENVIAMOS À IA E RECEBEMOS A INTENÇÃO OU O TEXTO
+            // 3. Obter Resposta Pensada
             const textIArid = await responderComGroq(textMessage, constCortesG, asConversasPassadasGostosDelaDbMemorie);
-            
             const intentCheck = textIArid.trim().toUpperCase();
 
-            // 4. AÇÃO SEGUNDO A INTENÇÃO DETETADA (Routing Dinâmico Natural)
+            // 4. Executar Comando ou Enviar Texto
             if (intentCheck.includes('/AGENDAR')) {
                 await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);
             } else if (intentCheck.includes('/CANCELAR')) {
                 await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS);
             } else if (intentCheck.includes('/PRECOS')) {
                 await verPrecosEServicos(null, jid);
-                await sendMenu(null, jid);
             } else if (intentCheck.includes('/AGENDA')) {
                 await verMeusAgendamentos(null, jid, senderNumber);
-                await sendMenu(null, jid);
             } else if (intentCheck.includes('/LOCAL')) {
-                await sendDelayedText(null, jid, `📍 *Viajante - Como nos achar:* \n> Av. 24 de Julho (Encontra Maputo/PT), 🕒 Seg as Sb : (09 as 19)`);
-                await sendMenu(null, jid);
+                await sendDelayedText(null, jid, `📍 *Nossa Localização:* \n> Av. 24 de Julho (Encontra Maputo/PT), 🕒 Seg as Sáb : (09h às 19h)`);
             } else if (intentCheck.includes('/HUMANO')) {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
-                await sendDelayedText(null, jid, 'Estamos acoplados agr! Vai vir alguem aí pra você ao teclado espere um cheirinho...');
+                await sendDelayedText(null, jid, 'Atendimento transferido! Um de nossos barbeiros já vem te responder. Aguarda só um pouquinho...');
             } else if (intentCheck.includes('/MENU')) {
                 await sendMenu(null, jid);
             } else {
-                // Se a IA decidiu que é apenas bate-papo: 
-                // Salvamos no SQL para contexto futuro e disparamos para o usuário!
+                // É apenas uma conversa normal! Guarda no SQL e exibe para o cliente de forma amigável
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: textIArid, clienteId: senderNumber }});
                 await sendDelayedText(null, jid, textIArid);
             }
