@@ -3,6 +3,7 @@ const { iniciarAgendamento, handleAgendamento } = require('./flowAgendamento');
 const { verPrecosEServicos, verMeusAgendamentos } = require('./flowConsultas');
 const { iniciarCancelamento, processarCancelamento } = require('./flowCancelamento');
 const { sendDelayedText, sendInteractiveMenu } = require('./botUtils');
+const { responderComGroq } = require('./groqApi');
 
 const stateMachine = new Map();
 const STEPS = {
@@ -16,10 +17,9 @@ const STEPS = {
 };
 
 async function handleMessage(message, contact) {
-    const senderNumber = message.from; // Número do cliente (ex: 258840000000)
+    const senderNumber = message.from; 
     let textMessage = "";
 
-    // Extração conforme a documentação oficial da Meta
     if (message.type === 'text') {
         textMessage = message.text.body;
     } else if (message.type === 'interactive') {
@@ -37,17 +37,13 @@ async function handleMessage(message, contact) {
     if (cliente.falarHumano) {
         if (textMessage.trim().toLowerCase() === '#sair') {
             await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: false } });
-            await sendDelayedText(null, senderNumber, '🔄 Atendimento humano encerrado.\nDigite *"Menu"* para recomeçar.');
+            await sendDelayedText(null, senderNumber, '🔄 Atendimento humano encerrado.\nDigite *"Menu"* se precisar usar o painel da barbearia novamente.');
         }
         return; 
     }
 
-    let userState = stateMachine.get(senderNumber);
-    const isNewSession = !userState;
-    
-    if (!userState) {
-        userState = { step: STEPS.MENU_PRINCIPAL, data: {}, isProcessing: false };
-    }
+    let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {}, isProcessing: false };
+
     if (userState.isProcessing) return; 
 
     userState.isProcessing = true;
@@ -55,32 +51,34 @@ async function handleMessage(message, contact) {
 
     try {
         const msgLower = textMessage.trim().toLowerCase();
-        const saudacoes = ['oi', 'ola', 'olá', 'bom dia', 'boa tarde', 'boa noite', 'menu', 'voltar', 'inicio'];
+        
+        // "Travões absolutos" se o utilizador quiser mesmo acessar as funcionalidades duras
+        const comandosInflexiveisMenu = ['menu', 'início', 'inicio', 'voltar', 'cancelar tudo', '0'];
 
-        if (saudacoes.includes(msgLower) || (isNewSession && userState.step === STEPS.MENU_PRINCIPAL)) {
-            userState.step = STEPS.MENU_PRINCIPAL;
-            userState.data = {};
-            await sendMenu(null, senderNumber);
-        } else if (userState.step.startsWith('AGENDAMENTO_')) {
-            // Passamos 'null' no lugar do socket do Baileys para não quebrar compatibilidade interna
+        if (comandosInflexiveisMenu.includes(msgLower)) {
+             userState.step = STEPS.MENU_PRINCIPAL;
+             userState.data = {};
+             await sendMenu(null, senderNumber);
+        }
+        else if (userState.step.startsWith('AGENDAMENTO_')) {
             await handleAgendamento(null, senderNumber, textMessage, senderNumber, stateMachine, STEPS);
-        } else {
-            switch (userState.step) {
-                case STEPS.MENU_PRINCIPAL:
-                    await handleMenuPrincipal(null, senderNumber, textMessage, senderNumber);
-                    break;
-                case STEPS.CANCELAR_AGENDAMENTO:
-                    await processarCancelamento(null, senderNumber, textMessage, senderNumber, stateMachine, STEPS);
-                    break;
-                default:
-                    await sendMenu(null, senderNumber);
-                    userState.step = STEPS.MENU_PRINCIPAL;
-                    userState.data = {};
-            }
+        }
+        else {
+             switch (userState.step) {
+                  case STEPS.MENU_PRINCIPAL:
+                      await handleMenuEIA(null, senderNumber, textMessage, senderNumber);
+                      break;
+                  case STEPS.CANCELAR_AGENDAMENTO:
+                      await processarCancelamento(null, senderNumber, textMessage, senderNumber, stateMachine, STEPS);
+                      break;
+                  default:
+                      userState.step = STEPS.MENU_PRINCIPAL;
+                      userState.data = {};
+                      break;
+              }
         }
     } catch (error) {
-        console.error(`❌ Erro no fluxo:`, error);
-        await sendDelayedText(null, senderNumber, 'Ocorreu um erro interno. Por favor, digita "Menu".');
+        console.error(`❌ Erro no Engine (Fluxos/Groq):`, error);
     } finally {
         userState = stateMachine.get(senderNumber);
         if (userState) {
@@ -93,29 +91,41 @@ async function handleMessage(message, contact) {
 async function sendMenu(sockIgnorado, jid) {
     const menuOptions = [
         { id: '1', title: 'Agendar horário', description: 'Marcar um novo corte' },
-        { id: '2', title: 'Ver preços e serviços', description: 'Tabela de preços' },
+        { id: '2', title: 'Ver preços/serviços', description: 'Tabela de preços' },
         { id: '3', title: 'Meus agendamentos', description: 'Ver próximas idas' },
         { id: '4', title: 'Cancelar horário', description: 'Desmarcar agendamento' },
-        { id: '5', title: 'Localização / Horário', description: 'Como chegar' },
-        { id: '6', title: 'Falar com atendente', description: 'Transferir para humano' }
+        { id: '5', title: 'Local / Horário', description: 'Como chegar até nós' },
+        { id: '6', title: 'Falar com Atendente', description: 'Atendimento presencial' }
     ];
-    await sendInteractiveMenu(jid, '*Bem-vindo(a) à Barbearia!* ✂️💈\nComo podemos ajudar-te hoje?', menuOptions);
+    await sendInteractiveMenu(jid, '*Painel da Barbearia* 💈\nBem-vindo ao Menu Rápido! Podes selecionar abaixo a opção:', menuOptions);
 }
 
-// O resto do handleMenuPrincipal fica exatamente como enviei da última vez (basta passar null onde pedia o 'sock')
-async function handleMenuPrincipal(sockIgnorado, jid, textMessage, senderNumber) {
+
+async function handleMenuEIA(sockIgnorado, jid, textMessage, senderNumber) {
     const option = textMessage.trim();
+    
     switch (option) {
         case '1': await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS); break;
         case '2': await verPrecosEServicos(null, jid); await sendMenu(null, jid); break;
         case '3': await verMeusAgendamentos(null, jid, senderNumber); await sendMenu(null, jid); break;
         case '4': await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS); break;
-        case '5': await sendDelayedText(null, jid, `📍 *A Nossa Localização:*...`); await sendMenu(null, jid); break;
+        case '5': 
+            await sendDelayedText(null, jid, `📍 *Nossa Localização:*\nAv. 24 de Julho, Maputo\n\n🕒 *Funcionamento:*\nSeg a Sáb: 09:00 às 19:00`); 
+            await sendMenu(null, jid); 
+            break;
         case '6': 
             await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
-            await sendDelayedText(null, jid, 'A transferir para um atendente...'); 
+            await sendDelayedText(null, jid, 'O seu canal de comunicação humano está livre agora com um barbeiro. 👨‍💻 Aguarde a mensagem..\n\n*(Quando tiverem acabado o papo e se precisar, pode desligar mandando-nos apenas a hastag: #sair)*'); 
             break;
-        default: await sendDelayedText(null, jid, 'Desculpa, não entendi.'); await sendMenu(null, jid); break;
+            
+        // Caso digitem "Tem vaga?", "Eae bro" a Groq API captura aqui!
+        default: 
+            console.log(`🤖 | Cliente ${senderNumber} digitou natural. Chamando a Llama-3 pela Groq LPU...`)
+            const textoGroqInteligente = await responderComGroq(textMessage);
+            
+            // Reenvia I.A pelo Cloud Oficial da Meta super veloz!
+            await sendDelayedText(null, jid, textoGroqInteligente);
+            break;
     }
 }
 
