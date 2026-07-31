@@ -77,7 +77,7 @@ async function handleMessage(message, contact) {
 async function sendMenu(sockIgnorado, jid) {
     const menuOptions = [
         { id: '1', title: 'Agendar', description: 'Cortar/Marcar novo!' },
-        { id: '2', title: 'Serviços & Mt', description: 'Tabela C/ preçários ' },
+        { id: '2', title: 'Serviços e Preços', description: 'Tabela C/ preçários ' },
         { id: '3', title: 'A Minha Agenda', description: 'Check dos apontamentos' },
         { id: '4', title: 'Cancelar Marcas', description: 'Pausar Canceladas!' },
         { id: '5', title: 'Av., Mapa / Hrs', description: 'Geocalização' },
@@ -130,7 +130,7 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
                 await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber }});
                 
                 const btnPrimeiraVez = [
-                    { id: 'btn_servicos', title: 'Ver serviços e preços' },
+                    { id: 'btn_servicos', title: 'Serviços e Preços' }, // <-- CORRIGIDO PARA TER MENOS DE 20 CARACTERES
                     { id: 'btn_duvidas', title: 'Dúvidas frequentes' },
                     { id: 'btn_equipe', title: 'Falar com a equipe' }
                 ];
