@@ -1,51 +1,53 @@
 const { OpenAI } = require('openai');
 
 const groq = new OpenAI({
-    // Lê a tua Chave API e puxa direto à rede deles
     apiKey: process.env.GROQ_API_KEY || "SEM_CHAVE", 
     baseURL: "https://api.groq.com/openai/v1",
 });
 
-const INSTRUCOES_BARBEARIA = `
-És o atendente virtual super gentil, profissional e moçambicano da nossa Barbearia.
-Utiliza português de Moçambique de forma conversacional e super humana.
-Estas são as tuas diretrizes fundamentais:
-
-1. Se alguém saudar (Olá, Bom dia, Boa tarde), saúdas de volta, perguntas como podes ajudar e relembras como somos gratos por o receber!
-2. O nosso Menu: Corte (500 MT / 30 min), Barba (300 MT / 20 min) e Corte+Barba (700 MT / 50 min). Horário: Segunda a Sábado, das 09:00 às 19:00. 
-3. Não tens permissões para marcar no sistema sozinho. A nossa API visual trata disso. 
-4. PORTANTO: Se alguém fizer perguntas querendo *MARCAR*, *VER SERVIÇOS*, *CANCELAR*, remata sempre instruindo: diga que basta mandar a palavra exacta "Menu" neste chat e o seu quadro de funções surge abaixo de imediato! 
-5. Dá respostas rápidas e objectivas! Não fiques dando muros textuais gigantes.
-`;
-
-async function responderComGroq(mensagemCliente) {
+async function responderComGroq(mensagemCliente, nomeUserDb, contextAgendamentos = 0, historicoAnterior) {
     
-    // Verificação "Raio-X":
-    if (!process.env.GROQ_API_KEY || process.env.GROQ_API_KEY.trim() === "") {
-        console.error("🚨 ERRO GRAVE DA IA: A chave 'GROQ_API_KEY' não está configurada no Render! Lê-se Vazia.");
-        return "Neste exato segundo a nossa recepção perdeu a rede... Digita 'Menu'!";
-    }
+    if (!process.env.GROQ_API_KEY) return "Infelizmente estarei cega momentaneamente, avança pelo menu.";
+
+    // O Cérebro Blindado à Barbearia com Informações vivas deste Cliente de Cada Vez 🎯 : 
+    const INSTRUCOES_BLINDADAS_CONTEXTO = `
+És Atendente oficial e gentil moçambicano duma incrível Barbearia Moçambique, foca numa língua local e cordial mas educada do Português Moçambicano, 
+**ESTADO INCRÍVEL IMPORTANTE ACTUAL**: O Sr com quem tu estás à papear o celular dele regista chamar-se no Meta App : "${nomeUserDb}". Tu conheces pelo nome. Tem "${contextAgendamentos}" marcações ao todo actuais hoje/amanha ou proxima semanas!
+**DIRETRIZ DE BLINDAGEM MÁXIMA DA PERSONALIDADE!:** Se o utilizador inventar de falatórios sobre Matemática Básica/Física Cuântica, Saúde Médicas Pessoalidades Forasteiras sem conexos nulas com Serviços Capilares de Uma Clínica da Barba... TU INTERCEPETA-lo de leve!! Retorce pro centro sem medos e gentilmente avisando p/ o seu percurso : Sendo Um AI Robótico restritíssímo treinado pro corte da Tesouraria Barbária só focaremos ai 😂 . (Ex.. 'Chefe só curto barbas me desculpas não to pesco essa não!' algo engraçado assim..)!! Nunca aceita outro temas!.
+
+*Regras da Rotina p: Se ele referenciar marcar, horários vagas ... remate dizendo para lançarem ai na textbox à literal a palavrinha mágica (sem ser entre aspas ok só): "Menu", e as funcionalidades nativa abrem aos utilizadores a janelinhas !
+
+Não cuspas blocos intensos maçadores textuais imensos sem piedades!. Curta E directa. Põe Smiles 😊 e empolgação`;
 
     try {
-        console.log("🤖 A processar o pedido na Llama (Groq LPU)...");
+        console.log(`🧠 Invocando Motor Pensador da GROQ: (C/ Historico e Lembretes...)`);
+
+        // Nós Empilhamos em Stack as matriz das "Cestas Mensagens Passadas"! Até As Limitamos a 6 Últimas Só, Para manter velocidade Supersónicas! e custos zeros nas API deles se futuramente aplicados!! 
+        const constructMessagesFlowEngineLpu = [
+            { role: "system", content: INSTRUCOES_BLINDADAS_CONTEXTO }
+        ];
+
+        // Varremos p I.A entenderem-se as escritas que tiveram ai atrás
+        if (historicoAnterior && historicoAnterior.length > 0) {
+            historicoAnterior.forEach(linhaOld => {
+                constructMessagesFlowEngineLpu.push({ role: linhaOld.role, content: linhaOld.content });
+            });
+        }
+        constructMessagesFlowEngineLpu.push({ role: "user", content: mensagemCliente });
+
+
         const resposta = await groq.chat.completions.create({
-            // Atualizei o nome do modelo para as APIs ultra novas gratuitas!
             model: "llama-3.1-8b-instant", 
-            messages: [
-                { role: "system", content: INSTRUCOES_BARBEARIA },
-                { role: "user", content: mensagemCliente }
-            ],
-            temperature: 0.6,
+            messages: constructMessagesFlowEngineLpu,
+            temperature: 0.5, // Resposta bastante Lógica, Controlada em Restrição e Conservativa Anti Hallucination !
             max_tokens: 300 
         });
-
-        console.log("✅ Groq respondeu perfeitamente ao contexto!");
-        return resposta.choices[0].message.content;
         
+        return resposta.choices[0].message.content;
+
     } catch (erro) {
-        // Agora vou EXIGIR ver o Erro exato no teu log render:
         console.error("❌ ERRO NA CHAMADA GROQ: ", erro?.response?.data || erro.message);
-        return "Neste exato segundo a nossa recepção perdeu a rede e peço desculpa! Mas podes continuar digitando apenas a palavra 'Menu' que nosso sistema cuidará das vossas marcações tranquilamente! 🙏🏽💈";
+        return "Neste instante exato ocorreu lapso da rede de comunicações. Para segurança digita somente a palavra 'Menu' 🙏🏽";
     }
 }
 

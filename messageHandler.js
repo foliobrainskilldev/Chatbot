@@ -23,27 +23,34 @@ async function handleMessage(message, contact) {
     if (message.type === 'text') {
         textMessage = message.text.body;
     } else if (message.type === 'interactive') {
-        if (message.interactive.type === 'button_reply') {
-            textMessage = message.interactive.button_reply.id;
-        } else if (message.interactive.type === 'list_reply') {
-            textMessage = message.interactive.list_reply.id;
-        }
+        if (message.interactive.type === 'button_reply') textMessage = message.interactive.button_reply.id;
+        else if (message.interactive.type === 'list_reply') textMessage = message.interactive.list_reply.id;
     }
 
     if (!textMessage) return;
 
-    const cliente = await getOrCreateCliente(senderNumber);
+    let cliente = await getOrCreateCliente(senderNumber);
+
+    // APANHAR DE FACTO OS SEUS PRONÚNCIADOS REAIS DOS NOMES WHATSAPP (Sincroniza sem Precisares Perguntado!) 🚀🔥
+    if (contact?.profile?.name && cliente.nome !== contact.profile.name) {
+         cliente = await prisma.cliente.update({
+              where: { id: senderNumber },
+              data: { nome: contact.profile.name }
+         });
+    }
+
 
     if (cliente.falarHumano) {
         if (textMessage.trim().toLowerCase() === '#sair') {
             await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: false } });
-            await sendDelayedText(null, senderNumber, '🔄 Atendimento humano encerrado.\nDigite *"Menu"* se precisar usar o painel da barbearia novamente.');
+            await sendDelayedText(null, senderNumber, '🔄 Atendimento humano encerrado. Bem vindo d´novo Digite *"Menu"*!');
         }
         return; 
     }
 
     let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {}, isProcessing: false };
 
+    // ANTI ESPETAMENTO GOLPES BOTS SPAMM 🚨:
     if (userState.isProcessing) return; 
 
     userState.isProcessing = true;
@@ -52,10 +59,10 @@ async function handleMessage(message, contact) {
     try {
         const msgLower = textMessage.trim().toLowerCase();
         
-        // "Travões absolutos" se o utilizador quiser mesmo acessar as funcionalidades duras
-        const comandosInflexiveisMenu = ['menu', 'início', 'inicio', 'voltar', 'cancelar tudo', '0'];
+        // Bloqueio Força bruta das Inteligências para WIDGET.
+        const cmdsIntuitosUI= ['menu', 'início', 'inicio', 'voltar', 'cancelar tudo', '0'];
 
-        if (comandosInflexiveisMenu.includes(msgLower)) {
+        if (cmdsIntuitosUI.includes(msgLower)) {
              userState.step = STEPS.MENU_PRINCIPAL;
              userState.data = {};
              await sendMenu(null, senderNumber);
@@ -66,19 +73,18 @@ async function handleMessage(message, contact) {
         else {
              switch (userState.step) {
                   case STEPS.MENU_PRINCIPAL:
-                      await handleMenuEIA(null, senderNumber, textMessage, senderNumber);
+                      await handleEstrategiaLLMSalvos(null, senderNumber, textMessage, senderNumber, cliente);
                       break;
                   case STEPS.CANCELAR_AGENDAMENTO:
                       await processarCancelamento(null, senderNumber, textMessage, senderNumber, stateMachine, STEPS);
                       break;
                   default:
-                      userState.step = STEPS.MENU_PRINCIPAL;
-                      userState.data = {};
+                      userState.step = STEPS.MENU_PRINCIPAL; userState.data = {};
                       break;
               }
         }
     } catch (error) {
-        console.error(`❌ Erro no Engine (Fluxos/Groq):`, error);
+        console.error(`❌ Erro no Engine Core/Db Central:`, error);
     } finally {
         userState = stateMachine.get(senderNumber);
         if (userState) {
@@ -90,18 +96,18 @@ async function handleMessage(message, contact) {
 
 async function sendMenu(sockIgnorado, jid) {
     const menuOptions = [
-        { id: '1', title: 'Agendar horário', description: 'Marcar um novo corte' },
-        { id: '2', title: 'Ver preços/serviços', description: 'Tabela de preços' },
-        { id: '3', title: 'Meus agendamentos', description: 'Ver próximas idas' },
-        { id: '4', title: 'Cancelar horário', description: 'Desmarcar agendamento' },
-        { id: '5', title: 'Local / Horário', description: 'Como chegar até nós' },
-        { id: '6', title: 'Falar com Atendente', description: 'Atendimento presencial' }
+        { id: '1', title: 'Agendar', description: 'Cortar/Marcar novo!' },
+        { id: '2', title: 'Serviços & Mt', description: 'Tabela C/ preçários ' },
+        { id: '3', title: 'A Minha Agenda', description: 'Check dos apontamento.' },
+        { id: '4', title: 'Cancelar Marcas', description: 'Pausar Canceladas!' },
+        { id: '5', title: 'Av., Mapa / Hrs', description: 'Geocalização' },
+        { id: '6', title: 'Trans. p/ Funcionário', description: 'Atendimento Orgânico Humano.' }
     ];
-    await sendInteractiveMenu(jid, '*Painel da Barbearia* 💈\nBem-vindo ao Menu Rápido! Podes selecionar abaixo a opção:', menuOptions);
+    await sendInteractiveMenu(jid, '*Portal Da Barbearia ✂️*\nÉ bem prático! Podes simplesmente prosseguir tocando um ponto ao baixo de interesse 👇', menuOptions);
 }
 
 
-async function handleMenuEIA(sockIgnorado, jid, textMessage, senderNumber) {
+async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber, dataClientebaseRawInfoRealWApp) {
     const option = textMessage.trim();
     
     switch (option) {
@@ -110,21 +116,38 @@ async function handleMenuEIA(sockIgnorado, jid, textMessage, senderNumber) {
         case '3': await verMeusAgendamentos(null, jid, senderNumber); await sendMenu(null, jid); break;
         case '4': await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS); break;
         case '5': 
-            await sendDelayedText(null, jid, `📍 *Nossa Localização:*\nAv. 24 de Julho, Maputo\n\n🕒 *Funcionamento:*\nSeg a Sáb: 09:00 às 19:00`); 
-            await sendMenu(null, jid); 
-            break;
+            await sendDelayedText(null, jid, `📍 *Viajante - Como nos achar:* \n> Av. 24 de Julho (Encontra Maputo/PT), 🕒 Seg as Sb : (09 as 19)`); await sendMenu(null, jid); break;
         case '6': 
             await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
-            await sendDelayedText(null, jid, 'O seu canal de comunicação humano está livre agora com um barbeiro. 👨‍💻 Aguarde a mensagem..\n\n*(Quando tiverem acabado o papo e se precisar, pode desligar mandando-nos apenas a hastag: #sair)*'); 
-            break;
+            await sendDelayedText(null, jid, 'Estamos acoplados agr! Vai vir alguem aí pra você ao teclado espere um cheirinho...'); break;
             
-        // Caso digitem "Tem vaga?", "Eae bro" a Groq API captura aqui!
         default: 
-            console.log(`🤖 | Cliente ${senderNumber} digitou natural. Chamando a Llama-3 pela Groq LPU...`)
-            const textoGroqInteligente = await responderComGroq(textMessage);
             
-            // Reenvia I.A pelo Cloud Oficial da Meta super veloz!
-            await sendDelayedText(null, jid, textoGroqInteligente);
+            console.log(`🤖 | Chat Orgânico C. LLAMA-GroqLPU! de ${senderNumber}`);
+            
+            //  --- P R I S M A    I n t e l   ( E N G L Y P T A M E N T   S  D S  C  I V B ). !
+            
+            // 1. GUARDAMOS PRO MUNDO MEMÓRIA SQL DA CONVERSA ACTUAL DESSE CLIENT!
+            await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber }});
+            
+            // 2. BUSCA AS MEMORIZADAS RECIENTES (Pra contextual). Puxe SÒ O SEU histórico (Where client_ID limit. Máxima Performance da Máquina, Buscaremos 6 unicos registo ultimos da chat DB dele limit/asc desc limit!)
+            const asConversasPassadasGostosDelaDbMemorie = await prisma.mensagemIA.findMany({
+                   where: { clienteId: senderNumber }, orderBy: { criadoEm: 'asc' }, take: 10 
+            });
+            // O Quants Cortes Marcadas Perto Presenta para a LLM entender estado no Groqs
+            const constCortesG = await prisma.agendamento.count({ where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } }});
+
+            
+            // 3. E CHAMAMOO O "Jarro das Águas" P Groqs a Pura I.A e as conversinhas e O Profile do whatsApps! 🚀
+            const textIArid = await responderComGroq(textMessage, (dataClientebaseRawInfoRealWApp.nome || "Meu Amigo"), constCortesG, asConversasPassadasGostosDelaDbMemorie);
+            
+            
+            // 4 . CONVERTÊMO SALVO SQL (Assistentes Groqq!). A WHAAP Resps IAs. P Ela n se fazer esquecer daqui d horas !! : 
+            await prisma.mensagemIA.create({ data: { role: 'assistant', content: textIArid, clienteId: senderNumber }});
+             
+
+            // Finalmente Dispara o Output da Metr. WhtAp UI. : A API Fake "Writing..." Espera lá 2 sec.. : 
+            await sendDelayedText(null, jid, textIArid);
             break;
     }
 }

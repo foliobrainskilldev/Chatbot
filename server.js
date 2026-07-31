@@ -6,7 +6,6 @@ app.use(express.json());
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'barbearia_secreta_2024';
 
-// 1. Rota para o Facebook Verificar o nosso site (A funcionar a 100% pelos teus testes)
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -16,57 +15,38 @@ app.get('/webhook', (req, res) => {
         console.log('✅ Webhook autorizado com sucesso pela Meta!');
         res.status(200).send(challenge);
     } else {
-        console.error('❌ Falha na autorização do Webhook!');
         res.sendStatus(403);
     }
 });
 
-// 2. Rota POST Onde Ocorre a Magia (AGORA COM LOGS COMPLETOS)
-app.post('/webhook', async (req, res) => {
-    // 🔥 RAIO-X: Isto vai disparar mal o Render receba sequer 1 pixel do Facebook
-    console.log('\n================ 📥 WEBHOOK ACIONADO ================');
+app.post('/webhook', (req, res) => {
     
-    const body = req.body;
-    
-    // Mostra TUDO o que o Facebook mandou sem filtrar (Ótimo para descobrirmos os erros)
-    console.dir(body, { depth: null });
+    // REGRA DE OURO ANTI-DUPLICAÇÃO E LOOPS DA META FACEBOOK:
+    // Devemos despachar já o ACK '200 OK' de regresso para aliviar as API DELES instantaneamente.
+    res.sendStatus(200);
 
-    if (body.object) {
-        // Tentamos entrar de forma segura nas camadas chatas da META JSON 
+    // Fazemos todo o processo pesado por TRÁS ASYNC livremente da tela de fundo!
+    (async () => {
         try {
-            let changes = body.entry?.[0]?.changes?.[0]?.value;
+            const body = req.body;
+            if (body.object) {
+                let changes = body.entry?.[0]?.changes?.[0]?.value;
 
-            if (changes?.messages?.[0]) {
-                const message = changes.messages[0];
-                const contact = changes.contacts?.[0];
-                
-                console.log(`✅ Nova mensagem do n.º [${message.from}]. Encaminhando para os Fluxos...`);
-                await handleMessage(message, contact);
+                if (changes?.messages?.[0]) {
+                    const message = changes.messages[0];
+                    const contact = changes.contacts?.[0]; // Dica Oculta para raptar o perfil 
 
-            } else if (changes?.statuses?.[0]) {
-                const s = changes.statuses[0];
-                console.log(`ℹ️ [META AVISO] - Status: Mensagem enviada a ${s.recipient_id} está -> ${s.status}`);
-            } else {
-                console.log('⚠️ [META AVISO] - Chegou algo diferente (Pode ser Erro de Política da META. Olhe o log cru acima!)');
+                    console.log(`✅ MSG Captada de ${message.from}. Trâmite Livre...`);
+                    await handleMessage(message, contact);
+                } 
             }
-
         } catch (error) {
-            console.error('❌ ERRO CRÍTICO A LER O PACOTE DA META:', error);
+            console.error('❌ ERRO ASYNC INTERNO NO FLUXO DE REDE:', error);
         }
-        
-        // TEMOS de mandar sempre um OK rápido à Meta. Senão eles repetem envios mil vezes até tu seres Banido do teste!
-        res.sendStatus(200);
-    } else {
-        console.log('❌ Pedido Inválido (Nem veio do whatsapp aparentemente!)');
-        res.sendStatus(404);
-    }
+    })(); // O async chama e afasta p\ o Limbo a fila p\ Wapp! 🚀
 });
 
-app.get('/ping', (req, res) => res.send('Pong! Motor vivo.'));
+app.get('/ping', (req, res) => res.send('Pong! I.A Engine Livre e Desembaraçada!'));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`\n==============================================`);
-    console.log(`🚀 [RADAR ATIVADO] API Meta ativa na porta ${PORT}`);
-    console.log(`==============================================\n`);
-});
+app.listen(PORT, () => console.log(`🚀 Meta API e LPU (Groq) Acordada na ${PORT}`));
