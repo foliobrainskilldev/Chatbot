@@ -1,20 +1,32 @@
+// --- START OF FILE flowConsultas.js ---
 const { prisma } = require('./db');
 const { format } = require('date-fns');
-const { sendDelayedText, sendInteractiveMenu } = require('./botUtils');
+const { sendDelayedText } = require('./botUtils');
+const { sendProductList } = require('./whatsappApi'); 
 
 async function verPrecosEServicos(sockIgnorado, jid) {
-    const servicos = await prisma.servico.findMany();
-    
-    // Converte a tabela de texto num Modal (Lista de Botões)
-    let optServicos = servicos.map(s => ({
-        id: 'srv_' + s.id, // O prefixo srv_ dirá ao bot para iniciar agendamento se o cliente clicar
-        title: s.nome,
-        description: `${s.preco} MT - ⏱️ ${s.duracaoMin} min`
-    }));
-    
-    optServicos.push({ id: '0', title: 'Voltar ao Menu' });
+    // ⚠️ ATENÇÃO: Substitui pelo ID real do teu Catálogo
+    const MEU_CATALOGO_ID ="1074870258211819"; 
 
-    await sendInteractiveMenu(null, jid, '📋 *Nossos Serviços e Preços:*\nSe quiseres marcar um destes cortes agora, basta clicares nele! 👇', optServicos);
+    // Estrutura das secções com os teus IDs reais da Meta
+    const sections = [
+        {
+            title: "Cortes e Barboterapia",
+            product_items: [
+                { product_retailer_id: "h5fj6325da" }, // Panque
+                { product_retailer_id: "af2o2iuwey" }, // Corte e Barba
+                { product_retailer_id: "8pdji0vdor" }  // Barba
+            ]
+        }
+    ];
+
+    await sendProductList(
+        jid, 
+        MEU_CATALOGO_ID, 
+        "Tabela de Serviços ✂️", 
+        "Clica abaixo em 'Ver Produtos' para explorares as nossas opções, fotos e preços! \nPara agendares, basta ADICIONAR AO CARRINHO e enviar para nós aqui no chat.",
+        sections
+    );
 }
 
 async function verMeusAgendamentos(sockIgnorado, jid, senderNumber) {
@@ -40,3 +52,4 @@ async function verMeusAgendamentos(sockIgnorado, jid, senderNumber) {
 }
 
 module.exports = { verPrecosEServicos, verMeusAgendamentos };
+// --- END OF FILE flowConsultas.js ---

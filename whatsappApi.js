@@ -1,9 +1,9 @@
+// --- START OF FILE whatsappApi.js ---
 const axios = require('axios');
 
 const META_TOKEN = process.env.META_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 
-// Esta é a API para enviar mensagens (usa o PHONE_NUMBER_ID)
 const api = axios.create({
     baseURL: `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}`,
     headers: {
@@ -99,17 +99,37 @@ async function sendInteractiveMenu(to, text, options) {
     }
 }
 
-// CORREÇÃO: Função para baixar mídia da Meta sem usar o PHONE_NUMBER_ID
+// NOVA FUNÇÃO: Enviar o Catálogo Nativo do WhatsApp
+async function sendProductList(to, catalogId, headerText, bodyText, sections) {
+    try {
+        await api.post('/messages', {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: to,
+            type: 'interactive',
+            interactive: {
+                type: 'product_list',
+                header: { type: 'text', text: headerText },
+                body: { text: bodyText },
+                action: {
+                    catalog_id: catalogId,
+                    sections: sections 
+                }
+            }
+        });
+    } catch (error) {
+        console.error("Erro ao enviar Lista de Produtos:", error.response?.data || error.message);
+    }
+}
+
 async function downloadMedia(mediaId) {
     try {
-        // 1. Obter a URL protegida do ficheiro diretamente na raiz da Graph API (sem o ID do número)
         const getUrlResponse = await axios.get(`https://graph.facebook.com/v18.0/${mediaId}`, {
             headers: { 'Authorization': `Bearer ${META_TOKEN}` }
         });
         
         const mediaUrl = getUrlResponse.data.url;
 
-        // 2. Fazer download do ficheiro passando o Token
         const downloadResponse = await axios.get(mediaUrl, {
             responseType: 'arraybuffer',
             headers: { 'Authorization': `Bearer ${META_TOKEN}` }
@@ -117,9 +137,11 @@ async function downloadMedia(mediaId) {
         
         return Buffer.from(downloadResponse.data, 'binary');
     } catch (error) {
-        console.error("Erro ao baixar ficheiro (Áudio) da Meta:", error.response?.data || error.message);
+        console.error("Erro ao baixar ficheiro da Meta:", error.response?.data || error.message);
         return null;
     }
 }
 
-module.exports = { sendText, sendInteractiveMenu, markAsReadAndTyping, sendLocation, downloadMedia };
+module.exports = { 
+    sendText, sendInteractiveMenu, markAsReadAndTyping, sendLocation, downloadMedia, sendProductList 
+};

@@ -44,6 +44,23 @@ async function handleMessage(message, contact) {
             await sendDelayedText(null, jid, "Desculpa, não consegui ouvir o teu áudio neste momento. Podes escrever?");
             return;
         }
+    } else if (message.type === 'order') {
+        // LÓGICA DO CARRINHO DE COMPRAS NATIVO (COM OS TEUS IDs)
+        const orderItems = message.order.product_items;
+        if (orderItems && orderItems.length > 0) {
+            const produtoSKU = orderItems[0].product_retailer_id;
+            console.log(`🛒 Carrinho recebido do cliente! SKU escolhido: ${produtoSKU}`);
+
+            // Traduz o ID da Meta para o ID da tua Base de Dados (Prisma)
+            let dbServicoId = '1'; 
+            
+            if (produtoSKU === 'h5fj6325da') dbServicoId = '1';      // Panque
+            else if (produtoSKU === '8pdji0vdor') dbServicoId = '2'; // Barba
+            else if (produtoSKU === 'af2o2iuwey') dbServicoId = '3'; // Corte + Barba
+
+            // Mente para o sistema dizendo que o cliente clicou no menu antigo
+            textMessage = 'srv_' + dbServicoId; 
+        }
     }
 
     if (!textMessage) return;
@@ -110,8 +127,6 @@ async function handleMessage(message, contact) {
 
         const msgLower = textMessage.trim().toLowerCase();
         const cmdsIntuitosUI= ['menu', 'início', 'inicio', 'voltar', 'cancelar tudo', '0'];
-        
-        // FUGA INTELIGENTE: Se ele ficou preso a meio de um agendamento e disse "oi", "ola", tira-o da prisão.
         const saudacoesFuga = ['oi', 'ola', 'olá', 'bom dia', 'boa tarde', 'boa noite', 'boas'];
 
         if (cmdsIntuitosUI.includes(msgLower)) {
@@ -120,7 +135,6 @@ async function handleMessage(message, contact) {
              await sendMenu(null, jid);
         }
         else if (saudacoesFuga.includes(msgLower) && userState.step !== STEPS.MENU_PRINCIPAL && userState.step !== STEPS.PEDIR_NOME) {
-             // O utilizador cumprimentou o bot quando devia estar a escolher uma hora. Limpa o menu e responde com IA!
              userState.step = STEPS.MENU_PRINCIPAL;
              userState.data = {};
              stateMachine.set(senderNumber, userState);
@@ -174,7 +188,7 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
         case 'btn_servicos':
             await verPrecosEServicos(null, jid); 
             await prisma.mensagemIA.create({ data: { role: 'user', content: "Mostre os serviços e preços", clienteId: senderNumber }});
-            await prisma.mensagemIA.create({ data: { role: 'assistant', content: "Aqui estão os nossos serviços e preços.", clienteId: senderNumber }});
+            await prisma.mensagemIA.create({ data: { role: 'assistant', content: "A enviar catálogo de serviços...", clienteId: senderNumber }});
             break; 
         case '3': await verMeusAgendamentos(null, jid, senderNumber); break; 
         case '4': await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS); break;
@@ -206,24 +220,26 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             if (horaMaputo >= 5 && horaMaputo < 12) saudacao = "Bom dia";
             else if (horaMaputo >= 12 && horaMaputo < 18) saudacao = "Boa tarde";
 
-            let infoTemporal = `NOVA CONVERSA. Hora atual: ${horaMaputo}h (${saudacao}). Cumprimenta o cliente com ${saudacao}!`;
+            // CORREÇÃO: Prompt alterado para comando oculto
+            let infoTemporal = `[INSTRUÇÃO DO SISTEMA OBRIGATÓRIA - NÃO LEIAS EM VOZ ALTA]: O cliente está a falar contigo de ${saudacao}. Age de acordo.`;
 
             if (historicoCru.length > 0) {
                 const ultimaMsgData = new Date(historicoCru[0].criadoEm);
                 const horasPassadas = (agora - ultimaMsgData) / (1000 * 60 * 60); 
                 
                 if (horasPassadas < 3) {
-                    infoTemporal = `CONVERSA CONTÍNUA. Última mensagem há menos de 3h. PROIBIDO dizer Bom dia, Boa tarde ou Boa noite. Vai direto ao assunto.`;
+                    infoTemporal = `[INSTRUÇÃO DO SISTEMA - NUNCA LEIAS ISTO]: É uma conversa contínua. É ABSOLUTAMENTE PROIBIDO dizer Bom dia, Boa tarde ou Boa noite de novo. Sê direto e curto.`;
                 } else if (horasPassadas >= 3 && horasPassadas < 16) {
-                    infoTemporal = `RETORNO (passaram algumas horas). Hora atual: ${horaMaputo}h. Podes voltar a dizer ${saudacao}.`;
+                    infoTemporal = `[INSTRUÇÃO DO SISTEMA - NUNCA LEIAS ISTO]: O cliente regressou agora. Podes usar a expressão "${saudacao}" de forma subtil, se for apropriado.`;
                 } else {
-                    infoTemporal = `NOVO DIA/MUITO TEMPO. Hora atual: ${horaMaputo}h. OBRIGATÓRIO cumprimentar com ${saudacao}!`;
+                    infoTemporal = `[INSTRUÇÃO DO SISTEMA - NUNCA LEIAS ISTO]: É um dia novo. OBRIGATÓRIO dizer ${saudacao} antes de responder!`;
                 }
             }
             
             await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber }});
             const asConversasPassadas = historicoCru.reverse();
             const constCortesG = await prisma.agendamento.count({ where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } }});
+            
             const textIArid = await responderComGroq(textMessage, constCortesG, asConversasPassadas, infoTemporal, nomeCliente);
             const intentCheck = textIArid.trim().toUpperCase().replace(/\s+/g, '');
 
@@ -263,3 +279,4 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
 }
 
 module.exports = { handleMessage, stateMachine, STEPS };
+// --- END OF FILE messageHandler.js ---
