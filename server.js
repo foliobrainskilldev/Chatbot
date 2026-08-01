@@ -1,6 +1,6 @@
 // --- START OF FILE server.js ---
 const express = require('express');
-const { handleMessage } = require('./messageHandler');
+const { handleMessage, stateMachine } = require('./messageHandler');
 const { prisma } = require('./db');
 const { iniciarLembretesEFollowUp } = require('./cronJobs');
 
@@ -55,8 +55,14 @@ app.post('/api/reset', async (req, res) => {
         await prisma.mensagemIA.deleteMany({});
         await prisma.agendamento.deleteMany({});
         await prisma.cliente.deleteMany({});
-        console.log("🚨 BANCO DE DADOS RESETADO COM SUCESSO VIA PAINEL ADMIN!");
-        res.status(200).send("Memoria do bot apagada com sucesso! Todos os clientes foram esquecidos.");
+        
+        // CORREÇÃO: Limpa a Memória RAM (A Máquina de Estados do Bot)
+        if (stateMachine) {
+            stateMachine.clear();
+        }
+        
+        console.log("🚨 BANCO DE DADOS E MEMÓRIA RAM RESETADOS COM SUCESSO!");
+        res.status(200).send("Memoria do bot apagada com sucesso! Todos os clientes foram esquecidos e a RAM foi limpa.");
     } catch(error) {
         console.error("❌ Erro ao resetar DB:", error);
         res.status(500).send("Erro interno ao apagar dados.");
@@ -78,7 +84,6 @@ app.get('/webhook', (req, res) => {
 
 app.post('/webhook', (req, res) => {
     res.sendStatus(200);
-
     (async () => {
         try {
             const body = req.body;
@@ -99,8 +104,5 @@ app.post('/webhook', (req, res) => {
 app.get('/ping', (req, res) => res.send('Pong! I.A Engine Livre e Desembaracada!'));
 
 const PORT = process.env.PORT || 3000;
-
-// INICIA O ROBÔ EM SEGUNDO PLANO PARA LEMBRETES E ABANDONOS
 iniciarLembretesEFollowUp();
-
 app.listen(PORT, () => console.log(`🚀 Meta API e LPU (Groq) Acordada na porta ${PORT}`));

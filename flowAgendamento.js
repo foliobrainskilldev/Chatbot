@@ -1,3 +1,4 @@
+// --- START OF FILE flowAgendamento.js ---
 const { prisma } = require('./db');
 const { getProximosDiasUteis, getHorariosDisponiveis } = require('./dateUtils');
 const { parse } = require('date-fns');
@@ -8,8 +9,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
     const step = userState.step;
     const msg = textMessage.trim();
 
-    // Comandos globais de Cancelamento
-    if (msg.toLowerCase() === '0') {
+    if (msg === '0') {
         stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
         await sendDelayedText(null, jid, 'Operação cancelada. A voltar ao menu...');
         return;
@@ -21,15 +21,13 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
             const servicoEscolhido = servicos.find(s => s.id.toString() === msg);
             
             if (!servicoEscolhido) {
-                await sendDelayedText(null, jid, 'Opção inválida. Por favor, seleciona o serviço clicando nas opções.');
+                await sendDelayedText(null, jid, '⚠️ Opção inválida.\nPor favor, escolhe o serviço clicando num dos botões.\n\n*(Ou digita 0 para cancelar)*');
                 return;
             }
             userState.data.servico = servicoEscolhido;
             userState.step = STEPS.AGENDAMENTO_BARBEIRO;
             
             const barbeiros = await prisma.barbeiro.findMany();
-            
-            // Textos otimizados (Meta impõe max 20 caracteres nos botões)
             let optBarbeiros = barbeiros.map(b => ({ id: b.id.toString(), title: b.nome }));
             optBarbeiros.push({ id: 'qualquer', title: 'Qualquer um' }, { id: '0', title: 'Cancelar' });
             
@@ -44,7 +42,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
             if (msg !== 'qualquer') {
                 barbeiroSelecionado = barbs.find(b => b.id.toString() === msg);
                 if (!barbeiroSelecionado && msg !== '0') {
-                    await sendDelayedText(null, jid, 'Por favor, seleciona um barbeiro da lista fornecida.');
+                    await sendDelayedText(null, jid, '⚠️ Opção inválida.\nPor favor, escolhe um barbeiro clicando num dos botões.\n\n*(Ou digita 0 para cancelar)*');
                     return;
                 }
             }
@@ -64,7 +62,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
         case STEPS.AGENDAMENTO_DATA: {
             const diasDisp = userState.data.diasDisponiveis;
             if (!diasDisp.includes(msg)) {
-                await sendDelayedText(null, jid, 'Data inválida. Clica no botão para escolher a data.');
+                await sendDelayedText(null, jid, '⚠️ Data inválida.\nPor favor, escolhe uma data clicando num dos botões.\n\n*(Ou digita 0 para cancelar)*');
                 return;
             }
 
@@ -74,7 +72,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
             const horasLivres = await getHorariosDisponiveis(prisma, msg, userState.data.servico.duracaoMin, userState.data.barbeiro?.id);
 
             if (horasLivres.length === 0) {
-                userState.step = STEPS.AGENDAMENTO_DATA; // Mantém a pessoa nesta fase para pedir outra
+                userState.step = STEPS.AGENDAMENTO_DATA; 
                 await sendDelayedText(null, jid, '⚠️ Peço desculpa, mas já não temos horários livres neste dia.\n\nEscolhe outra data:');
                 
                 let optDiasRetry = diasDisp.map(d => ({ id: d, title: d }));
@@ -93,7 +91,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
 
         case STEPS.AGENDAMENTO_HORA: {
             if (!userState.data.horasLivres.includes(msg)) {
-                 await sendDelayedText(null, jid, 'Horário selecionado já não é válido.');
+                 await sendDelayedText(null, jid, '⚠️ Horário selecionado já não é válido.\nPor favor, seleciona de novo.\n\n*(Ou digita 0 para cancelar)*');
                  return;
             }
             
@@ -132,7 +130,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
                 stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
                 await sendDelayedText(null, jid, 'Processo abortado com sucesso.');
             } else {
-                await sendDelayedText(null, jid, 'Por favor, clica no botão Confirmar ou Cancelar.');
+                await sendDelayedText(null, jid, '⚠️ Por favor, clica no botão Confirmar ou Cancelar.\n\n*(Ou digita 0)*');
             }
             break;
         }
@@ -140,7 +138,6 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
 }
 
 async function iniciarAgendamento(sockIgnorado, jid, senderNumber, stateMachine, STEPS) {
-    // Restringe limites por questões logísticas 
     const agendamentos = await prisma.agendamento.count({
         where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } }
     });
@@ -152,7 +149,6 @@ async function iniciarAgendamento(sockIgnorado, jid, senderNumber, stateMachine,
 
     const servicos = await prisma.servico.findMany();
     
-    // Convertido perfeitamente para ler Menu ou Botões Rápidos via Cloud API
     let optServicos = servicos.map(s => ({ id: s.id.toString(), title: s.nome, description: `${s.preco} MT` }));
     optServicos.push({ id: '0', title: 'Cancelar' });
 
