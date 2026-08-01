@@ -66,8 +66,8 @@ async function handleMessage(message, contact) {
                 userState.step = STEPS.PEDIR_NOME;
                 stateMachine.set(senderNumber, userState);
                 
-                // PRIMEIRA MENSAGEM: Apresentação com status de Typing
-                await sendDelayedText(null, jid, '🤖 Olá! 👋 Sou o Assistente Virtual da Barbearia, seja muito bem-vindo!\nÉ um prazer ter-te por aqui.');
+                // PRIMEIRA MENSAGEM: Apresentação com status de Typing (Robot Emoji removido!)
+                await sendDelayedText(null, jid, 'Olá! 👋 Sou o Assistente Virtual da Barbearia, seja muito bem-vindo!\nÉ um prazer ter-te por aqui.');
                 
                 // SEGUNDA MENSAGEM: Envio instantâneo (sendText) para evitar o silêncio sem typing 
                 await sendText(jid, 'Para que o nosso atendimento seja mais amigável, como gostarias de ser chamado?');
@@ -91,8 +91,9 @@ async function handleMessage(message, contact) {
                 
                 await prisma.mensagemIA.create({ data: { role: 'user', content: `O meu nome é ${nomeFinal}`, clienteId: senderNumber }});
 
+                // BOTÕES ATUALIZADOS: Removido "Serviços e Preços", adicionado "Menu Principal" (id: 'menu')
                 const btnPrimeiraVez = [
-                    { id: 'btn_servicos', title: 'Serviços e Preços' }, 
+                    { id: 'menu', title: 'Menu Principal' }, 
                     { id: 'btn_duvidas', title: 'Dúvidas frequentes' },
                     { id: 'btn_equipe', title: 'Falar com a equipe' }
                 ];
