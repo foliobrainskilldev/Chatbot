@@ -11,17 +11,8 @@ const api = axios.create({
     }
 });
 
-// Cache temporário para reativarmos o typing_indicator com o mesmo ID
-const lastMessageIds = new Map();
-
-// Nova Função Unificada: Ticks Azuis + "Escrevendo..." 🚀
-async function markAsReadAndTyping(messageId, to) {
-    if (messageId && to) {
-        lastMessageIds.set(to, messageId);
-    } else if (to && !messageId) {
-        messageId = lastMessageIds.get(to);
-    }
-
+// Ticks Azuis + "Escrevendo..." 🚀 (Agora chamado apenas 1 única vez com perfeição)
+async function markAsReadAndTyping(messageId) {
     if (!messageId) return;
 
     try {
@@ -36,11 +27,6 @@ async function markAsReadAndTyping(messageId, to) {
     } catch (error) {
         console.error("Erro ao marcar como lida e escrevendo:", error.response?.data || error.message);
     }
-}
-
-// Dispara o estado "A escrever..." usando a memória cache da ultima mensagem
-async function sendTypingIndicator(to) {
-    await markAsReadAndTyping(null, to);
 }
 
 async function sendText(to, text) {
@@ -94,4 +80,4 @@ async function sendInteractiveMenu(to, text, options) {
     }
 }
 
-module.exports = { sendText, sendInteractiveMenu, markAsReadAndTyping, sendTypingIndicator };
+module.exports = { sendText, sendInteractiveMenu, markAsReadAndTyping };

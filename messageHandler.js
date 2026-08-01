@@ -4,7 +4,7 @@ const { verPrecosEServicos, verMeusAgendamentos } = require('./flowConsultas');
 const { iniciarCancelamento, processarCancelamento } = require('./flowCancelamento');
 const { sendDelayedText, sendInteractiveMenu } = require('./botUtils');
 const { responderComGroq, extrairNomeComGroq } = require('./groqApi');
-const { markAsReadAndTyping } = require('./whatsappApi');
+const { markAsReadAndTyping, sendText } = require('./whatsappApi'); // Importado o envio de texto instantâneo
 
 const stateMachine = new Map();
 const STEPS = {
@@ -23,8 +23,9 @@ async function handleMessage(message, contact) {
     let textMessage = "";
     const jid = senderNumber;
 
+    // 1. Aciona instantaneamente: "Ticks Azuis" + Status "Escrevendo..." 🚀
     if (message.id) {
-        await markAsReadAndTyping(message.id, senderNumber);
+        await markAsReadAndTyping(message.id); 
     }
 
     if (message.type === 'text') {
@@ -65,11 +66,11 @@ async function handleMessage(message, contact) {
                 userState.step = STEPS.PEDIR_NOME;
                 stateMachine.set(senderNumber, userState);
                 
-                // PRIMEIRA MENSAGEM: Apresentação limpa apenas com emoji de mão
-                await sendDelayedText(null, jid, 'Olá! 👋 Sou o Assistente Virtual da Barbearia, seja muito bem-vindo!\nÉ um prazer ter-te por aqui.');
+                // PRIMEIRA MENSAGEM: Apresentação com status de Typing
+                await sendDelayedText(null, jid, '🤖 Olá! 👋 Sou o Assistente Virtual da Barbearia, seja muito bem-vindo!\nÉ um prazer ter-te por aqui.');
                 
-                // SEGUNDA MENSAGEM: Pergunta separada para melhor leitura/formatação visual
-                await sendDelayedText(null, jid, 'Para que o nosso atendimento seja mais amigável, como gostarias de ser chamado?');
+                // SEGUNDA MENSAGEM: Envio instantâneo (sendText) para evitar o silêncio sem typing 
+                await sendText(jid, 'Para que o nosso atendimento seja mais amigável, como gostarias de ser chamado?');
                 return;
             }
         }
@@ -96,7 +97,6 @@ async function handleMessage(message, contact) {
                     { id: 'btn_equipe', title: 'Falar com a equipe' }
                 ];
                 
-                // Mensagem de sucesso ao registar nome também limpa (sem emojis excessivos)
                 const textoBoasVindas = `Muito prazer, ${nomeFinal}!\n\nEscolhe uma das opções abaixo para começarmos ou conversa comigo à vontade:`;
                 
                 await sendInteractiveMenu(null, jid, textoBoasVindas, btnPrimeiraVez);
@@ -220,7 +220,6 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             
             const textIArid = await responderComGroq(textMessage, constCortesG, asConversasPassadas, infoTemporal, nomeCliente);
             
-            // COFRE ANTI-ALUCINAÇÕES DA IA (remove os espaços e aceita mais variações)
             const intentCheck = textIArid.trim().toUpperCase().replace(/\s+/g, '');
 
             if (intentCheck.includes('/AGENDAR') || intentCheck.includes('/MARCAR') || intentCheck.includes('/NOVO')) {
@@ -246,7 +245,6 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
                 await sendMenu(null, jid);
             }
             else {
-                // Se por acaso a IA inventar um comando desconhecido que comece com "/", enviamos o Menu para segurança
                 if (textIArid.trim().startsWith('/')) {
                     await sendMenu(null, jid);
                 } else {
