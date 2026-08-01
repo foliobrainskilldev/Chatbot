@@ -1,15 +1,14 @@
+// --- START OF FILE server.js ---
 const express = require('express');
 const { handleMessage } = require('./messageHandler');
 const { prisma } = require('./db');
+const { iniciarLembretesEFollowUp } = require('./cronJobs');
 
 const app = express();
 app.use(express.json());
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'barbearia_secreta_2024';
 
-// ----------------------------------------------------
-// PAINEL WEB DE RESET DA BASE DE DADOS (MEMÓRIA DO BOT)
-// ----------------------------------------------------
 app.get('/admin', (req, res) => {
     res.send(`
         <!DOCTYPE html>
@@ -29,13 +28,13 @@ app.get('/admin', (req, res) => {
         </head>
         <body>
             <div class="card">
-                <h1>⚙️ Painel de Controlo</h1>
-                <p>Clica no botão abaixo para formatar o cérebro do Bot.<br><br>Ele vai esquecer <strong>todas as conversas, clientes e agendamentos</strong> para poderes testar como se fosses novo.</p>
-                <button onclick="resetarBot()">🚨 Resetar Memória do Bot</button>
+                <h1>Painel de Controlo</h1>
+                <p>Clica no botao abaixo para formatar o cerebro do Bot.<br><br>Ele vai esquecer <strong>todas as conversas, clientes e agendamentos</strong> para poderes testar como se fosses novo.</p>
+                <button onclick="resetarBot()">Resetar Memoria do Bot</button>
             </div>
             <script>
                 async function resetarBot() {
-                    if(confirm('Tem a certeza absoluta? O bot vai começar do zero e esquecer toda a gente!')) {
+                    if(confirm('Tem a certeza absoluta? O bot vai comecar do zero e esquecer toda a gente!')) {
                         try {
                             const response = await fetch('/api/reset', { method: 'POST' });
                             const resultado = await response.text();
@@ -57,13 +56,12 @@ app.post('/api/reset', async (req, res) => {
         await prisma.agendamento.deleteMany({});
         await prisma.cliente.deleteMany({});
         console.log("🚨 BANCO DE DADOS RESETADO COM SUCESSO VIA PAINEL ADMIN!");
-        res.status(200).send("✅ Memória do bot apagada com sucesso! Todos os clientes foram esquecidos.");
+        res.status(200).send("Memoria do bot apagada com sucesso! Todos os clientes foram esquecidos.");
     } catch(error) {
         console.error("❌ Erro ao resetar DB:", error);
-        res.status(500).send("❌ Erro interno ao apagar dados.");
+        res.status(500).send("Erro interno ao apagar dados.");
     }
 });
-// ----------------------------------------------------
 
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
@@ -98,7 +96,11 @@ app.post('/webhook', (req, res) => {
     })(); 
 });
 
-app.get('/ping', (req, res) => res.send('Pong! I.A Engine Livre e Desembaraçada!'));
+app.get('/ping', (req, res) => res.send('Pong! I.A Engine Livre e Desembaracada!'));
 
 const PORT = process.env.PORT || 3000;
+
+// INICIA O ROBÔ EM SEGUNDO PLANO PARA LEMBRETES E ABANDONOS
+iniciarLembretesEFollowUp();
+
 app.listen(PORT, () => console.log(`🚀 Meta API e LPU (Groq) Acordada na porta ${PORT}`));

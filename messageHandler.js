@@ -1,3 +1,4 @@
+// --- START OF FILE messageHandler.js ---
 const { prisma, getOrCreateCliente } = require('./db');
 const { iniciarAgendamento, handleAgendamento } = require('./flowAgendamento');
 const { verPrecosEServicos, verMeusAgendamentos } = require('./flowConsultas');
@@ -27,14 +28,12 @@ async function handleMessage(message, contact) {
         await markAsReadAndTyping(message.id); 
     }
 
-    // NOVA LÓGICA: Suporte para leitura de Áudio/Texto
     if (message.type === 'text') {
         textMessage = message.text.body;
     } else if (message.type === 'interactive') {
         if (message.interactive.type === 'button_reply') textMessage = message.interactive.button_reply.id;
         else if (message.interactive.type === 'list_reply') textMessage = message.interactive.list_reply.id;
     } else if (message.type === 'audio') {
-        // Baixa o áudio e transcreve para texto
         const mediaId = message.audio.id;
         const audioBuffer = await downloadMedia(mediaId);
         
@@ -58,16 +57,18 @@ async function handleMessage(message, contact) {
             if (cliente.falarHumano) {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: false } });
             }
-            await sendDelayedText(null, jid, '🔄 Atendimento automático restaurado! Podes utilizar o menu abaixo ou conversar comigo.');
+            await sendDelayedText(null, jid, 'Atendimento automatico restaurado! Podes utilizar o menu abaixo ou conversar comigo.');
             await sendMenu(null, jid);
             return; 
         }
 
-        if (cliente.falarHumano) {
-            return; 
-        }
+        if (cliente.falarHumano) return; 
 
         let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {} };
+        
+        // RECUPERAÇÃO DE ABANDONO: Sempre que o usuário manda mensagem, reinicia o tempo e o estado do robô
+        userState.lastActive = Date.now();
+        userState.notified = false;
         
         if (!cliente.nome && userState.step === STEPS.MENU_PRINCIPAL) {
             const historicoCru = await prisma.mensagemIA.count({ where: { clienteId: senderNumber } });
@@ -75,8 +76,8 @@ async function handleMessage(message, contact) {
                 userState.step = STEPS.PEDIR_NOME;
                 stateMachine.set(senderNumber, userState);
                 
-                await sendDelayedText(null, jid, 'Olá! 👋 Sou o Assistente Virtual da Barbearia, seja muito bem-vindo!\nÉ um prazer ter-te por aqui.');
-                await sendText(jid, 'Para que o nosso atendimento seja mais amigável, como gostarias de ser chamado?');
+                await sendDelayedText(null, jid, 'Ola! Sou o Assistente Virtual da Barbearia, seja muito bem-vindo!\nE um prazer ter-te por aqui.');
+                await sendText(jid, 'Para que o nosso atendimento seja mais amigavel, como gostarias de ser chamado?');
                 return;
             }
         }
@@ -95,15 +96,15 @@ async function handleMessage(message, contact) {
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
                 
-                await prisma.mensagemIA.create({ data: { role: 'user', content: `O meu nome é ${nomeFinal}`, clienteId: senderNumber }});
+                await prisma.mensagemIA.create({ data: { role: 'user', content: `O meu nome e ${nomeFinal}`, clienteId: senderNumber }});
 
                 const btnPrimeiraVez = [
                     { id: 'menu', title: 'Menu Principal' }, 
-                    { id: 'btn_duvidas', title: 'Dúvidas frequentes' },
+                    { id: 'btn_duvidas', title: 'Duvidas frequentes' },
                     { id: 'btn_equipe', title: 'Falar com a equipe' }
                 ];
                 
-                const textoBoasVindas = `Muito prazer, ${nomeFinal}!\n\nEscolhe uma das opções abaixo para começarmos ou conversa comigo à vontade (podes até enviar áudios! 🎙️):`;
+                const textoBoasVindas = `Muito prazer, ${nomeFinal}!\n\nEscolhe uma das opcoes abaixo para comecarmos ou conversa comigo a vontade (podes ate enviar audios!):`;
                 
                 await sendInteractiveMenu(null, jid, textoBoasVindas, btnPrimeiraVez);
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: textoBoasVindas, clienteId: senderNumber }});
@@ -151,13 +152,13 @@ async function handleMessage(message, contact) {
 async function sendMenu(sockIgnorado, jid) {
     const menuOptions = [
         { id: '1', title: 'Agendar', description: 'Cortar/Marcar novo!' },
-        { id: '2', title: 'Serviços e Preços', description: 'Tabela C/ preçários ' },
+        { id: '2', title: 'Servicos e Precos', description: 'Tabela C/ precarios' },
         { id: '3', title: 'A Minha Agenda', description: 'Check dos apontamentos' },
         { id: '4', title: 'Cancelar Marcas', description: 'Pausar Canceladas!' },
-        { id: '5', title: 'Av., Mapa / Hrs', description: 'Geocalização' },
-        { id: '6', title: 'Falar com Humano', description: 'Atendimento Orgânico.' }
+        { id: '5', title: 'Av., Mapa / Hrs', description: 'Geocalizacao' },
+        { id: '6', title: 'Falar com Humano', description: 'Atendimento Organico' }
     ];
-    await sendInteractiveMenu(null, jid, '*Portal Da Barbearia ✂️*\nÉ bem prático! Podes simplesmente prosseguir tocando num botão abaixo 👇', menuOptions);
+    await sendInteractiveMenu(null, jid, '*Portal Da Barbearia*\nE bem pratico! Podes simplesmente prosseguir tocando num botao abaixo', menuOptions);
 }
 
 async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber, nomeCliente) {
@@ -175,12 +176,12 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
         case '4': await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS); break;
         
         case '5': 
-            await sendDelayedText(null, jid, `📍 *Como nos encontrar:*\nNós ficamos na Av. 24 de Julho, Maputo.\n🕒 Aberto de Seg a Sáb (09h às 19h)\n\nAbaixo está o nosso mapa para navegares até aqui! 👇`);
+            await sendDelayedText(null, jid, `*Como nos encontrar:*\nNos ficamos na Av. 24 de Julho, Maputo.\nAberto de Seg a Sab (09h as 19h)\n\nAbaixo esta o nosso mapa para navegares ate aqui!`);
             await sendDelayedLocation(jid, -25.9744, 32.5885, "Portal Da Barbearia", "Av. 24 de Julho, Maputo");
             break;
         
         case 'btn_duvidas':
-            await sendDelayedText(null, jid, 'Podes perguntar-me o que quiseres! Qual é a tua dúvida sobre a nossa barbearia? (Se preferires, envia um áudio! 🎙️)');
+            await sendDelayedText(null, jid, 'Podes perguntar-me o que quiseres! Qual e a tua duvida sobre a nossa barbearia? (Se preferires, envia um audio!)');
             await prisma.mensagemIA.create({ data: { role: 'user', content: "Tenho dúvidas frequentes.", clienteId: senderNumber }});
             await prisma.mensagemIA.create({ data: { role: 'assistant', content: "Podes perguntar-me o que quiseres!", clienteId: senderNumber }});
             break;
@@ -188,7 +189,7 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
         case '6': 
         case 'btn_equipe':
             await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
-            await sendDelayedText(null, jid, 'Atendimento transferido! Um de nossos barbeiros já vem te responder. Aguarda só um pouquinho...\n\n(Para voltares ao atendimento automático a qualquer momento, digita *#sair*)'); 
+            await sendDelayedText(null, jid, 'Atendimento transferido! Um de nossos barbeiros ja vem te responder. Aguarda so um pouquinho...\n\n(Para voltares ao atendimento automatico a qualquer momento, digita *#sair*)'); 
             break;
             
         default: 
@@ -243,12 +244,12 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
                 await verMeusAgendamentos(null, jid, senderNumber);
             }
             else if (intentCheck.includes('/LOCAL') || intentCheck.includes('/MAPA') || intentCheck.includes('/ENDERECO')) {
-                await sendDelayedText(null, jid, `📍 *Como nos encontrar:*\nNós ficamos na Av. 24 de Julho, Maputo.\n🕒 Aberto de Seg a Sáb (09h às 19h)\n\nAbaixo está o nosso mapa para navegares até aqui! 👇`);
+                await sendDelayedText(null, jid, `*Como nos encontrar:*\nNos ficamos na Av. 24 de Julho, Maputo.\nAberto de Seg a Sab (09h as 19h)\n\nAbaixo esta o nosso mapa para navegares ate aqui!`);
                 await sendDelayedLocation(jid, -25.9744, 32.5885, "Portal Da Barbearia", "Av. 24 de Julho, Maputo");
             }
             else if (intentCheck.includes('/HUMANO') || intentCheck.includes('/ATENDENTE') || intentCheck.includes('/PESSOA')) {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
-                await sendDelayedText(null, jid, 'Atendimento transferido! Um de nossos barbeiros já vem te responder. Aguarda só um pouquinho...\n\n(Para voltares ao atendimento automático, digita *#sair*)');
+                await sendDelayedText(null, jid, 'Atendimento transferido! Um de nossos barbeiros ja vem te responder. Aguarda so um pouquinho...\n\n(Para voltares ao atendimento automatico, digita *#sair*)');
             } 
             else if (intentCheck.includes('/MENU')) {
                 await sendMenu(null, jid);
@@ -265,4 +266,5 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
     }
 }
 
-module.exports = { handleMessage };
+// Expõe a máquina de estados para o robô que verifica o abandono do carrinho
+module.exports = { handleMessage, stateMachine, STEPS };

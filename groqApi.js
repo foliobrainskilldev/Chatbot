@@ -1,3 +1,4 @@
+// --- START OF FILE groqApi.js ---
 const { OpenAI } = require('openai');
 const fs = require('fs');
 const path = require('path');
@@ -8,35 +9,28 @@ const groq = new OpenAI({
     baseURL: "https://api.groq.com/openai/v1",
 });
 
-// NOVA FUNÇÃO: Transcrever áudio recebido do WhatsApp
 async function transcreverAudioComGroq(audioBuffer) {
     if (!process.env.GROQ_API_KEY) return "";
-
-    // A Groq exige um ficheiro físico. Vamos criar um ficheiro temporário para o áudio recebido.
     const tempFilePath = path.join(os.tmpdir(), `audio_bot_${Date.now()}.ogg`);
     fs.writeFileSync(tempFilePath, audioBuffer);
 
     try {
         const resposta = await groq.audio.transcriptions.create({
             file: fs.createReadStream(tempFilePath),
-            model: "whisper-large-v3-turbo", // Modelo mais rápido da Groq para áudio
-            language: "pt", // Força o reconhecimento em Português
+            model: "whisper-large-v3-turbo", 
+            language: "pt", 
         });
         return resposta.text;
     } catch (erro) {
         console.error("❌ ERRO NA TRANSCRIÇÃO DE ÁUDIO:", erro.message);
         return "";
     } finally {
-        // Apaga o ficheiro temporário para não encher a memória do servidor
-        if (fs.existsSync(tempFilePath)) {
-            fs.unlinkSync(tempFilePath);
-        }
+        if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     }
 }
 
 async function extrairNomeComGroq(textoCliente) {
     if (!process.env.GROQ_API_KEY) return "IGNORAR";
-
     try {
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant",
@@ -53,8 +47,28 @@ async function extrairNomeComGroq(textoCliente) {
     }
 }
 
-async function responderComGroq(mensagemCliente, contextAgendamentos = 0, historicoAnterior, infoTemporal = "", nomeCliente = "") {
+// NOVA FUNÇÃO: Gera textos automáticos dinâmicos para Follow-up e Lembretes (SEM EMOJIS)
+async function gerarMensagemNotificacao(promptInstrucao, fallbackText) {
+    if (!process.env.GROQ_API_KEY) return fallbackText;
     
+    try {
+        const resposta = await groq.chat.completions.create({
+            model: "llama-3.1-8b-instant",
+            messages: [
+                { role: "system", content: "És o assistente virtual da barbearia. A tua função é redigir uma mensagem curta, amigável e direta para o cliente, baseada nas instruções recebidas. REGRA ABSOLUTA E INQUEBRÁVEL: NÃO USE NENHUM EMOJI EM HIPÓTESE ALGUMA. A mensagem deve ser apenas texto puro." },
+                { role: "user", content: promptInstrucao }
+            ],
+            temperature: 0.4, // Pouca criatividade para não alucinar, mas o suficiente para mudar o texto
+            max_tokens: 100
+        });
+        return resposta.choices[0]?.message?.content.trim() || fallbackText;
+    } catch (erro) {
+        console.error("❌ ERRO AO GERAR NOTIFICAÇÃO:", erro.message);
+        return fallbackText;
+    }
+}
+
+async function responderComGroq(mensagemCliente, contextAgendamentos = 0, historicoAnterior, infoTemporal = "", nomeCliente = "") {
     if (!process.env.GROQ_API_KEY) return "Infelizmente estarei cego momentaneamente, avança pelo menu.";
 
     const INSTRUCOES_BLINDADAS_CONTEXTO = `És o Assistente Virtual Inteligente de uma Barbearia em Moçambique.
@@ -112,4 +126,4 @@ Lembrança final: O cliente tem ${contextAgendamentos} marcações ativas. NUNCA
     }
 }
 
-module.exports = { responderComGroq, extrairNomeComGroq, transcreverAudioComGroq };
+module.exports = { responderComGroq, extrairNomeComGroq, transcreverAudioComGroq, gerarMensagemNotificacao };
