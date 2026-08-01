@@ -48,7 +48,7 @@ Se o cliente demonstrar intenção de fazer alguma das ações abaixo, tens de r
 - Intenção de CANCELAR uma marcação -> Responde SÓ: /CANCELAR
 - Intenção de MARCAR ou AGENDAR -> Responde SÓ: /AGENDAR
 - Intenção de ver PREÇOS ou SERVIÇOS -> Responde SÓ: /PRECOS
-- Intenção de ver as HORAS MARCADAS -> Responde SÓ: /AGENDA
+- Intenção de CONSULTAR SEU AGENDAMENTO, VER O ESTADO ou HORAS MARCADAS -> Responde SÓ: /AGENDA
 - Intenção de saber a LOCALIZAÇÃO -> Responde SÓ: /LOCAL
 
 Lembrança final: O cliente tem ${contextAgendamentos} marcações ativas. NUNCA digas que vais "chamar alguém" por texto normal, responde APENAS com /HUMANO se ele o pedir.`;

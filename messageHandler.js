@@ -64,7 +64,9 @@ async function handleMessage(message, contact) {
             if (historicoCru === 0) {
                 userState.step = STEPS.PEDIR_NOME;
                 stateMachine.set(senderNumber, userState);
-                await sendDelayedText(null, jid, 'Olá! 👋 Bem-vindo à nossa Barbearia!\nÉ um prazer ter-te por aqui. Para que o nosso atendimento seja mais amigável, como gostarias de ser chamado? 😊');
+                
+                // MENSAGEM ALTERADA PARA DEIXAR CLARO QUE É UM ASSISTENTE VIRTUAL
+                await sendDelayedText(null, jid, '🤖 Olá! 👋 Sou o Assistente Virtual da Barbearia, seja muito bem-vindo!\nÉ um prazer ter-te por aqui. Para que o nosso atendimento seja mais amigável, como gostarias de ser chamado? 😊');
                 return;
             }
         }
@@ -195,16 +197,13 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
 
             if (historicoCru.length > 0) {
                 const ultimaMsgData = new Date(historicoCru[0].criadoEm);
-                const horasPassadas = (agora - ultimaMsgData) / (1000 * 60 * 60); // Diferença em Horas
+                const horasPassadas = (agora - ultimaMsgData) / (1000 * 60 * 60); 
                 
                 if (horasPassadas < 3) {
-                    // Conversa ainda está a acontecer (menos de 3 horas passadas)
                     infoTemporal = `CONVERSA CONTÍNUA. Última mensagem há menos de 3h. PROIBIDO dizer Bom dia, Boa tarde ou Boa noite. Vai direto ao assunto.`;
                 } else if (horasPassadas >= 3 && horasPassadas < 16) {
-                    // Retorno no mesmo dia, após várias horas
                     infoTemporal = `RETORNO (passaram algumas horas). Hora atual: ${horaMaputo}h. Podes voltar a dizer ${saudacao}.`;
                 } else {
-                    // Retorno num dia novo ou após imenso tempo
                     infoTemporal = `NOVO DIA/MUITO TEMPO. Hora atual: ${horaMaputo}h. OBRIGATÓRIO cumprimentar com ${saudacao}!`;
                 }
             }
@@ -214,23 +213,41 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             const asConversasPassadas = historicoCru.reverse();
             const constCortesG = await prisma.agendamento.count({ where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } }});
             
-            // Passamos a instrução de tempo precisa para o LLM
             const textIArid = await responderComGroq(textMessage, constCortesG, asConversasPassadas, infoTemporal, nomeCliente);
-            const intentCheck = textIArid.trim().toUpperCase();
+            
+            // COFRE ANTI-ALUCINAÇÕES DA IA (remove os espaços e aceita mais variações)
+            const intentCheck = textIArid.trim().toUpperCase().replace(/\s+/g, '');
 
-            if (intentCheck.includes('/AGENDAR')) await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);
-            else if (intentCheck.includes('/CANCELAR')) await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS);
-            else if (intentCheck.includes('/PRECOS')) await verPrecosEServicos(null, jid);
-            else if (intentCheck.includes('/AGENDA')) await verMeusAgendamentos(null, jid, senderNumber);
-            else if (intentCheck.includes('/LOCAL')) await sendDelayedText(null, jid, `📍 *Nossa Localização:* \n> Av. 24 de Julho (Encontra Maputo/PT), 🕒 Seg as Sáb : (09h às 19h)`);
-            else if (intentCheck.includes('/HUMANO')) {
+            if (intentCheck.includes('/AGENDAR') || intentCheck.includes('/MARCAR') || intentCheck.includes('/NOVO')) {
+                await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);
+            }
+            else if (intentCheck.includes('/CANCELAR') || intentCheck.includes('/DESMARCAR')) {
+                await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS);
+            }
+            else if (intentCheck.includes('/PRECOS') || intentCheck.includes('/SERVICOS') || intentCheck.includes('/VALOR')) {
+                await verPrecosEServicos(null, jid);
+            }
+            else if (intentCheck.includes('/AGENDA') || intentCheck.includes('/ESTADO') || intentCheck.includes('/CONSULTA') || intentCheck.includes('LAGENDA')) {
+                await verMeusAgendamentos(null, jid, senderNumber);
+            }
+            else if (intentCheck.includes('/LOCAL') || intentCheck.includes('/MAPA') || intentCheck.includes('/ENDERECO')) {
+                await sendDelayedText(null, jid, `📍 *Nossa Localização:* \n> Av. 24 de Julho (Encontra Maputo/PT), 🕒 Seg as Sáb : (09h às 19h)`);
+            }
+            else if (intentCheck.includes('/HUMANO') || intentCheck.includes('/ATENDENTE') || intentCheck.includes('/PESSOA')) {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
                 await sendDelayedText(null, jid, 'Atendimento transferido! Um de nossos barbeiros já vem te responder. Aguarda só um pouquinho...\n\n(Para voltares ao atendimento automático, digita *#sair*)');
             } 
-            else if (intentCheck.includes('/MENU')) await sendMenu(null, jid);
+            else if (intentCheck.includes('/MENU')) {
+                await sendMenu(null, jid);
+            }
             else {
-                await prisma.mensagemIA.create({ data: { role: 'assistant', content: textIArid, clienteId: senderNumber }});
-                await sendDelayedText(null, jid, textIArid);
+                // Se por acaso a IA inventar um comando desconhecido que comece com "/", enviamos o Menu para segurança
+                if (textIArid.trim().startsWith('/')) {
+                    await sendMenu(null, jid);
+                } else {
+                    await prisma.mensagemIA.create({ data: { role: 'assistant', content: textIArid, clienteId: senderNumber }});
+                    await sendDelayedText(null, jid, textIArid);
+                }
             }
             break;
     }
