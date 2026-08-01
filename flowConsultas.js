@@ -1,31 +1,62 @@
 // --- START OF FILE flowConsultas.js ---
 const { prisma } = require('./db');
 const { format } = require('date-fns');
-const { sendDelayedText } = require('./botUtils');
+const { sendDelayedText, sendInteractiveMenu } = require('./botUtils');
 const { sendProductList } = require('./whatsappApi'); 
 
 async function verPrecosEServicos(sockIgnorado, jid) {
-    // ⚠️ ATENÇÃO: Substitui pelo ID real do teu Catálogo
-    const MEU_CATALOGO_ID ="1074870258211819"; 
+    const CATALOG_ID = process.env.CATALOG_ID;
 
-    // Estrutura das secções com os teus IDs reais da Meta
+    // Se o CATALOG_ID não estiver no .env, aciona o Fallback automaticamente (Menu Simples sem Catálogo)
+    if (!CATALOG_ID) {
+        console.log("⚠️ CATALOG_ID não definido no .env. Enviando lista de serviços do banco de dados (Fallback).");
+        await enviarMenuFallback(jid);
+        return;
+    }
+
+    // Estrutura lendo do .env
     const sections = [
         {
             title: "Cortes e Barboterapia",
             product_items: [
-                { product_retailer_id: "h5fj6325da" }, // Panque
-                { product_retailer_id: "af2o2iuwey" }, // Corte e Barba
-                { product_retailer_id: "8pdji0vdor" }  // Barba
+                { product_retailer_id: process.env.PRODUTO_1_ID || "h5fj6325da" }, // Corte de Cabelo
+                { product_retailer_id: process.env.PRODUTO_2_ID || "8pdji0vdor" }, // Barba
+                { product_retailer_id: process.env.PRODUTO_3_ID || "af2o2iuwey" }  // Corte + Barba
             ]
         }
     ];
 
-    await sendProductList(
+    try {
+        await sendProductList(
+            jid, 
+            CATALOG_ID, 
+            "Tabela de Serviços ✂️", 
+            "Clica abaixo em 'Ver Produtos' para explorares as nossas opções, fotos e preços! \nPara agendares, basta ADICIONAR AO CARRINHO e enviar para nós aqui no chat.",
+            sections
+        );
+    } catch (error) {
+        // Se a Meta der erro de (#131009) por causa de produtos não aprovados ou ID errado, o bot salva o atendimento
+        console.error("❌ Falha ao enviar catálogo da Meta. Acionando menu de botões alternativo (Fallback)...");
+        await enviarMenuFallback(jid);
+    }
+}
+
+// FUNÇÃO DE EMERGÊNCIA (Caso o catálogo falhe, o bot gera os botões baseados no banco de dados)
+async function enviarMenuFallback(jid) {
+    const servicos = await prisma.servico.findMany();
+    
+    let optServicos = servicos.map(s => ({ 
+        id: `srv_${s.id}`, 
+        title: s.nome, 
+        description: `${s.preco} MT` 
+    }));
+    optServicos.push({ id: '0', title: 'Voltar ao Menu' });
+
+    await sendInteractiveMenu(
+        null, 
         jid, 
-        MEU_CATALOGO_ID, 
-        "Tabela de Serviços ✂️", 
-        "Clica abaixo em 'Ver Produtos' para explorares as nossas opções, fotos e preços! \nPara agendares, basta ADICIONAR AO CARRINHO e enviar para nós aqui no chat.",
-        sections
+        '✂️ *Tabela de Serviços e Preços*\n\n(O nosso catálogo de fotos está temporariamente em atualização). \nPor favor, escolhe o serviço desejado na lista abaixo para agendar:', 
+        optServicos
     );
 }
 

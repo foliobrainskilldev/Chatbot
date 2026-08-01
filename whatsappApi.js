@@ -99,7 +99,6 @@ async function sendInteractiveMenu(to, text, options) {
     }
 }
 
-// NOVA FUNÇÃO: Enviar o Catálogo Nativo do WhatsApp
 async function sendProductList(to, catalogId, headerText, bodyText, sections) {
     try {
         await api.post('/messages', {
@@ -119,6 +118,8 @@ async function sendProductList(to, catalogId, headerText, bodyText, sections) {
         });
     } catch (error) {
         console.error("Erro ao enviar Lista de Produtos:", error.response?.data || error.message);
+        // O lançamento (throw) informa ao flowConsultas que deu erro para usar o "Fallback"
+        throw error; 
     }
 }
 
@@ -145,3 +146,4 @@ async function downloadMedia(mediaId) {
 module.exports = { 
     sendText, sendInteractiveMenu, markAsReadAndTyping, sendLocation, downloadMedia, sendProductList 
 };
+// --- END OF FILE whatsappApi.js ---

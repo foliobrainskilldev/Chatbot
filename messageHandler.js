@@ -45,18 +45,21 @@ async function handleMessage(message, contact) {
             return;
         }
     } else if (message.type === 'order') {
-        // LÓGICA DO CARRINHO DE COMPRAS NATIVO (COM OS TEUS IDs)
+        // LÓGICA DO CARRINHO DE COMPRAS NATIVO (COM OS IDs DO ENV)
         const orderItems = message.order.product_items;
         if (orderItems && orderItems.length > 0) {
             const produtoSKU = orderItems[0].product_retailer_id;
             console.log(`🛒 Carrinho recebido do cliente! SKU escolhido: ${produtoSKU}`);
 
-            // Traduz o ID da Meta para o ID da tua Base de Dados (Prisma)
+            const prod1 = process.env.PRODUTO_1_ID || 'h5fj6325da';
+            const prod2 = process.env.PRODUTO_2_ID || '8pdji0vdor';
+            const prod3 = process.env.PRODUTO_3_ID || 'af2o2iuwey';
+
             let dbServicoId = '1'; 
             
-            if (produtoSKU === 'h5fj6325da') dbServicoId = '1';      // Panque
-            else if (produtoSKU === '8pdji0vdor') dbServicoId = '2'; // Barba
-            else if (produtoSKU === 'af2o2iuwey') dbServicoId = '3'; // Corte + Barba
+            if (produtoSKU === prod1) dbServicoId = '1';      // Corte de Cabelo
+            else if (produtoSKU === prod2) dbServicoId = '2'; // Barba
+            else if (produtoSKU === prod3) dbServicoId = '3'; // Corte + Barba
 
             // Mente para o sistema dizendo que o cliente clicou no menu antigo
             textMessage = 'srv_' + dbServicoId; 
@@ -220,7 +223,6 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             if (horaMaputo >= 5 && horaMaputo < 12) saudacao = "Bom dia";
             else if (horaMaputo >= 12 && horaMaputo < 18) saudacao = "Boa tarde";
 
-            // CORREÇÃO: Prompt alterado para comando oculto
             let infoTemporal = `[INSTRUÇÃO DO SISTEMA OBRIGATÓRIA - NÃO LEIAS EM VOZ ALTA]: O cliente está a falar contigo de ${saudacao}. Age de acordo.`;
 
             if (historicoCru.length > 0) {
