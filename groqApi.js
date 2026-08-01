@@ -1,9 +1,38 @@
 const { OpenAI } = require('openai');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 const groq = new OpenAI({
     apiKey: process.env.GROQ_API_KEY || "SEM_CHAVE", 
     baseURL: "https://api.groq.com/openai/v1",
 });
+
+// NOVA FUNÇÃO: Transcrever áudio recebido do WhatsApp
+async function transcreverAudioComGroq(audioBuffer) {
+    if (!process.env.GROQ_API_KEY) return "";
+
+    // A Groq exige um ficheiro físico. Vamos criar um ficheiro temporário para o áudio recebido.
+    const tempFilePath = path.join(os.tmpdir(), `audio_bot_${Date.now()}.ogg`);
+    fs.writeFileSync(tempFilePath, audioBuffer);
+
+    try {
+        const resposta = await groq.audio.transcriptions.create({
+            file: fs.createReadStream(tempFilePath),
+            model: "whisper-large-v3-turbo", // Modelo mais rápido da Groq para áudio
+            language: "pt", // Força o reconhecimento em Português
+        });
+        return resposta.text;
+    } catch (erro) {
+        console.error("❌ ERRO NA TRANSCRIÇÃO DE ÁUDIO:", erro.message);
+        return "";
+    } finally {
+        // Apaga o ficheiro temporário para não encher a memória do servidor
+        if (fs.existsSync(tempFilePath)) {
+            fs.unlinkSync(tempFilePath);
+        }
+    }
+}
 
 async function extrairNomeComGroq(textoCliente) {
     if (!process.env.GROQ_API_KEY) return "IGNORAR";
@@ -83,4 +112,4 @@ Lembrança final: O cliente tem ${contextAgendamentos} marcações ativas. NUNCA
     }
 }
 
-module.exports = { responderComGroq, extrairNomeComGroq };
+module.exports = { responderComGroq, extrairNomeComGroq, transcreverAudioComGroq };

@@ -3,8 +3,8 @@ const { iniciarAgendamento, handleAgendamento } = require('./flowAgendamento');
 const { verPrecosEServicos, verMeusAgendamentos } = require('./flowConsultas');
 const { iniciarCancelamento, processarCancelamento } = require('./flowCancelamento');
 const { sendDelayedText, sendInteractiveMenu, sendDelayedLocation } = require('./botUtils');
-const { responderComGroq, extrairNomeComGroq } = require('./groqApi');
-const { markAsReadAndTyping, sendText } = require('./whatsappApi'); 
+const { responderComGroq, extrairNomeComGroq, transcreverAudioComGroq } = require('./groqApi');
+const { markAsReadAndTyping, sendText, downloadMedia } = require('./whatsappApi'); 
 
 const stateMachine = new Map();
 const STEPS = {
@@ -27,11 +27,24 @@ async function handleMessage(message, contact) {
         await markAsReadAndTyping(message.id); 
     }
 
+    // NOVA LÓGICA: Suporte para leitura de Áudio/Texto
     if (message.type === 'text') {
         textMessage = message.text.body;
     } else if (message.type === 'interactive') {
         if (message.interactive.type === 'button_reply') textMessage = message.interactive.button_reply.id;
         else if (message.interactive.type === 'list_reply') textMessage = message.interactive.list_reply.id;
+    } else if (message.type === 'audio') {
+        // Baixa o áudio e transcreve para texto
+        const mediaId = message.audio.id;
+        const audioBuffer = await downloadMedia(mediaId);
+        
+        if (audioBuffer) {
+            textMessage = await transcreverAudioComGroq(audioBuffer);
+            console.log(`🎙️ [ÁUDIO TRANSCREVIDO] ${senderNumber}: "${textMessage}"`);
+        } else {
+            await sendDelayedText(null, jid, "Desculpa, não consegui ouvir o teu áudio neste momento. Podes escrever?");
+            return;
+        }
     }
 
     if (!textMessage) return;
@@ -90,7 +103,7 @@ async function handleMessage(message, contact) {
                     { id: 'btn_equipe', title: 'Falar com a equipe' }
                 ];
                 
-                const textoBoasVindas = `Muito prazer, ${nomeFinal}!\n\nEscolhe uma das opções abaixo para começarmos ou conversa comigo à vontade:`;
+                const textoBoasVindas = `Muito prazer, ${nomeFinal}!\n\nEscolhe uma das opções abaixo para começarmos ou conversa comigo à vontade (podes até enviar áudios! 🎙️):`;
                 
                 await sendInteractiveMenu(null, jid, textoBoasVindas, btnPrimeiraVez);
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: textoBoasVindas, clienteId: senderNumber }});
@@ -161,14 +174,13 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
         case '3': await verMeusAgendamentos(null, jid, senderNumber); break; 
         case '4': await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS); break;
         
-        // --- NOVO FORMATO DE ENVIO DE LOCALIZAÇÃO (PELO MENU) ---
         case '5': 
             await sendDelayedText(null, jid, `📍 *Como nos encontrar:*\nNós ficamos na Av. 24 de Julho, Maputo.\n🕒 Aberto de Seg a Sáb (09h às 19h)\n\nAbaixo está o nosso mapa para navegares até aqui! 👇`);
             await sendDelayedLocation(jid, -25.9744, 32.5885, "Portal Da Barbearia", "Av. 24 de Julho, Maputo");
             break;
         
         case 'btn_duvidas':
-            await sendDelayedText(null, jid, 'Podes perguntar-me o que quiseres! Qual é a tua dúvida sobre a nossa barbearia?');
+            await sendDelayedText(null, jid, 'Podes perguntar-me o que quiseres! Qual é a tua dúvida sobre a nossa barbearia? (Se preferires, envia um áudio! 🎙️)');
             await prisma.mensagemIA.create({ data: { role: 'user', content: "Tenho dúvidas frequentes.", clienteId: senderNumber }});
             await prisma.mensagemIA.create({ data: { role: 'assistant', content: "Podes perguntar-me o que quiseres!", clienteId: senderNumber }});
             break;
@@ -230,7 +242,6 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             else if (intentCheck.includes('/AGENDA') || intentCheck.includes('/ESTADO') || intentCheck.includes('/CONSULTA') || intentCheck.includes('LAGENDA')) {
                 await verMeusAgendamentos(null, jid, senderNumber);
             }
-            // --- NOVO FORMATO DE ENVIO DE LOCALIZAÇÃO (PELA INTELIGÊNCIA ARTIFICIAL) ---
             else if (intentCheck.includes('/LOCAL') || intentCheck.includes('/MAPA') || intentCheck.includes('/ENDERECO')) {
                 await sendDelayedText(null, jid, `📍 *Como nos encontrar:*\nNós ficamos na Av. 24 de Julho, Maputo.\n🕒 Aberto de Seg a Sáb (09h às 19h)\n\nAbaixo está o nosso mapa para navegares até aqui! 👇`);
                 await sendDelayedLocation(jid, -25.9744, 32.5885, "Portal Da Barbearia", "Av. 24 de Julho, Maputo");

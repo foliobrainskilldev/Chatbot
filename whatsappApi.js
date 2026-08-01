@@ -42,7 +42,6 @@ async function sendText(to, text) {
     }
 }
 
-// NOVA FUNÇÃO: Enviar Mapa Interativo Nativo
 async function sendLocation(to, latitude, longitude, name, address) {
     try {
         await api.post('/messages', {
@@ -99,4 +98,24 @@ async function sendInteractiveMenu(to, text, options) {
     }
 }
 
-module.exports = { sendText, sendInteractiveMenu, markAsReadAndTyping, sendLocation };
+// NOVA FUNÇÃO: Baixar mídia da Meta (Áudios, Imagens, etc)
+async function downloadMedia(mediaId) {
+    try {
+        // 1. Obter a URL protegida do ficheiro
+        const { data } = await api.get(`/${mediaId}`);
+        const mediaUrl = data.url;
+
+        // 2. Fazer download do ficheiro passando o Token de Autorização da Meta
+        const response = await axios.get(mediaUrl, {
+            responseType: 'arraybuffer',
+            headers: { 'Authorization': `Bearer ${META_TOKEN}` }
+        });
+        
+        return Buffer.from(response.data, 'binary');
+    } catch (error) {
+        console.error("Erro ao baixar ficheiro (Áudio) da Meta:", error.response?.data || error.message);
+        return null;
+    }
+}
+
+module.exports = { sendText, sendInteractiveMenu, markAsReadAndTyping, sendLocation, downloadMedia };
