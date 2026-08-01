@@ -70,21 +70,15 @@ async function handleMessage(message, contact) {
         }
 
         if (userState.step === STEPS.PEDIR_NOME) {
-            // A IA extrai apenas o nome caso o cliente diga "Podes tratar-me por João"
             const nomeExtraido = await extrairNomeComGroq(textMessage);
             
             if (nomeExtraido.toUpperCase() === 'IGNORAR') {
-                // Se o cliente ignorou o pedido do nome (ex: disse logo "Quero cortar"), ignoramos a captura e avançamos
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
-                // Não damos "return" aqui para o código seguir lá para baixo e processar o pedido
             } else {
-                // Capitaliza a 1ª letra
                 const nomeFinal = nomeExtraido.charAt(0).toUpperCase() + nomeExtraido.slice(1).toLowerCase();
-                
-                // Atualizamos a DB
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { nome: nomeFinal } });
-                cliente.nome = nomeFinal; // Para a memória instantânea desta run
+                cliente.nome = nomeFinal; 
                 
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
@@ -100,7 +94,7 @@ async function handleMessage(message, contact) {
                 
                 await sendInteractiveMenu(null, jid, textoBoasVindas, btnPrimeiraVez);
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: textoBoasVindas, clienteId: senderNumber }});
-                return; // O fluxo dele termina aqui por agora
+                return; 
             }
         }
         // =========================================================================
@@ -127,7 +121,6 @@ async function handleMessage(message, contact) {
         else {
              switch (userState.step) {
                   case STEPS.MENU_PRINCIPAL:
-                      // Passamos o cliente.nome para o engine da IA saber o nome atualizado!
                       await handleEstrategiaLLMSalvos(null, jid, textMessage, senderNumber, cliente.nome);
                       break;
                   case STEPS.CANCELAR_AGENDAMENTO:
@@ -155,7 +148,6 @@ async function sendMenu(sockIgnorado, jid) {
     await sendInteractiveMenu(null, jid, '*Portal Da Barbearia ✂️*\nÉ bem prático! Podes simplesmente prosseguir tocando num botão abaixo 👇', menuOptions);
 }
 
-// Atualizado para receber "nomeCliente"
 async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber, nomeCliente) {
     const option = textMessage.trim();
     
@@ -190,15 +182,30 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
                    take: 4 
             });
 
-            let statusRetorno = "NOVO";
+            // --- LÓGICA TEMPORAL E FUSO HORÁRIO (MAPUTO) ---
+            const agora = new Date();
+            const horaMaputoStr = new Intl.DateTimeFormat('pt-PT', { timeZone: 'Africa/Maputo', hour: 'numeric', hour12: false }).format(agora);
+            const horaMaputo = parseInt(horaMaputoStr);
+
+            let saudacao = "Boa noite";
+            if (horaMaputo >= 5 && horaMaputo < 12) saudacao = "Bom dia";
+            else if (horaMaputo >= 12 && horaMaputo < 18) saudacao = "Boa tarde";
+
+            let infoTemporal = `NOVA CONVERSA. Hora atual: ${horaMaputo}h (${saudacao}). Cumprimenta o cliente com ${saudacao}!`;
+
             if (historicoCru.length > 0) {
                 const ultimaMsgData = new Date(historicoCru[0].criadoEm);
-                const hoje = new Date();
+                const horasPassadas = (agora - ultimaMsgData) / (1000 * 60 * 60); // Diferença em Horas
                 
-                if (ultimaMsgData.toDateString() === hoje.toDateString()) {
-                    statusRetorno = "RETORNO_MESMO_DIA"; 
+                if (horasPassadas < 3) {
+                    // Conversa ainda está a acontecer (menos de 3 horas passadas)
+                    infoTemporal = `CONVERSA CONTÍNUA. Última mensagem há menos de 3h. PROIBIDO dizer Bom dia, Boa tarde ou Boa noite. Vai direto ao assunto.`;
+                } else if (horasPassadas >= 3 && horasPassadas < 16) {
+                    // Retorno no mesmo dia, após várias horas
+                    infoTemporal = `RETORNO (passaram algumas horas). Hora atual: ${horaMaputo}h. Podes voltar a dizer ${saudacao}.`;
                 } else {
-                    statusRetorno = "RETORNO_OUTRO_DIA"; 
+                    // Retorno num dia novo ou após imenso tempo
+                    infoTemporal = `NOVO DIA/MUITO TEMPO. Hora atual: ${horaMaputo}h. OBRIGATÓRIO cumprimentar com ${saudacao}!`;
                 }
             }
             
@@ -207,8 +214,8 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             const asConversasPassadas = historicoCru.reverse();
             const constCortesG = await prisma.agendamento.count({ where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } }});
             
-            // Passamos o nome para a IA aqui 👇
-            const textIArid = await responderComGroq(textMessage, constCortesG, asConversasPassadas, statusRetorno, nomeCliente);
+            // Passamos a instrução de tempo precisa para o LLM
+            const textIArid = await responderComGroq(textMessage, constCortesG, asConversasPassadas, infoTemporal, nomeCliente);
             const intentCheck = textIArid.trim().toUpperCase();
 
             if (intentCheck.includes('/AGENDAR')) await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);

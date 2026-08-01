@@ -5,7 +5,6 @@ const groq = new OpenAI({
     baseURL: "https://api.groq.com/openai/v1",
 });
 
-// Nova função para extrair SOMENTE o nome caso o cliente responda com frases longas
 async function extrairNomeComGroq(textoCliente) {
     if (!process.env.GROQ_API_KEY) return "IGNORAR";
 
@@ -25,25 +24,25 @@ async function extrairNomeComGroq(textoCliente) {
     }
 }
 
-async function responderComGroq(mensagemCliente, contextAgendamentos = 0, historicoAnterior, statusRetorno = "NOVO", nomeCliente = "") {
+async function responderComGroq(mensagemCliente, contextAgendamentos = 0, historicoAnterior, infoTemporal = "", nomeCliente = "") {
     
     if (!process.env.GROQ_API_KEY) return "Infelizmente estarei cego momentaneamente, avança pelo menu.";
 
     const INSTRUCOES_BLINDADAS_CONTEXTO = `És o Assistente Virtual Inteligente de uma Barbearia em Moçambique.
-Objetivo: Acionar comandos ocultos ou conversar de forma extremamente natural e humana.
+Objetivo: Acionar comandos ocultos ou conversar de forma natural e empática.
 
 NOME DO CLIENTE: "${nomeCliente || 'Amigo'}"
-ESTADO TEMPORAL DESTE CLIENTE AGORA: "${statusRetorno}"
 
-REGRA DE SAUDAÇÕES E CONTINUAÇÕES:
-1. Trata o cliente pelo seu nome (${nomeCliente}) de vez em quando, para manteres a empatia, mas sem pareceres repetitivo.
-2. SE for "RETORNO_MESMO_DIA": O cliente já esteve a falar contigo HOJE. É proibido dizer "Bom dia/tarde". Sê contínuo: "O que mais te posso ajudar?", "Diz lá, ${nomeCliente}".
-3. SE for "RETORNO_OUTRO_DIA": Cumprimenta de forma calorosa.
-4. NÃO SEJAS ROBÓTICO. 
+🚨 CONTEXTO DE TEMPO E SAUDAÇÃO (IMPORTANTÍSSIMO):
+"${infoTemporal}"
 
-🚨 REGRAS DE COMANDOS DE SISTEMA (MUITO IMPORTANTE):
-Se o cliente demonstrar intenção de fazer alguma das ações abaixo, tens de responder EXATAMENTE E APENAS com a palavra-chave correspondente.
-NÃO ACRESCENTES MAIS NADA! Nenhuma frase extra, nenhuma pontuação!
+REGRA DE COMUNICAÇÃO (OBRIGATÓRIO LER):
+1. Segue RIGOROSAMENTE as ordens do "CONTEXTO DE TEMPO E SAUDAÇÃO" acima para decidires se deves cumprimentar ou ir direto ao assunto.
+2. NUNCA dês um cumprimento fora de contexto. Apenas diz o que a regra de tempo acima te permitiu.
+3. Trata o cliente pelo seu nome de vez em quando para manteres a proximidade.
+
+🚨 REGRAS DE COMANDOS DE SISTEMA:
+Se o cliente demonstrar intenção de fazer alguma das ações abaixo, tens de responder EXATAMENTE E APENAS com a palavra-chave correspondente. NUNCA dês respostas textuais se identificares estas intenções:
 
 - Intenção de falar com um ATENDENTE, HUMANO ou PESSOA REAL -> Responde SÓ: /HUMANO
 - Intenção de CANCELAR uma marcação -> Responde SÓ: /CANCELAR
@@ -52,7 +51,7 @@ NÃO ACRESCENTES MAIS NADA! Nenhuma frase extra, nenhuma pontuação!
 - Intenção de ver as HORAS MARCADAS -> Responde SÓ: /AGENDA
 - Intenção de saber a LOCALIZAÇÃO -> Responde SÓ: /LOCAL
 
-Lembrança final: O cliente tem ${contextAgendamentos} marcações ativas. NUNCA digas que vais "chamar alguém" por texto normal, responde APENAS com /HUMANO para o sistema atuar.`;
+Lembrança final: O cliente tem ${contextAgendamentos} marcações ativas. NUNCA digas que vais "chamar alguém" por texto normal, responde APENAS com /HUMANO se ele o pedir.`;
 
     try {
         const constructMessagesFlowEngineLpu = [
