@@ -47,7 +47,6 @@ async function extrairNomeComGroq(textoCliente) {
     }
 }
 
-// NOVA FUNÇÃO: Gera textos automáticos dinâmicos para Follow-up e Lembretes (SEM EMOJIS)
 async function gerarMensagemNotificacao(promptInstrucao, fallbackText) {
     if (!process.env.GROQ_API_KEY) return fallbackText;
     
@@ -58,7 +57,7 @@ async function gerarMensagemNotificacao(promptInstrucao, fallbackText) {
                 { role: "system", content: "És o assistente virtual da barbearia. A tua função é redigir uma mensagem curta, amigável e direta para o cliente, baseada nas instruções recebidas. REGRA ABSOLUTA E INQUEBRÁVEL: NÃO USE NENHUM EMOJI EM HIPÓTESE ALGUMA. A mensagem deve ser apenas texto puro." },
                 { role: "user", content: promptInstrucao }
             ],
-            temperature: 0.4, // Pouca criatividade para não alucinar, mas o suficiente para mudar o texto
+            temperature: 0.4, 
             max_tokens: 100
         });
         return resposta.choices[0]?.message?.content.trim() || fallbackText;
@@ -71,30 +70,44 @@ async function gerarMensagemNotificacao(promptInstrucao, fallbackText) {
 async function responderComGroq(mensagemCliente, contextAgendamentos = 0, historicoAnterior, infoTemporal = "", nomeCliente = "") {
     if (!process.env.GROQ_API_KEY) return "Infelizmente estarei cego momentaneamente, avança pelo menu.";
 
+    // PROMPT BLINDADO E REESTRUTURADO
     const INSTRUCOES_BLINDADAS_CONTEXTO = `És o Assistente Virtual Inteligente de uma Barbearia em Moçambique.
-Objetivo: Acionar comandos ocultos ou conversar de forma natural e empática.
+O teu objetivo principal é encaminhar os pedidos dos clientes para os nossos menus automáticos ou conversar caso seja apenas uma saudação.
 
-NOME DO CLIENTE: "${nomeCliente || 'Amigo'}"
+DADOS DO CLIENTE:
+Nome: "${nomeCliente || 'Amigo'}"
+Regra de Saudação e Tempo: "${infoTemporal}"
 
-🚨 CONTEXTO DE TEMPO E SAUDAÇÃO (IMPORTANTÍSSIMO):
-"${infoTemporal}"
+🚨 MODO DE ROTEAMENTO (COMANDOS OBRIGATÓRIOS) 🚨
+Se o cliente quiser fazer qualquer uma das ações abaixo, TU NÃO DEVES TENTAR RESOLVER POR TEXTO. Responde APENAS com a TAG exata correspondente e o sistema fará o resto:
 
-REGRA DE COMUNICAÇÃO (OBRIGATÓRIO LER):
-1. Segue RIGOROSAMENTE as ordens do "CONTEXTO DE TEMPO E SAUDAÇÃO" acima para decidires se deves cumprimentar ou ir direto ao assunto.
-2. NUNCA dês um cumprimento fora de contexto. Apenas diz o que a regra de tempo acima te permitiu.
-3. Trata o cliente pelo seu nome de vez em quando para manteres a proximidade.
+- Quer marcar, agendar, fazer uma marcação, cortar o cabelo? -> RESPONDE SÓ: /AGENDAR
+- Quer cancelar, desmarcar? -> RESPONDE SÓ: /CANCELAR
+- Quer ver tabela de preços, serviços, valores? -> RESPONDE SÓ: /PRECOS
+- Quer ver a sua agenda, agendamentos marcados? -> RESPONDE SÓ: /AGENDA
+- Quer saber onde fica, mapa, localização, endereço? -> RESPONDE SÓ: /LOCAL
+- Quer falar com humano, atendente, dono, pessoa real? -> RESPONDE SÓ: /HUMANO
 
-🚨 REGRAS DE COMANDOS DE SISTEMA:
-Se o cliente demonstrar intenção de fazer alguma das ações abaixo, tens de responder EXATAMENTE E APENAS com a palavra-chave correspondente. NUNCA dês respostas textuais se identificares estas intenções:
+📌 EXEMPLOS DE COMO DEVES AGIR:
+Cliente: "Eu quero fazer um agendamento"
+Tu: /AGENDAR
 
-- Intenção de falar com um ATENDENTE, HUMANO ou PESSOA REAL -> Responde SÓ: /HUMANO
-- Intenção de CANCELAR uma marcação -> Responde SÓ: /CANCELAR
-- Intenção de MARCAR ou AGENDAR -> Responde SÓ: /AGENDAR
-- Intenção de ver PREÇOS ou SERVIÇOS -> Responde SÓ: /PRECOS
-- Intenção de CONSULTAR SEU AGENDAMENTO, VER O ESTADO ou HORAS MARCADAS -> Responde SÓ: /AGENDA
-- Intenção de saber a LOCALIZAÇÃO -> Responde SÓ: /LOCAL
+Cliente: "Quero marcar para agora"
+Tu: /AGENDAR
 
-Lembrança final: O cliente tem ${contextAgendamentos} marcações ativas. NUNCA digas que vais "chamar alguém" por texto normal, responde APENAS com /HUMANO se ele o pedir.`;
+Cliente: "Qual é o preço do corte?"
+Tu: /PRECOS
+
+Cliente: "Manda a localização"
+Tu: /LOCAL
+
+Cliente: "Quero falar com uma pessoa"
+Tu: /HUMANO
+
+Cliente: "Olá, bom dia, tudo bem?"
+Tu: (Neste caso, não há comando. Responde normalmente com empatia baseando-te na Regra de Saudação, ex: "Bom dia, ${nomeCliente || 'Amigo'}! Tudo bem. Em que posso ajudar-te hoje?")
+
+ATENÇÃO: NUNCA tentes marcar uma hora conversando. Se vires a palavra "agendar", "marcar" ou "cortar", devolve IMEDIATAMENTE a tag /AGENDAR e cala-te.`;
 
     try {
         const constructMessagesFlowEngineLpu = [
@@ -114,7 +127,7 @@ Lembrança final: O cliente tem ${contextAgendamentos} marcações ativas. NUNCA
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant", 
             messages: constructMessagesFlowEngineLpu,
-            temperature: 0.2, 
+            temperature: 0.1, // Reduzi a temperatura para a IA ficar obediente aos comandos e menos "criativa"
             max_tokens: 250 
         });
         
