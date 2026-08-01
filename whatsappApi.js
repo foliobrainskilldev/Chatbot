@@ -3,6 +3,7 @@ const axios = require('axios');
 const META_TOKEN = process.env.META_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 
+// Esta é a API para enviar mensagens (usa o PHONE_NUMBER_ID)
 const api = axios.create({
     baseURL: `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}`,
     headers: {
@@ -98,20 +99,23 @@ async function sendInteractiveMenu(to, text, options) {
     }
 }
 
-// NOVA FUNÇÃO: Baixar mídia da Meta (Áudios, Imagens, etc)
+// CORREÇÃO: Função para baixar mídia da Meta sem usar o PHONE_NUMBER_ID
 async function downloadMedia(mediaId) {
     try {
-        // 1. Obter a URL protegida do ficheiro
-        const { data } = await api.get(`/${mediaId}`);
-        const mediaUrl = data.url;
+        // 1. Obter a URL protegida do ficheiro diretamente na raiz da Graph API (sem o ID do número)
+        const getUrlResponse = await axios.get(`https://graph.facebook.com/v18.0/${mediaId}`, {
+            headers: { 'Authorization': `Bearer ${META_TOKEN}` }
+        });
+        
+        const mediaUrl = getUrlResponse.data.url;
 
-        // 2. Fazer download do ficheiro passando o Token de Autorização da Meta
-        const response = await axios.get(mediaUrl, {
+        // 2. Fazer download do ficheiro passando o Token
+        const downloadResponse = await axios.get(mediaUrl, {
             responseType: 'arraybuffer',
             headers: { 'Authorization': `Bearer ${META_TOKEN}` }
         });
         
-        return Buffer.from(response.data, 'binary');
+        return Buffer.from(downloadResponse.data, 'binary');
     } catch (error) {
         console.error("Erro ao baixar ficheiro (Áudio) da Meta:", error.response?.data || error.message);
         return null;
