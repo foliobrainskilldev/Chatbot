@@ -65,8 +65,11 @@ async function handleMessage(message, contact) {
                 userState.step = STEPS.PEDIR_NOME;
                 stateMachine.set(senderNumber, userState);
                 
-                // MENSAGEM ALTERADA PARA DEIXAR CLARO QUE É UM ASSISTENTE VIRTUAL
-                await sendDelayedText(null, jid, '🤖 Olá! 👋 Sou o Assistente Virtual da Barbearia, seja muito bem-vindo!\nÉ um prazer ter-te por aqui. Para que o nosso atendimento seja mais amigável, como gostarias de ser chamado? 😊');
+                // PRIMEIRA MENSAGEM: Apresentação limpa apenas com emoji de mão
+                await sendDelayedText(null, jid, 'Olá! 👋 Sou o Assistente Virtual da Barbearia, seja muito bem-vindo!\nÉ um prazer ter-te por aqui.');
+                
+                // SEGUNDA MENSAGEM: Pergunta separada para melhor leitura/formatação visual
+                await sendDelayedText(null, jid, 'Para que o nosso atendimento seja mais amigável, como gostarias de ser chamado?');
                 return;
             }
         }
@@ -92,7 +95,9 @@ async function handleMessage(message, contact) {
                     { id: 'btn_duvidas', title: 'Dúvidas frequentes' },
                     { id: 'btn_equipe', title: 'Falar com a equipe' }
                 ];
-                const textoBoasVindas = `Muito prazer, ${nomeFinal}! ✨\n\nEscolhe uma das opções abaixo para começarmos ou conversa comigo à vontade:`;
+                
+                // Mensagem de sucesso ao registar nome também limpa (sem emojis excessivos)
+                const textoBoasVindas = `Muito prazer, ${nomeFinal}!\n\nEscolhe uma das opções abaixo para começarmos ou conversa comigo à vontade:`;
                 
                 await sendInteractiveMenu(null, jid, textoBoasVindas, btnPrimeiraVez);
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: textoBoasVindas, clienteId: senderNumber }});
