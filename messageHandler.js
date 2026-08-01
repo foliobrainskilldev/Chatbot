@@ -2,9 +2,9 @@ const { prisma, getOrCreateCliente } = require('./db');
 const { iniciarAgendamento, handleAgendamento } = require('./flowAgendamento');
 const { verPrecosEServicos, verMeusAgendamentos } = require('./flowConsultas');
 const { iniciarCancelamento, processarCancelamento } = require('./flowCancelamento');
-const { sendDelayedText, sendInteractiveMenu } = require('./botUtils');
+const { sendDelayedText, sendInteractiveMenu, sendDelayedLocation } = require('./botUtils');
 const { responderComGroq, extrairNomeComGroq } = require('./groqApi');
-const { markAsReadAndTyping, sendText } = require('./whatsappApi'); // Importado o envio de texto instantâneo
+const { markAsReadAndTyping, sendText } = require('./whatsappApi'); 
 
 const stateMachine = new Map();
 const STEPS = {
@@ -23,7 +23,6 @@ async function handleMessage(message, contact) {
     let textMessage = "";
     const jid = senderNumber;
 
-    // 1. Aciona instantaneamente: "Ticks Azuis" + Status "Escrevendo..." 🚀
     if (message.id) {
         await markAsReadAndTyping(message.id); 
     }
@@ -57,19 +56,13 @@ async function handleMessage(message, contact) {
 
         let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {} };
         
-        // =========================================================================
-        // FLUXO DE NOME NATURAL COM INTELIGÊNCIA IA
-        // =========================================================================
         if (!cliente.nome && userState.step === STEPS.MENU_PRINCIPAL) {
             const historicoCru = await prisma.mensagemIA.count({ where: { clienteId: senderNumber } });
             if (historicoCru === 0) {
                 userState.step = STEPS.PEDIR_NOME;
                 stateMachine.set(senderNumber, userState);
                 
-                // PRIMEIRA MENSAGEM: Apresentação com status de Typing (Robot Emoji removido!)
                 await sendDelayedText(null, jid, 'Olá! 👋 Sou o Assistente Virtual da Barbearia, seja muito bem-vindo!\nÉ um prazer ter-te por aqui.');
-                
-                // SEGUNDA MENSAGEM: Envio instantâneo (sendText) para evitar o silêncio sem typing 
                 await sendText(jid, 'Para que o nosso atendimento seja mais amigável, como gostarias de ser chamado?');
                 return;
             }
@@ -91,7 +84,6 @@ async function handleMessage(message, contact) {
                 
                 await prisma.mensagemIA.create({ data: { role: 'user', content: `O meu nome é ${nomeFinal}`, clienteId: senderNumber }});
 
-                // BOTÕES ATUALIZADOS: Removido "Serviços e Preços", adicionado "Menu Principal" (id: 'menu')
                 const btnPrimeiraVez = [
                     { id: 'menu', title: 'Menu Principal' }, 
                     { id: 'btn_duvidas', title: 'Dúvidas frequentes' },
@@ -105,7 +97,6 @@ async function handleMessage(message, contact) {
                 return; 
             }
         }
-        // =========================================================================
 
         stateMachine.set(senderNumber, userState);
 
@@ -169,7 +160,12 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             break; 
         case '3': await verMeusAgendamentos(null, jid, senderNumber); break; 
         case '4': await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS); break;
-        case '5': await sendDelayedText(null, jid, `📍 *Viajante - Como nos achar:* \n> Av. 24 de Julho (Encontra Maputo/PT), 🕒 Seg as Sb : (09 as 19)`); break;
+        
+        // --- NOVO FORMATO DE ENVIO DE LOCALIZAÇÃO (PELO MENU) ---
+        case '5': 
+            await sendDelayedText(null, jid, `📍 *Como nos encontrar:*\nNós ficamos na Av. 24 de Julho, Maputo.\n🕒 Aberto de Seg a Sáb (09h às 19h)\n\nAbaixo está o nosso mapa para navegares até aqui! 👇`);
+            await sendDelayedLocation(jid, -25.9744, 32.5885, "Portal Da Barbearia", "Av. 24 de Julho, Maputo");
+            break;
         
         case 'btn_duvidas':
             await sendDelayedText(null, jid, 'Podes perguntar-me o que quiseres! Qual é a tua dúvida sobre a nossa barbearia?');
@@ -190,7 +186,6 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
                    take: 4 
             });
 
-            // --- LÓGICA TEMPORAL E FUSO HORÁRIO (MAPUTO) ---
             const agora = new Date();
             const horaMaputoStr = new Intl.DateTimeFormat('pt-PT', { timeZone: 'Africa/Maputo', hour: 'numeric', hour12: false }).format(agora);
             const horaMaputo = parseInt(horaMaputoStr);
@@ -235,8 +230,10 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             else if (intentCheck.includes('/AGENDA') || intentCheck.includes('/ESTADO') || intentCheck.includes('/CONSULTA') || intentCheck.includes('LAGENDA')) {
                 await verMeusAgendamentos(null, jid, senderNumber);
             }
+            // --- NOVO FORMATO DE ENVIO DE LOCALIZAÇÃO (PELA INTELIGÊNCIA ARTIFICIAL) ---
             else if (intentCheck.includes('/LOCAL') || intentCheck.includes('/MAPA') || intentCheck.includes('/ENDERECO')) {
-                await sendDelayedText(null, jid, `📍 *Nossa Localização:* \n> Av. 24 de Julho (Encontra Maputo/PT), 🕒 Seg as Sáb : (09h às 19h)`);
+                await sendDelayedText(null, jid, `📍 *Como nos encontrar:*\nNós ficamos na Av. 24 de Julho, Maputo.\n🕒 Aberto de Seg a Sáb (09h às 19h)\n\nAbaixo está o nosso mapa para navegares até aqui! 👇`);
+                await sendDelayedLocation(jid, -25.9744, 32.5885, "Portal Da Barbearia", "Av. 24 de Julho, Maputo");
             }
             else if (intentCheck.includes('/HUMANO') || intentCheck.includes('/ATENDENTE') || intentCheck.includes('/PESSOA')) {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });

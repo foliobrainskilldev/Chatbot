@@ -11,7 +11,6 @@ const api = axios.create({
     }
 });
 
-// Ticks Azuis + "Escrevendo..." 🚀 (Agora chamado apenas 1 única vez com perfeição)
 async function markAsReadAndTyping(messageId) {
     if (!messageId) return;
 
@@ -40,6 +39,26 @@ async function sendText(to, text) {
         });
     } catch (error) {
         console.error("Erro ao enviar texto:", error.response?.data || error.message);
+    }
+}
+
+// NOVA FUNÇÃO: Enviar Mapa Interativo Nativo
+async function sendLocation(to, latitude, longitude, name, address) {
+    try {
+        await api.post('/messages', {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: to,
+            type: 'location',
+            location: {
+                latitude: latitude,
+                longitude: longitude,
+                name: name,
+                address: address
+            }
+        });
+    } catch (error) {
+        console.error("Erro ao enviar localização:", error.response?.data || error.message);
     }
 }
 
@@ -80,4 +99,4 @@ async function sendInteractiveMenu(to, text, options) {
     }
 }
 
-module.exports = { sendText, sendInteractiveMenu, markAsReadAndTyping };
+module.exports = { sendText, sendInteractiveMenu, markAsReadAndTyping, sendLocation };

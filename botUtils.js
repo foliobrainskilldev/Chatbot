@@ -1,4 +1,4 @@
-const { sendText, sendInteractiveMenu: metaInteractiveMenu } = require('./whatsappApi');
+const { sendText, sendInteractiveMenu: metaInteractiveMenu, sendLocation } = require('./whatsappApi');
 
 const aguardar = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -6,11 +6,18 @@ async function sendDelayedText(arg1, arg2, arg3) {
     const jid = arg3 !== undefined ? arg2 : arg1;
     const text = arg3 !== undefined ? arg3 : arg2;
     
-    // DELAY EXATO DE 2000ms a 5000ms (2 a 5 segundos)
     const compassoRandomSegundos = Math.floor(Math.random() * (5000 - 2000 + 1)) + 2000;
     await aguardar(compassoRandomSegundos);
     
     await sendText(jid, text);
+}
+
+// NOVA FUNÇÃO: Prepara e envia o mapa com delay humano
+async function sendDelayedLocation(jid, lat, lng, name, address) {
+    const compassoRandomSegundos = Math.floor(Math.random() * (4000 - 2000 + 1)) + 2000;
+    await aguardar(compassoRandomSegundos);
+    
+    await sendLocation(jid, lat, lng, name, address);
 }
 
 async function sendInteractiveMenu(arg1, arg2, arg3, arg4) {
@@ -18,7 +25,6 @@ async function sendInteractiveMenu(arg1, arg2, arg3, arg4) {
     const text = arg4 !== undefined ? arg3 : arg2;
     const options = arg4 !== undefined ? arg4 : arg3;
 
-    // Delay de simulação antes de enviar menus
     const compassoRandomSegundos = Math.floor(Math.random() * (4000 - 2000 + 1)) + 2000;
     await aguardar(compassoRandomSegundos); 
 
@@ -37,4 +43,4 @@ async function sendInteractiveMenu(arg1, arg2, arg3, arg4) {
     await metaInteractiveMenu(jid, text, safeOptions);
 }
 
-module.exports = { sendDelayedText, sendInteractiveMenu };
+module.exports = { sendDelayedText, sendInteractiveMenu, sendDelayedLocation };
