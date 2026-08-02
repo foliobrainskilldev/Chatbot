@@ -1,7 +1,7 @@
 {
   "name": "bot-barbearia-mz-oficial",
-  "version": "4.2.0",
-  "description": "Bot de WhatsApp (Meta API) com IA Inteligente (Groq), Memória, CRM API e WebSockets",
+  "version": "4.3.0",
+  "description": "Bot de WhatsApp (Meta API) com IA Inteligente (Groq), Memória, CRM API, WebSockets e Multimedia (Áudio/Imagem/Vídeo)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -15,6 +15,8 @@
     "date-fns": "^3.3.1",
     "dotenv": "^16.4.5",
     "express": "^4.18.2",
+    "form-data": "^4.0.0",
+    "multer": "^1.4.5-lts.1",
     "node-cron": "^3.0.3",
     "openai": "^4.28.0",
     "socket.io": "^4.7.4"

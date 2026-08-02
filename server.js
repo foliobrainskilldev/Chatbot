@@ -1,18 +1,28 @@
 // --- START OF FILE server.js ---
 const express = require('express');
 const cors = require('cors');
-const http = require('http'); // Novo
-const { Server } = require('socket.io'); // Novo
+const http = require('http');
+const { Server } = require('socket.io');
+const fs = require('fs');
+const path = require('path');
 const { handleMessage, stateMachine } = require('./messageHandler');
 const { iniciarLembretesEFollowUp } = require('./cronJobs');
 const crmRoutes = require('./crmRoutes'); 
 
 const app = express();
-const server = http.createServer(app); // Cria o servidor HTTP
+const server = http.createServer(app); 
 
-// Configura o WebSocket permitindo qualquer origem (CORS)
 const io = new Server(server, { cors: { origin: "*" } });
-global.io = io; // Torna o WebSocket global para usar nos outros ficheiros
+global.io = io; 
+
+// Garante que a pasta de uploads existe para não dar erro
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir);
+}
+
+// Permite aceder às imagens/áudios via URL no navegador/CRM
+app.use('/uploads', express.static(uploadsDir));
 
 app.use(express.json());
 app.use(cors());
@@ -58,6 +68,5 @@ app.get('/ping', (req, res) => res.send('Pong! I.A Engine Livre e Desembaraçada
 const PORT = process.env.PORT || 3000;
 iniciarLembretesEFollowUp();
 
-// ATENÇÃO: Agora usamos server.listen em vez de app.listen
 server.listen(PORT, () => console.log(`🚀 Meta API, CRM e WebSockets a correr na porta ${PORT}`));
 // --- END OF FILE server.js ---
