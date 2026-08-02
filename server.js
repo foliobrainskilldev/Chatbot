@@ -1,73 +1,20 @@
 // --- START OF FILE server.js ---
 const express = require('express');
-const { handleMessage, stateMachine } = require('./messageHandler');
-const { prisma } = require('./db');
+const cors = require('cors');
+const { handleMessage } = require('./messageHandler');
 const { iniciarLembretesEFollowUp } = require('./cronJobs');
+const crmRoutes = require('./crmRoutes'); // Novo import de rotas para o CRM
 
 const app = express();
 app.use(express.json());
 
+// Permite requisições de outros domínios (Frontend do CRM)
+app.use(cors());
+
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'barbearia_secreta_2024';
 
-app.get('/admin', (req, res) => {
-    res.send(`
-        <!DOCTYPE html>
-        <html lang="pt-PT">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Admin - Barbearia Bot</title>
-            <style>
-                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f9; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-                .card { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 10px 20px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }
-                h1 { color: #333; margin-top: 0; }
-                p { color: #666; margin-bottom: 30px; line-height: 1.5; }
-                button { padding: 15px 30px; background-color: #ff4757; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; font-weight: bold; width: 100%; transition: 0.3s; }
-                button:hover { background-color: #ff6b81; }
-            </style>
-        </head>
-        <body>
-            <div class="card">
-                <h1>Painel de Controlo</h1>
-                <p>Clica no botao abaixo para formatar o cerebro do Bot.<br><br>Ele vai esquecer <strong>todas as conversas, clientes e agendamentos</strong> para poderes testar como se fosses novo.</p>
-                <button onclick="resetarBot()">Resetar Memoria do Bot</button>
-            </div>
-            <script>
-                async function resetarBot() {
-                    if(confirm('Tem a certeza absoluta? O bot vai comecar do zero e esquecer toda a gente!')) {
-                        try {
-                            const response = await fetch('/api/reset', { method: 'POST' });
-                            const resultado = await response.text();
-                            alert(resultado);
-                        } catch(e) {
-                            alert('Erro ao resetar a base de dados: ' + e);
-                        }
-                    }
-                }
-            </script>
-        </body>
-        </html>
-    `);
-});
-
-app.post('/api/reset', async (req, res) => {
-    try {
-        await prisma.mensagemIA.deleteMany({});
-        await prisma.agendamento.deleteMany({});
-        await prisma.cliente.deleteMany({});
-        
-        // CORREÇÃO: Limpa a Memória RAM (A Máquina de Estados do Bot)
-        if (stateMachine) {
-            stateMachine.clear();
-        }
-        
-        console.log("🚨 BANCO DE DADOS E MEMÓRIA RAM RESETADOS COM SUCESSO!");
-        res.status(200).send("Memoria do bot apagada com sucesso! Todos os clientes foram esquecidos e a RAM foi limpa.");
-    } catch(error) {
-        console.error("❌ Erro ao resetar DB:", error);
-        res.status(500).send("Erro interno ao apagar dados.");
-    }
-});
+// Rotas do CRM separadas (Todas terão o prefixo /api/crm)
+app.use('/api/crm', crmRoutes);
 
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
@@ -101,7 +48,7 @@ app.post('/webhook', (req, res) => {
     })(); 
 });
 
-app.get('/ping', (req, res) => res.send('Pong! I.A Engine Livre e Desembaracada!'));
+app.get('/ping', (req, res) => res.send('Pong! I.A Engine Livre e Desembaraçada!'));
 
 const PORT = process.env.PORT || 3000;
 iniciarLembretesEFollowUp();
