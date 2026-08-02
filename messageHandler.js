@@ -58,6 +58,44 @@ function getSettings() {
     return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
 }
 
+async function sendMenu(sockIgnorado, jid, nomeCliente = '') {
+    // IA ESCREVE O TEXTO DO MENU EM TEMPO REAL
+    const promptMenu = `És o assistente da barbearia. Pede de forma curta, natural e direta para o cliente ${nomeCliente || 'Amigo'} escolher uma opção do menu principal abaixo. (Máximo 1 frase curta, sem parecer robô).`;
+    const textoMenu = await gerarMensagemNotificacao(promptMenu, `Como posso ajudar-te hoje, ${nomeCliente || 'Amigo'}? Escolhe uma das opções:`);
+
+    await sendInteractiveMenu(null, jid, textoMenu, [{
+            id: '1',
+            title: 'Agendar',
+            description: 'Cortar/Marcar novo!'
+        },
+        {
+            id: '2',
+            title: 'Serviços e Preços',
+            description: 'Tabela C/ preçários'
+        },
+        {
+            id: '3',
+            title: 'A Minha Agenda',
+            description: 'Check dos apontamentos'
+        },
+        {
+            id: '4',
+            title: 'Cancelar Marcas',
+            description: 'Pausar Canceladas!'
+        },
+        {
+            id: '5',
+            title: 'Av., Mapa / Hrs',
+            description: 'Geolocalização'
+        },
+        {
+            id: '6',
+            title: 'Falar com Humano',
+            description: 'Atendimento Orgânico'
+        }
+    ]);
+}
+
 async function handleMessage(message, contact) {
     const senderNumber = message.from;
     let textMessage = "";
@@ -136,7 +174,7 @@ async function handleMessage(message, contact) {
                 if (global.io) global.io.emit('atualizar_fila');
             }
             await sendDelayedText(null, jid, 'Atendimento automático restaurado! Podes utilizar o menu abaixo ou conversar comigo.');
-            await sendMenu(null, jid);
+            await sendMenu(null, jid, cliente.nome);
             return;
         }
 
@@ -155,7 +193,6 @@ async function handleMessage(message, contact) {
             return;
         }
 
-        // LÓGICA TEMPORAL E ESTADO AVANÇADO
         const agora = new Date();
         const horaMaputoStr = agora.toLocaleString("pt-PT", {
             timeZone: "Africa/Maputo"
@@ -191,7 +228,7 @@ async function handleMessage(message, contact) {
         userState.lastActive = Date.now();
         userState.notified = false;
 
-        // Saudação inicial forçando o Bom dia/tarde/noite correto
+        // 1ª INTERAÇÃO: IA APRESENTA-SE E MANDA OS 3 BOTÕES NA MESMA MENSAGEM
         if ((!cliente.nome || cliente.nome === 'Sem Nome') && userState.step === STEPS.MENU_PRINCIPAL) {
             const historicoCru = await prisma.mensagemIA.count({
                 where: {
@@ -202,19 +239,38 @@ async function handleMessage(message, contact) {
                 userState.step = STEPS.PEDIR_NOME;
                 stateMachine.set(senderNumber, userState);
 
-                const promptSaudacao = `És o assistente virtual da barbearia. O utilizador mandou mensagem e precisas de saber o seu nome. Em Moçambique agora são ${horaMaputoStr}. A saudação correta para este horário é "${periodoDia}". Dá a saudação "${periodoDia}" de forma amigável e pergunta com quem tens o prazer de falar. (No máximo 1 emoji).`;
-                const msgSaudacao = await gerarMensagemNotificacao(promptSaudacao, `Olá! ${periodoDia}! Sou o assistente virtual da barbearia. Como te chamas?`);
-                await sendDelayedText(null, jid, msgSaudacao);
+                const promptSaudacao = `És o assistente virtual da barbearia. É a primeira vez que o utilizador fala contigo. Horário em Moçambique: ${horaMaputoStr}. Saudação obrigatória: "${periodoDia}". Dá-lhe as boas-vindas, apresenta-te de forma super natural e pergunta o seu nome. Avisa sutilmente que também pode usar os botões se preferir ser rápido.`;
+                const msgSaudacao = await gerarMensagemNotificacao(promptSaudacao, `Olá, ${periodoDia}! Sou o assistente da Portal da Barbearia. Como te chamas? (Ou escolhe uma opção nos botões se tiveres pressa).`);
+
+                // MANDA A MENSAGEM CRIADA PELA IA + BOTÕES
+                await sendInteractiveMenu(null, jid, msgSaudacao, [{
+                        id: 'menu',
+                        title: 'Menu Principal'
+                    },
+                    {
+                        id: 'btn_servicos',
+                        title: 'Serviços e preços'
+                    },
+                    {
+                        id: 'btn_equipe',
+                        title: 'Falar com atendente'
+                    }
+                ]);
                 return;
             }
         }
 
+        // 2ª INTERAÇÃO: TRATAR A RESPOSTA (NOME OU CLIQUE NO BOTÃO)
         if (userState.step === STEPS.PEDIR_NOME) {
             const nomeExtraido = await extrairNomeComGroq(textMessage);
+
             if (nomeExtraido.toUpperCase() === 'IGNORAR') {
+                // O cliente ignorou a pergunta do nome e clicou num botão (ex: 'menu').
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
+                // Não damos return aqui para que o código flua para baixo e atenda o botão que ele clicou!
             } else {
+                // O cliente deu o nome!
                 const nomeFinal = nomeExtraido.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
                 await prisma.cliente.update({
                     where: {
@@ -227,7 +283,6 @@ async function handleMessage(message, contact) {
                 cliente.nome = nomeFinal;
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
-
                 await prisma.mensagemIA.create({
                     data: {
                         role: 'user',
@@ -236,30 +291,8 @@ async function handleMessage(message, contact) {
                     }
                 });
 
-                const promptApresentacao = `O cliente disse que se chama ${nomeFinal}. Em Moçambique agora são ${horaMaputoStr}. A saudação exata é "${periodoDia}". Dá-lhe as boas vindas usando "${periodoDia}, ${nomeFinal}!", apresenta-te como o assistente da Portal da Barbearia e pergunta como podes ajudar. (Máximo 1 emoji).`;
-                const textoBoasVindas = await gerarMensagemNotificacao(promptApresentacao, `${periodoDia}, ${nomeFinal}! Muito prazer. Bem-vindo à Portal da Barbearia. Como posso ajudar-te hoje?`);
-
-                await sendInteractiveMenu(null, jid, textoBoasVindas, [{
-                        id: 'btn_servicos',
-                        title: 'Serviços e preços'
-                    },
-                    {
-                        id: 'menu',
-                        title: 'Menu'
-                    },
-                    {
-                        id: 'btn_equipe',
-                        title: 'Falar com atendente'
-                    }
-                ]);
-
-                await prisma.mensagemIA.create({
-                    data: {
-                        role: 'assistant',
-                        content: textoBoasVindas,
-                        clienteId: senderNumber
-                    }
-                });
+                // IA gera uma resposta chamando-o pelo nome e abre o menu principal dinâmico
+                await sendMenu(null, jid, nomeFinal);
                 return;
             }
         }
@@ -271,7 +304,7 @@ async function handleMessage(message, contact) {
         if (cmdsIntuitosUI.includes(msgLower)) {
             userState.step = STEPS.MENU_PRINCIPAL;
             userState.data = {};
-            await sendMenu(null, jid);
+            await sendMenu(null, jid, cliente.nome);
         } else if (textMessage.startsWith('srv_')) {
             const servicoId = textMessage.replace('srv_', '');
             userState.step = STEPS.AGENDAMENTO_SERVICO;
@@ -298,34 +331,6 @@ async function handleMessage(message, contact) {
     }
 }
 
-async function sendMenu(sockIgnorado, jid) {
-    await sendInteractiveMenu(null, jid, '*Portal Da Barbearia*\nÉ bem prático! Podes simplesmente prosseguir tocando num botão abaixo', [{
-        id: '1',
-        title: 'Agendar',
-        description: 'Cortar/Marcar novo!'
-    }, {
-        id: '2',
-        title: 'Serviços e Preços',
-        description: 'Tabela C/ preçários'
-    }, {
-        id: '3',
-        title: 'A Minha Agenda',
-        description: 'Check dos apontamentos'
-    }, {
-        id: '4',
-        title: 'Cancelar Marcas',
-        description: 'Pausar Canceladas!'
-    }, {
-        id: '5',
-        title: 'Av., Mapa / Hrs',
-        description: 'Geolocalização'
-    }, {
-        id: '6',
-        title: 'Falar com Humano',
-        description: 'Atendimento Orgânico'
-    }]);
-}
-
 async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber, nomeCliente, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente) {
     const option = textMessage.trim();
     switch (option) {
@@ -335,20 +340,6 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
         case '2':
         case 'btn_servicos':
             await verPrecosEServicos(null, jid);
-            await prisma.mensagemIA.create({
-                data: {
-                    role: 'user',
-                    content: "Mostre os serviços e preços",
-                    clienteId: senderNumber
-                }
-            });
-            await prisma.mensagemIA.create({
-                data: {
-                    role: 'assistant',
-                    content: "A enviar catálogo de serviços...",
-                    clienteId: senderNumber
-                }
-            });
             break;
         case '3':
             await verMeusAgendamentos(null, jid, senderNumber);
@@ -357,7 +348,9 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS);
             break;
         case '5':
-            await sendDelayedText(null, jid, `*Como nos encontrar:*\nNós ficamos na Av. 24 de Julho, Maputo.\nAberto de Seg a Sáb (09h às 19h)\n\nAbaixo está o nosso mapa para navegares até aqui!`);
+            const promptLocal = `O cliente ${nomeCliente || ''} pediu a localização. Redige uma mensagem simpática dizendo que ficamos na Av. 24 de Julho, Maputo e que o mapa vai logo a seguir.`;
+            const txtLocal = await gerarMensagemNotificacao(promptLocal, "Estamos na Av. 24 de Julho, Maputo. Segue o mapa abaixo:");
+            await sendDelayedText(null, jid, txtLocal);
             await sendDelayedLocation(jid, -25.9744, 32.5885, "Portal Da Barbearia", "Av. 24 de Julho, Maputo");
             break;
         case '6':
@@ -383,7 +376,6 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
                 },
                 take: 4
             });
-
             await prisma.mensagemIA.create({
                 data: {
                     role: 'user',
@@ -394,20 +386,14 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
 
             const ultimo = historicoCru.length > 0 ? historicoCru[0] : null;
             let tempoPassado = "O cliente acabou de iniciar a conversa.";
-
             if (ultimo) {
                 const diffMins = Math.floor((Date.now() - new Date(ultimo.criadoEm).getTime()) / 60000);
-                if (diffMins > 1440) {
-                    tempoPassado = `Aviso de Estado: O cliente enviou mensagem após ${Math.floor(diffMins/1440)} dias. VOCÊ DEVE OBRIGATORIAMENTE saudar com "${periodoDia}".`;
-                } else if (diffMins > 120) {
-                    tempoPassado = `Aviso de Estado: O cliente retomou a conversa após ${Math.floor(diffMins/60)} horas. É educado dar uma pequena saudação como "${periodoDia}".`;
-                } else {
-                    tempoPassado = `Aviso de Estado: Conversa ATIVA E CONTÍNUA (última mensagem há ${diffMins} minutos). É TOTALMENTE PROIBIDO dar "Bom dia", "Boa tarde" ou "Boa noite" novamente. Responda diretamente ao assunto de forma natural.`;
-                }
+                if (diffMins > 1440) tempoPassado = `Aviso: Cliente regressou após ${Math.floor(diffMins/1440)} dias. Saudação "${periodoDia}" é OBRIGATÓRIA.`;
+                else if (diffMins > 120) tempoPassado = `Aviso: Cliente retomou após ${Math.floor(diffMins/60)}h. Dê a saudação "${periodoDia}".`;
+                else tempoPassado = `Aviso: Conversa ATIVA E CONTÍNUA. PROIBIDO repetir "Bom dia/tarde". Responda diretamente ao assunto.`;
             }
 
-            const infoTemporal = `Horário atual em Moçambique: ${horaMaputoStr} (${periodoDia}). ${tempoPassado} ${foraDoExpediente ? 'ATENÇÃO: A barbearia está FECHADA neste exato horário! Responda às dúvidas normalmente, mas deixe claro que estamos fechados se eles perguntarem por atendimento agora.' : 'A barbearia está ABERTA.'} Age com clareza.`;
-
+            const infoTemporal = `Horário: ${horaMaputoStr} (${periodoDia}). ${tempoPassado} ${foraDoExpediente ? 'A barbearia está FECHADA neste horário!' : 'A barbearia está ABERTA.'}`;
             const textIArid = await responderComGroq(textMessage, 0, historicoCru.reverse(), infoTemporal, nomeCliente);
             const intentCheck = textIArid.trim().toUpperCase().replace(/\s+/g, '');
 
@@ -416,7 +402,9 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             else if (intentCheck.includes('/PRECOS')) await verPrecosEServicos(null, jid);
             else if (intentCheck.includes('/AGENDA')) await verMeusAgendamentos(null, jid, senderNumber);
             else if (intentCheck.includes('/LOCAL')) {
-                await sendDelayedText(null, jid, `*Como nos encontrar:*\nNós ficamos na Av. 24 de Julho, Maputo.\nAberto de Seg a Sáb (09h às 19h)\n\nAbaixo está o nosso mapa para navegares até aqui!`);
+                const pLocal = `O cliente pediu a localização. Avisa de forma amigável que estamos na Av. 24 de Julho, Maputo e que o mapa vai em anexo.`;
+                const tLocal = await gerarMensagemNotificacao(pLocal, "Estamos na Av. 24 de Julho, Maputo. Segue o nosso mapa:");
+                await sendDelayedText(null, jid, tLocal);
                 await sendDelayedLocation(jid, -25.9744, 32.5885, "Portal Da Barbearia", "Av. 24 de Julho, Maputo");
             } else if (intentCheck.includes('/HUMANO')) {
                 await prisma.cliente.update({
@@ -429,9 +417,9 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
                 });
                 await sendDelayedText(null, jid, 'Atendimento transferido! Um de nossos barbeiros já vem te responder. Aguarda só um pouquinho...\n\n(Para voltares ao atendimento automático, digita *#sair*)');
                 if (global.io) global.io.emit('atualizar_fila');
-            } else if (intentCheck.includes('/MENU')) await sendMenu(null, jid);
+            } else if (intentCheck.includes('/MENU')) await sendMenu(null, jid, nomeCliente);
             else {
-                if (textIArid.trim().startsWith('/')) await sendMenu(null, jid);
+                if (textIArid.trim().startsWith('/')) await sendMenu(null, jid, nomeCliente);
                 else {
                     await prisma.mensagemIA.create({
                         data: {
