@@ -22,6 +22,7 @@ const {
 const {
     responderComGroq,
     extrairNomeComGroq,
+    gerarMensagemNotificacao,
     transcreverAudioComGroq
 } = require('./groqApi');
 const {
@@ -45,6 +46,17 @@ const STEPS = {
 };
 
 const uploadsDir = path.join(__dirname, 'uploads');
+const settingsPath = path.join(__dirname, 'settings.json');
+
+function getSettings() {
+    if (!fs.existsSync(settingsPath)) return {
+        botAtivo: true,
+        diasTrabalho: [1, 2, 3, 4, 5, 6],
+        horaInicio: "09:00",
+        horaFim: "19:00"
+    };
+    return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+}
 
 async function handleMessage(message, contact) {
     const senderNumber = message.from;
@@ -53,6 +65,7 @@ async function handleMessage(message, contact) {
 
     if (message.id) await markAsReadAndTyping(message.id);
 
+    // Processamento de mídia e texto
     if (message.type === 'text') {
         textMessage = message.text.body;
     } else if (message.type === 'interactive') {
@@ -89,19 +102,15 @@ async function handleMessage(message, contact) {
             const prod1 = process.env.PRODUTO_1_ID || 'h5fj6325da';
             const prod2 = process.env.PRODUTO_2_ID || '8pdji0vdor';
             const prod3 = process.env.PRODUTO_3_ID || 'af2o2iuwey';
-
-            // Busca dinâmica para evitar que o bot bloqueie caso os IDs na DB sejam diferentes
             const servicosDb = await prisma.servico.findMany({
                 orderBy: {
                     id: 'asc'
                 }
             });
             let dbServicoId = servicosDb.length > 0 ? servicosDb[0].id.toString() : '1';
-
             if (produtoSKU === prod1 && servicosDb[0]) dbServicoId = servicosDb[0].id.toString();
             else if (produtoSKU === prod2 && servicosDb[1]) dbServicoId = servicosDb[1].id.toString();
             else if (produtoSKU === prod3 && servicosDb[2]) dbServicoId = servicosDb[2].id.toString();
-
             textMessage = 'srv_' + dbServicoId;
         }
     }
@@ -109,8 +118,12 @@ async function handleMessage(message, contact) {
     if (!textMessage) return;
 
     try {
+        const config = getSettings();
+        if (!config.botAtivo) return; // Master switch
+
         let cliente = await getOrCreateCliente(senderNumber);
 
+        // Saída do atendimento humano
         if (textMessage.trim().toLowerCase() === '#sair') {
             if (cliente.falarHumano) {
                 await prisma.cliente.update({
@@ -143,6 +156,25 @@ async function handleMessage(message, contact) {
             return;
         }
 
+        // Fuso Horário de Moçambique
+        const agora = new Date();
+        const horaMaputoStr = agora.toLocaleString("pt-PT", {
+            timeZone: "Africa/Maputo"
+        });
+        const timeFormatter = new Intl.DateTimeFormat('pt-PT', {
+            timeZone: 'Africa/Maputo',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        const horaMin = timeFormatter.format(agora);
+        const diaDaSemana = new Date(agora.toLocaleString('en-US', {
+            timeZone: 'Africa/Maputo'
+        })).getDay();
+
+        let foraDoExpediente = false;
+        if (!config.diasTrabalho.includes(diaDaSemana)) foraDoExpediente = true;
+        else if (horaMin < config.horaInicio || horaMin > config.horaFim) foraDoExpediente = true;
+
         let userState = stateMachine.get(senderNumber) || {
             step: STEPS.MENU_PRINCIPAL,
             data: {}
@@ -150,7 +182,7 @@ async function handleMessage(message, contact) {
         userState.lastActive = Date.now();
         userState.notified = false;
 
-        // Se não tiver nome e for a primeira vez que manda mensagem, pergunta de forma natural
+        // IA gera primeira saudação pedindo o nome dinamicamente
         if ((!cliente.nome || cliente.nome === 'Sem Nome') && userState.step === STEPS.MENU_PRINCIPAL) {
             const historicoCru = await prisma.mensagemIA.count({
                 where: {
@@ -160,23 +192,22 @@ async function handleMessage(message, contact) {
             if (historicoCru === 0) {
                 userState.step = STEPS.PEDIR_NOME;
                 stateMachine.set(senderNumber, userState);
-                await sendDelayedText(null, jid, 'Olá! Seja muito bem-vindo à nossa barbearia! 💈\n\nEu sou o assistente virtual por aqui. Com quem tenho o prazer de falar?');
+
+                const promptSaudacao = `És o assistente virtual da barbearia. O utilizador mandou mensagem e precisas de saber o seu nome. Em Moçambique agora são ${horaMaputoStr}. Dá bom dia/boa tarde/boa noite de forma amigável e pergunta com quem tens o prazer de falar. (No máximo 1 emoji).`;
+                const msgSaudacao = await gerarMensagemNotificacao(promptSaudacao, 'Olá! Sou o assistente virtual da barbearia. Como te chamas?');
+                await sendDelayedText(null, jid, msgSaudacao);
                 return;
             }
         }
 
+        // Cliente dá o nome, a IA gera a apresentação baseada no nome
         if (userState.step === STEPS.PEDIR_NOME) {
             const nomeExtraido = await extrairNomeComGroq(textMessage);
             if (nomeExtraido.toUpperCase() === 'IGNORAR') {
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
             } else {
-                // Formata o nome para ter a primeira letra maiúscula adequadamente
-                const nomeFinal = nomeExtraido
-                    .split(' ')
-                    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-                    .join(' ');
-
+                const nomeFinal = nomeExtraido.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
                 await prisma.cliente.update({
                     where: {
                         id: senderNumber
@@ -188,6 +219,7 @@ async function handleMessage(message, contact) {
                 cliente.nome = nomeFinal;
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
+
                 await prisma.mensagemIA.create({
                     data: {
                         role: 'user',
@@ -196,19 +228,23 @@ async function handleMessage(message, contact) {
                     }
                 });
 
-                // Apresentação e botões conforme solicitado
-                const textoBoasVindas = `Muito prazer, ${nomeFinal}! Aqui na Portal da Barbearia, somos especialistas em cortes modernos, barboterapia e atendimento de excelência. O nosso objetivo é que saias daqui com a tua melhor versão!\n\nComo posso ajudar-te hoje?`;
+                const promptApresentacao = `O cliente disse que se chama ${nomeFinal}. Em Moçambique agora são ${horaMaputoStr}. Dá-lhe as boas vindas, apresenta-te como o assistente da Portal da Barbearia especialista em cortes, e pergunta como podes ajudar. (Máximo 1 emoji).`;
+                const textoBoasVindas = await gerarMensagemNotificacao(promptApresentacao, `Muito prazer, ${nomeFinal}! Bem-vindo à Portal da Barbearia. Como posso ajudar-te hoje?`);
+
                 await sendInteractiveMenu(null, jid, textoBoasVindas, [{
-                    id: 'btn_servicos',
-                    title: 'Serviços e preços'
-                }, {
-                    id: 'menu',
-                    title: 'Menu'
-                }, {
-                    id: 'btn_equipe',
-                    title: 'Falar com atendente'
-                }]);
-                
+                        id: 'btn_servicos',
+                        title: 'Serviços e preços'
+                    },
+                    {
+                        id: 'menu',
+                        title: 'Menu'
+                    },
+                    {
+                        id: 'btn_equipe',
+                        title: 'Falar com atendente'
+                    }
+                ]);
+
                 await prisma.mensagemIA.create({
                     data: {
                         role: 'assistant',
@@ -238,7 +274,7 @@ async function handleMessage(message, contact) {
         } else {
             switch (userState.step) {
                 case STEPS.MENU_PRINCIPAL:
-                    await handleEstrategiaLLMSalvos(null, jid, textMessage, senderNumber, cliente.nome);
+                    await handleEstrategiaLLMSalvos(null, jid, textMessage, senderNumber, cliente.nome, horaMaputoStr, foraDoExpediente);
                     break;
                 case STEPS.CANCELAR_AGENDAMENTO:
                     await processarCancelamento(null, jid, textMessage, senderNumber, stateMachine, STEPS);
@@ -256,36 +292,33 @@ async function handleMessage(message, contact) {
 
 async function sendMenu(sockIgnorado, jid) {
     await sendInteractiveMenu(null, jid, '*Portal Da Barbearia*\nÉ bem prático! Podes simplesmente prosseguir tocando num botão abaixo', [{
-            id: '1',
-            title: 'Agendar',
-            description: 'Cortar/Marcar novo!'
-        }, {
-            id: '2',
-            title: 'Serviços e Preços',
-            description: 'Tabela C/ preçários'
-        },
-        {
-            id: '3',
-            title: 'A Minha Agenda',
-            description: 'Check dos apontamentos'
-        }, {
-            id: '4',
-            title: 'Cancelar Marcas',
-            description: 'Pausar Canceladas!'
-        },
-        {
-            id: '5',
-            title: 'Av., Mapa / Hrs',
-            description: 'Geolocalização'
-        }, {
-            id: '6',
-            title: 'Falar com Humano',
-            description: 'Atendimento Orgânico'
-        }
-    ]);
+        id: '1',
+        title: 'Agendar',
+        description: 'Cortar/Marcar novo!'
+    }, {
+        id: '2',
+        title: 'Serviços e Preços',
+        description: 'Tabela C/ preçários'
+    }, {
+        id: '3',
+        title: 'A Minha Agenda',
+        description: 'Check dos apontamentos'
+    }, {
+        id: '4',
+        title: 'Cancelar Marcas',
+        description: 'Pausar Canceladas!'
+    }, {
+        id: '5',
+        title: 'Av., Mapa / Hrs',
+        description: 'Geolocalização'
+    }, {
+        id: '6',
+        title: 'Falar com Humano',
+        description: 'Atendimento Orgânico'
+    }]);
 }
 
-async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber, nomeCliente) {
+async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber, nomeCliente, horaMaputoStr, foraDoExpediente) {
     const option = textMessage.trim();
     switch (option) {
         case '1':
@@ -342,6 +375,7 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
                 },
                 take: 4
             });
+
             await prisma.mensagemIA.create({
                 data: {
                     role: 'user',
@@ -349,7 +383,21 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
                     clienteId: senderNumber
                 }
             });
-            const textIArid = await responderComGroq(textMessage, 0, historicoCru.reverse(), "O cliente está a falar contigo. Age de acordo.", nomeCliente);
+
+            const ultimo = historicoCru.length > 0 ? historicoCru[0] : null;
+            let tempoPassado = "O cliente acabou de iniciar a conversa.";
+            if (ultimo) {
+                const diffMins = Math.floor((Date.now() - new Date(ultimo.criadoEm).getTime()) / 60000);
+                if (diffMins > 60) {
+                    tempoPassado = `Aviso: O cliente regressou após ${Math.floor(diffMins/60)} horas de inatividade.`;
+                } else {
+                    tempoPassado = `A conversa está super ativa (Última mensagem há ${diffMins} minutos).`;
+                }
+            }
+
+            const infoTemporal = `Horário atual em Moçambique: ${horaMaputoStr}. ${tempoPassado} ${foraDoExpediente ? 'ATENÇÃO: A barbearia está FECHADA neste exato horário! Responda às dúvidas normalmente, mas não tentes assumir que agendarão de imediato.' : 'A barbearia está ABERTA.'} Age naturalmente.`;
+
+            const textIArid = await responderComGroq(textMessage, 0, historicoCru.reverse(), infoTemporal, nomeCliente);
             const intentCheck = textIArid.trim().toUpperCase().replace(/\s+/g, '');
 
             if (intentCheck.includes('/AGENDAR')) await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);

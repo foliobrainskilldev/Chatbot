@@ -1,11 +1,9 @@
-// --- START OF FILE cronJobs.js ---
 const cron = require('node-cron');
 const { prisma } = require('./db');
 const { sendDelayedText } = require('./botUtils');
 const { gerarMensagemNotificacao } = require('./groqApi');
 const { format } = require('date-fns');
 
-// Como o node require guarda a referência na memória, podemos importar o stateMachine depois que o server arrancar
 let getMessageStateData = () => {
     const { stateMachine, STEPS } = require('./messageHandler');
     return { stateMachine, STEPS };
@@ -20,6 +18,7 @@ function iniciarLembretesEFollowUp() {
     cron.schedule('*/5 * * * *', async () => {
         const { stateMachine, STEPS } = getMessageStateData();
         const agora = Date.now();
+        const horaMaputo = new Date().toLocaleString("pt-PT", { timeZone: "Africa/Maputo" });
         
         for (let [numero, state] of stateMachine.entries()) {
             if (state.step && state.step.startsWith('AGENDAMENTO_') && state.step !== STEPS.AGENDAMENTO_CONFIRMAR) {
@@ -29,12 +28,11 @@ function iniciarLembretesEFollowUp() {
                 if (tempoParado > 15 * 60 * 1000 && !state.notified) {
                     state.notified = true; 
                     
-                    // Busca nome do cliente para a IA personalizar
                     const clienteDb = await prisma.cliente.findUnique({ where: { id: numero } });
                     const nomeCli = clienteDb?.nome || 'Amigo';
 
-                    const promptIa = `O cliente ${nomeCli} estava a tentar marcar um serviço na barbearia mas abandonou a conversa no meio do processo há 15 minutos. Escreve uma mensagem perguntando se ele precisa de ajuda ou se quer recomeçar enviando a palavra Menu. (LEMBRE-SE: PROIBIDO USAR EMOJIS).`;
-                    const fallbackMsg = `Notei que comecaste a agendar mas nao terminaste. Posso ajudar ou preferes enviar Menu para recomecar?`;
+                    const promptIa = `O cliente ${nomeCli} abandonou o processo de agendamento há 15 minutos. O horário atual em Moçambique é ${horaMaputo}. Escreve uma mensagem curta, natural e amigável perguntando se ele precisa de ajuda ou se prefere enviar 'Menu' para recomeçar. PROIBIDO USAR EMOJIS.`;
+                    const fallbackMsg = `Notei que começaste a agendar mas não terminaste. Posso ajudar ou preferes enviar Menu para recomeçar?`;
                     
                     const textoIa = await gerarMensagemNotificacao(promptIa, fallbackMsg);
                     await sendDelayedText(null, numero, textoIa);
@@ -66,8 +64,8 @@ function iniciarLembretesEFollowUp() {
                     const nomeCli = ag.cliente?.nome || 'Cliente';
                     const servicoNome = ag.servico.nome;
 
-                    const promptIa = `O cliente ${nomeCli} tem um agendamento do serviço de ${servicoNome} marcado para daqui a pouco, exatamente às ${horaFormatada}. Escreve uma mensagem educada de lembrete confirmando que estamos aguardando por ele. (LEMBRE-SE: PROIBIDO USAR EMOJIS).`;
-                    const fallbackMsg = `Passando para lembrar que o teu ${servicoNome} esta marcado para daqui a pouco, as ${horaFormatada}. Aguardamos por ti.`;
+                    const promptIa = `O cliente ${nomeCli} tem o serviço de ${servicoNome} marcado para daqui a pouco, exatamente às ${horaFormatada}. Escreve uma mensagem educada de lembrete confirmando que estamos aguardando por ele. PROIBIDO USAR EMOJIS.`;
+                    const fallbackMsg = `Passando para lembrar que o teu ${servicoNome} está marcado para daqui a pouco, às ${horaFormatada}. Aguardamos por ti.`;
                     
                     const textoIa = await gerarMensagemNotificacao(promptIa, fallbackMsg);
                     await sendDelayedText(null, ag.clienteId, textoIa);

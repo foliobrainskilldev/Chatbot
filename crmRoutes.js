@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 const {
     startOfDay,
     endOfDay
@@ -28,6 +29,40 @@ const storage = multer.diskStorage({
 const upload = multer({
     storage: storage
 });
+const settingsPath = path.join(__dirname, 'settings.json');
+
+// Rotas de Configuração
+router.get('/settings', (req, res) => {
+    try {
+        if (!fs.existsSync(settingsPath)) {
+            return res.status(200).json({
+                botAtivo: true,
+                diasTrabalho: [1, 2, 3, 4, 5, 6],
+                horaInicio: "09:00",
+                horaFim: "19:00"
+            });
+        }
+        const config = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+        res.status(200).json(config);
+    } catch (e) {
+        res.status(500).json({
+            error: "Erro ao ler configurações"
+        });
+    }
+});
+
+router.post('/settings', (req, res) => {
+    try {
+        fs.writeFileSync(settingsPath, JSON.stringify(req.body, null, 2));
+        res.status(200).json({
+            message: "Configurações salvas!"
+        });
+    } catch (e) {
+        res.status(500).json({
+            error: "Erro ao salvar"
+        });
+    }
+});
 
 router.get('/kpis', async (req, res) => {
     try {
@@ -45,7 +80,6 @@ router.get('/kpis', async (req, res) => {
 
         const hojeInicio = startOfDay(new Date());
         const hojeFim = endOfDay(new Date());
-
         const agendamentosHoje = await prisma.agendamento.count({
             where: {
                 status: 'AGENDADO',
@@ -72,9 +106,6 @@ router.get('/kpis', async (req, res) => {
 router.get('/agendamentos/hoje', async (req, res) => {
     try {
         const hojeInicio = startOfDay(new Date());
-
-        // Agora busca todos os agendamentos futuros (incluindo o de hoje) para que
-        // mesmo que o cliente agende para amanhã, possas ver na lista da agenda.
         const agendamentos = await prisma.agendamento.findMany({
             where: {
                 status: 'AGENDADO',
