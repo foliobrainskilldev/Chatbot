@@ -15,7 +15,6 @@ const {
     sendMediaMessage
 } = require('./whatsappApi');
 
-// CORREÇÃO MULTER: Mantém a extensão original (ex: .jpg, .png)
 const storage = multer.diskStorage({
     destination: 'uploads/',
     filename: (req, file, cb) => {
@@ -27,6 +26,87 @@ const upload = multer({
     storage: storage
 });
 
+// ==========================================
+// NOVAS ROTAS: DASHBOARD E KPIS
+// ==========================================
+router.get('/kpis', async (req, res) => {
+    try {
+        const totalClientes = await prisma.cliente.count();
+        const totalAgendamentos = await prisma.agendamento.count({
+            where: {
+                status: 'AGENDADO'
+            }
+        });
+        const conversasPendentes = await prisma.cliente.count({
+            where: {
+                falarHumano: true
+            }
+        });
+
+        // Calcula o início e fim do dia de hoje (Fuso horário local)
+        const hoje = new Date();
+        hoje.setHours(0, 0, 0, 0);
+        const amanha = new Date(hoje);
+        amanha.setDate(amanha.getDate() + 1);
+
+        const agendamentosHoje = await prisma.agendamento.count({
+            where: {
+                status: 'AGENDADO',
+                dataHora: {
+                    gte: hoje,
+                    lt: amanha
+                }
+            }
+        });
+
+        res.status(200).json({
+            totalClientes,
+            totalAgendamentos,
+            conversasPendentes,
+            agendamentosHoje
+        });
+    } catch (error) {
+        res.status(500).json({
+            error: "Erro ao carregar estatísticas."
+        });
+    }
+});
+
+router.get('/agendamentos/hoje', async (req, res) => {
+    try {
+        const hoje = new Date();
+        hoje.setHours(0, 0, 0, 0);
+        const amanha = new Date(hoje);
+        amanha.setDate(amanha.getDate() + 1);
+
+        const agendamentos = await prisma.agendamento.findMany({
+            where: {
+                status: 'AGENDADO',
+                dataHora: {
+                    gte: hoje,
+                    lt: amanha
+                }
+            },
+            include: {
+                cliente: true,
+                servico: true,
+                barbeiro: true
+            },
+            orderBy: {
+                dataHora: 'asc'
+            }
+        });
+        res.status(200).json(agendamentos);
+    } catch (error) {
+        res.status(500).json({
+            error: "Erro ao carregar agenda de hoje."
+        });
+    }
+});
+
+// ==========================================
+// ROTAS EXISTENTES (CLIENTES, CHAT, CONFIG)
+// ==========================================
 router.post('/reset', async (req, res) => {
     try {
         await prisma.mensagemIA.deleteMany({});
@@ -102,7 +182,6 @@ router.post('/conversas/:clienteId/enviar', upload.single('arquivo'), async (req
         if (req.file) {
             const mimeType = req.file.mimetype;
             const type = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('video/') ? 'video' : 'document');
-
             const mediaId = await uploadMediaToMeta(req.file.path, mimeType);
 
             if (mediaId) {
