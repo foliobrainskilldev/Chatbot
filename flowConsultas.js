@@ -5,12 +5,7 @@ const { sendProductList } = require('./whatsappApi');
 const { gerarMensagemNotificacao } = require('./groqApi');
 
 async function verPrecosEServicos(sockIgnorado, jid) {
-    const CATALOG_ID = process.env.CATALOG_ID;
-
-    // IA GERA O TEXTO DE APRESENTAÇÃO
-    const pTabela = `Vais enviar a tabela de preços e serviços para o cliente. Escreve uma frase muito curta e amigável introduzindo o catálogo.`;
-    const txtTabela = await gerarMensagemNotificacao(pTabela, `Aqui estão os nossos serviços e preços. Clica abaixo para veres:`);
-
+    const txtTabela = await gerarMensagemNotificacao(`Diz APENAS: "Vê abaixo os nossos serviços e preços:"`, `Vê abaixo os nossos serviços e preços:`);
     const sections = [{
         title: "Cortes e Barboterapia",
         product_items: [
@@ -21,12 +16,10 @@ async function verPrecosEServicos(sockIgnorado, jid) {
     }];
 
     try {
-        await sendProductList(jid, CATALOG_ID, "Tabela de Serviços ✂️", txtTabela, sections);
+        await sendProductList(jid, process.env.CATALOG_ID, "Tabela de Serviços ✂️", txtTabela, sections);
     } catch (error) {
         const servicos = await prisma.servico.findMany();
-        let optServicos = servicos.map(s => ({
-            id: `srv_${s.id}`, title: s.nome, description: `${s.preco} MT`
-        }));
+        let optServicos = servicos.map(s => ({ id: `srv_${s.id}`, title: s.nome, description: `${s.preco} MT` }));
         optServicos.push({ id: '0', title: 'Voltar ao Menu' });
         await sendInteractiveMenu(null, jid, txtTabela, optServicos);
     }
@@ -40,23 +33,18 @@ async function verMeusAgendamentos(sockIgnorado, jid, senderNumber) {
     });
 
     if (agendamentos.length === 0) {
-        const pVazio = `O cliente pediu para ver as suas marcações, mas não tem nada agendado. Diz-lhe isso de forma educada e diz que quando quiser pode marcar.`;
-        const txtVazio = await gerarMensagemNotificacao(pVazio, `Não tens nenhum agendamento futuro no momento.`);
+        const txtVazio = await gerarMensagemNotificacao(`Diz APENAS: "Não tens nenhum agendamento futuro."`, `Não tens nenhum agendamento futuro.`);
         await sendDelayedText(null, jid, txtVazio);
         return;
     }
 
-    const pIntro = `Vais mostrar a lista de agendamentos ao cliente. Dá-lhe uma frase introdutória amigável.`;
-    const txtIntro = await gerarMensagemNotificacao(pIntro, `📅 *Os teus próximos agendamentos:*`);
-    
+    const txtIntro = await gerarMensagemNotificacao(`Diz APENAS: "📅 *Os teus agendamentos:*"`, `📅 *Os teus agendamentos:*`);
     let texto = `${txtIntro}\n\n`;
     agendamentos.forEach((ag, index) => {
-        const dataStr = format(ag.dataHora, "dd/MM/yyyy 'às' HH:mm");
-        const barbeiroNome = ag.barbeiro ? ag.barbeiro.nome : 'Qualquer um';
-        texto += `*${index + 1}.* ${ag.servico.nome}\n🕑 Data: ${dataStr}\n💈 Barbeiro: ${barbeiroNome}\n\n`;
+        texto += `*${index + 1}.* ${ag.servico.nome}\n🕑 ${format(ag.dataHora, "dd/MM 'às' HH:mm")}\n💈 ${ag.barbeiro ? ag.barbeiro.nome : 'Qualquer'}\n\n`;
     });
 
-    await sendDelayedText(null, jid, texto);
+    await sendDelayedText(null, jid, texto.trim());
 }
 
 module.exports = { verPrecosEServicos, verMeusAgendamentos };
