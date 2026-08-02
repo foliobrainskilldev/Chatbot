@@ -1,8 +1,11 @@
-// --- START OF FILE crmRoutes.js ---
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
+const {
+    startOfDay,
+    endOfDay
+} = require('date-fns');
 const {
     prisma
 } = require('./db');
@@ -26,9 +29,6 @@ const upload = multer({
     storage: storage
 });
 
-// ==========================================
-// NOVAS ROTAS: DASHBOARD E KPIS
-// ==========================================
 router.get('/kpis', async (req, res) => {
     try {
         const totalClientes = await prisma.cliente.count();
@@ -43,18 +43,15 @@ router.get('/kpis', async (req, res) => {
             }
         });
 
-        // Calcula o início e fim do dia de hoje (Fuso horário local)
-        const hoje = new Date();
-        hoje.setHours(0, 0, 0, 0);
-        const amanha = new Date(hoje);
-        amanha.setDate(amanha.getDate() + 1);
+        const hojeInicio = startOfDay(new Date());
+        const hojeFim = endOfDay(new Date());
 
         const agendamentosHoje = await prisma.agendamento.count({
             where: {
                 status: 'AGENDADO',
                 dataHora: {
-                    gte: hoje,
-                    lt: amanha
+                    gte: hojeInicio,
+                    lte: hojeFim
                 }
             }
         });
@@ -74,17 +71,15 @@ router.get('/kpis', async (req, res) => {
 
 router.get('/agendamentos/hoje', async (req, res) => {
     try {
-        const hoje = new Date();
-        hoje.setHours(0, 0, 0, 0);
-        const amanha = new Date(hoje);
-        amanha.setDate(amanha.getDate() + 1);
+        const hojeInicio = startOfDay(new Date());
+        const hojeFim = endOfDay(new Date());
 
         const agendamentos = await prisma.agendamento.findMany({
             where: {
                 status: 'AGENDADO',
                 dataHora: {
-                    gte: hoje,
-                    lt: amanha
+                    gte: hojeInicio,
+                    lte: hojeFim
                 }
             },
             include: {
@@ -104,9 +99,6 @@ router.get('/agendamentos/hoje', async (req, res) => {
     }
 });
 
-// ==========================================
-// ROTAS EXISTENTES (CLIENTES, CHAT, CONFIG)
-// ==========================================
 router.post('/reset', async (req, res) => {
     try {
         await prisma.mensagemIA.deleteMany({});
@@ -238,4 +230,3 @@ router.post('/conversas/:clienteId/resolver', async (req, res) => {
 });
 
 module.exports = router;
-// --- END OF FILE crmRoutes.js ---

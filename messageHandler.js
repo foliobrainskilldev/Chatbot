@@ -1,4 +1,3 @@
-// --- START OF FILE messageHandler.js ---
 const {
     prisma,
     getOrCreateCliente
@@ -54,7 +53,6 @@ async function handleMessage(message, contact) {
 
     if (message.id) await markAsReadAndTyping(message.id);
 
-    // LÓGICA MULTIMÉDIA
     if (message.type === 'text') {
         textMessage = message.text.body;
     } else if (message.type === 'interactive') {
@@ -67,7 +65,6 @@ async function handleMessage(message, contact) {
             fs.writeFileSync(path.join(uploadsDir, fileName), audioBuffer);
             const transcricao = await transcreverAudioComGroq(audioBuffer);
             textMessage = `[MEDIA:audio] /uploads/${fileName} | Transcrição: ${transcricao}`;
-            console.log(`🎙️ [ÁUDIO RECEBIDO] ${senderNumber}: "${transcricao}"`);
         }
     } else if (message.type === 'image') {
         const imgBuffer = await downloadMedia(message.image.id);
@@ -85,6 +82,28 @@ async function handleMessage(message, contact) {
             const caption = message.video.caption ? ` | Transcrição: ${message.video.caption}` : '';
             textMessage = `[MEDIA:video] /uploads/${fileName}${caption}`;
         }
+    } else if (message.type === 'order') {
+        const orderItems = message.order.product_items;
+        if (orderItems && orderItems.length > 0) {
+            const produtoSKU = orderItems[0].product_retailer_id;
+            const prod1 = process.env.PRODUTO_1_ID || 'h5fj6325da';
+            const prod2 = process.env.PRODUTO_2_ID || '8pdji0vdor';
+            const prod3 = process.env.PRODUTO_3_ID || 'af2o2iuwey';
+
+            // Busca dinâmica para evitar que o bot bloqueie caso os IDs na DB sejam diferentes
+            const servicosDb = await prisma.servico.findMany({
+                orderBy: {
+                    id: 'asc'
+                }
+            });
+            let dbServicoId = servicosDb.length > 0 ? servicosDb[0].id.toString() : '1';
+
+            if (produtoSKU === prod1 && servicosDb[0]) dbServicoId = servicosDb[0].id.toString();
+            else if (produtoSKU === prod2 && servicosDb[1]) dbServicoId = servicosDb[1].id.toString();
+            else if (produtoSKU === prod3 && servicosDb[2]) dbServicoId = servicosDb[2].id.toString();
+
+            textMessage = 'srv_' + dbServicoId;
+        }
     }
 
     if (!textMessage) return;
@@ -92,7 +111,6 @@ async function handleMessage(message, contact) {
     try {
         let cliente = await getOrCreateCliente(senderNumber);
 
-        // CORREÇÃO DO PROBLEMA "SEM NOME": Se não tiver nome, usa o nome do Perfil do WhatsApp
         if ((!cliente.nome || cliente.nome === 'Sem Nome') && contact?.profile?.name) {
             cliente.nome = contact.profile.name;
             await prisma.cliente.update({
@@ -378,4 +396,3 @@ module.exports = {
     stateMachine,
     STEPS
 };
-// --- END OF FILE messageHandler.js ---
