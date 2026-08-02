@@ -76,13 +76,25 @@ async function handleMessage(message, contact) {
         if (textMessage.trim().toLowerCase() === '#sair') {
             if (cliente.falarHumano) {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: false } });
+                // Atualiza o painel CRM em tempo real para remover este cliente da fila de espera
+                if (global.io) global.io.emit('atualizar_fila'); 
             }
             await sendDelayedText(null, jid, 'Atendimento automatico restaurado! Podes utilizar o menu abaixo ou conversar comigo.');
             await sendMenu(null, jid);
             return; 
         }
 
-        if (cliente.falarHumano) return; 
+        // Se o cliente estiver no modo "Falar com Humano", a IA não responde, mas a mensagem é salva e enviada pro CRM!
+        if (cliente.falarHumano) {
+            const novaMsg = await prisma.mensagemIA.create({ 
+                data: { role: 'user', content: textMessage, clienteId: senderNumber }
+            });
+            // Envia a mensagem em tempo real para o painel de CRM
+            if (global.io) {
+                global.io.emit('nova_mensagem', { clienteId: senderNumber, mensagem: novaMsg });
+            }
+            return; 
+        }
 
         let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {} };
         userState.lastActive = Date.now();
@@ -208,6 +220,7 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
         case 'btn_equipe':
             await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
             await sendDelayedText(null, jid, 'Atendimento transferido! Um de nossos barbeiros ja vem te responder. Aguarda so um pouquinho...\n\n(Para voltares ao atendimento automatico a qualquer momento, digita *#sair*)'); 
+            if (global.io) global.io.emit('atualizar_fila'); // Atualiza a fila do CRM
             break;
             
         default: 
@@ -264,6 +277,7 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             else if (intentCheck.includes('/HUMANO') || intentCheck.includes('/ATENDENTE') || intentCheck.includes('/PESSOA')) {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
                 await sendDelayedText(null, jid, 'Atendimento transferido! Um de nossos barbeiros ja vem te responder. Aguarda so um pouquinho...\n\n(Para voltares ao atendimento automatico, digita *#sair*)');
+                if (global.io) global.io.emit('atualizar_fila'); // Atualiza a fila do CRM
             } 
             else if (intentCheck.includes('/MENU')) {
                 await sendMenu(null, jid);

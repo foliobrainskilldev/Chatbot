@@ -1,19 +1,24 @@
 // --- START OF FILE server.js ---
 const express = require('express');
 const cors = require('cors');
-const { handleMessage } = require('./messageHandler');
+const http = require('http'); // Novo
+const { Server } = require('socket.io'); // Novo
+const { handleMessage, stateMachine } = require('./messageHandler');
 const { iniciarLembretesEFollowUp } = require('./cronJobs');
-const crmRoutes = require('./crmRoutes'); // Novo import de rotas para o CRM
+const crmRoutes = require('./crmRoutes'); 
 
 const app = express();
-app.use(express.json());
+const server = http.createServer(app); // Cria o servidor HTTP
 
-// Permite requisições de outros domínios (Frontend do CRM)
+// Configura o WebSocket permitindo qualquer origem (CORS)
+const io = new Server(server, { cors: { origin: "*" } });
+global.io = io; // Torna o WebSocket global para usar nos outros ficheiros
+
+app.use(express.json());
 app.use(cors());
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'barbearia_secreta_2024';
 
-// Rotas do CRM separadas (Todas terão o prefixo /api/crm)
 app.use('/api/crm', crmRoutes);
 
 app.get('/webhook', (req, res) => {
@@ -52,4 +57,7 @@ app.get('/ping', (req, res) => res.send('Pong! I.A Engine Livre e Desembaraçada
 
 const PORT = process.env.PORT || 3000;
 iniciarLembretesEFollowUp();
-app.listen(PORT, () => console.log(`🚀 Meta API e LPU (Groq) Acordada na porta ${PORT}`));
+
+// ATENÇÃO: Agora usamos server.listen em vez de app.listen
+server.listen(PORT, () => console.log(`🚀 Meta API, CRM e WebSockets a correr na porta ${PORT}`));
+// --- END OF FILE server.js ---
