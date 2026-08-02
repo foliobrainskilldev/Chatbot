@@ -119,11 +119,10 @@ async function handleMessage(message, contact) {
 
     try {
         const config = getSettings();
-        if (!config.botAtivo) return; // Master switch
+        if (!config.botAtivo) return;
 
         let cliente = await getOrCreateCliente(senderNumber);
 
-        // Saída do atendimento humano
         if (textMessage.trim().toLowerCase() === '#sair') {
             if (cliente.falarHumano) {
                 await prisma.cliente.update({
@@ -156,11 +155,21 @@ async function handleMessage(message, contact) {
             return;
         }
 
-        // Fuso Horário de Moçambique
+        // LÓGICA TEMPORAL E ESTADO AVANÇADO
         const agora = new Date();
         const horaMaputoStr = agora.toLocaleString("pt-PT", {
             timeZone: "Africa/Maputo"
         });
+        const maputoHour = parseInt(new Intl.DateTimeFormat('pt-PT', {
+            timeZone: 'Africa/Maputo',
+            hour: 'numeric',
+            hour12: false
+        }).format(agora));
+
+        let periodoDia = 'Boa noite';
+        if (maputoHour >= 5 && maputoHour < 12) periodoDia = 'Bom dia';
+        else if (maputoHour >= 12 && maputoHour < 18) periodoDia = 'Boa tarde';
+
         const timeFormatter = new Intl.DateTimeFormat('pt-PT', {
             timeZone: 'Africa/Maputo',
             hour: '2-digit',
@@ -182,7 +191,7 @@ async function handleMessage(message, contact) {
         userState.lastActive = Date.now();
         userState.notified = false;
 
-        // IA gera primeira saudação pedindo o nome dinamicamente
+        // Saudação inicial forçando o Bom dia/tarde/noite correto
         if ((!cliente.nome || cliente.nome === 'Sem Nome') && userState.step === STEPS.MENU_PRINCIPAL) {
             const historicoCru = await prisma.mensagemIA.count({
                 where: {
@@ -193,14 +202,13 @@ async function handleMessage(message, contact) {
                 userState.step = STEPS.PEDIR_NOME;
                 stateMachine.set(senderNumber, userState);
 
-                const promptSaudacao = `És o assistente virtual da barbearia. O utilizador mandou mensagem e precisas de saber o seu nome. Em Moçambique agora são ${horaMaputoStr}. Dá bom dia/boa tarde/boa noite de forma amigável e pergunta com quem tens o prazer de falar. (No máximo 1 emoji).`;
-                const msgSaudacao = await gerarMensagemNotificacao(promptSaudacao, 'Olá! Sou o assistente virtual da barbearia. Como te chamas?');
+                const promptSaudacao = `És o assistente virtual da barbearia. O utilizador mandou mensagem e precisas de saber o seu nome. Em Moçambique agora são ${horaMaputoStr}. A saudação correta para este horário é "${periodoDia}". Dá a saudação "${periodoDia}" de forma amigável e pergunta com quem tens o prazer de falar. (No máximo 1 emoji).`;
+                const msgSaudacao = await gerarMensagemNotificacao(promptSaudacao, `Olá! ${periodoDia}! Sou o assistente virtual da barbearia. Como te chamas?`);
                 await sendDelayedText(null, jid, msgSaudacao);
                 return;
             }
         }
 
-        // Cliente dá o nome, a IA gera a apresentação baseada no nome
         if (userState.step === STEPS.PEDIR_NOME) {
             const nomeExtraido = await extrairNomeComGroq(textMessage);
             if (nomeExtraido.toUpperCase() === 'IGNORAR') {
@@ -228,8 +236,8 @@ async function handleMessage(message, contact) {
                     }
                 });
 
-                const promptApresentacao = `O cliente disse que se chama ${nomeFinal}. Em Moçambique agora são ${horaMaputoStr}. Dá-lhe as boas vindas, apresenta-te como o assistente da Portal da Barbearia especialista em cortes, e pergunta como podes ajudar. (Máximo 1 emoji).`;
-                const textoBoasVindas = await gerarMensagemNotificacao(promptApresentacao, `Muito prazer, ${nomeFinal}! Bem-vindo à Portal da Barbearia. Como posso ajudar-te hoje?`);
+                const promptApresentacao = `O cliente disse que se chama ${nomeFinal}. Em Moçambique agora são ${horaMaputoStr}. A saudação exata é "${periodoDia}". Dá-lhe as boas vindas usando "${periodoDia}, ${nomeFinal}!", apresenta-te como o assistente da Portal da Barbearia e pergunta como podes ajudar. (Máximo 1 emoji).`;
+                const textoBoasVindas = await gerarMensagemNotificacao(promptApresentacao, `${periodoDia}, ${nomeFinal}! Muito prazer. Bem-vindo à Portal da Barbearia. Como posso ajudar-te hoje?`);
 
                 await sendInteractiveMenu(null, jid, textoBoasVindas, [{
                         id: 'btn_servicos',
@@ -274,7 +282,7 @@ async function handleMessage(message, contact) {
         } else {
             switch (userState.step) {
                 case STEPS.MENU_PRINCIPAL:
-                    await handleEstrategiaLLMSalvos(null, jid, textMessage, senderNumber, cliente.nome, horaMaputoStr, foraDoExpediente);
+                    await handleEstrategiaLLMSalvos(null, jid, textMessage, senderNumber, cliente.nome, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente);
                     break;
                 case STEPS.CANCELAR_AGENDAMENTO:
                     await processarCancelamento(null, jid, textMessage, senderNumber, stateMachine, STEPS);
@@ -318,7 +326,7 @@ async function sendMenu(sockIgnorado, jid) {
     }]);
 }
 
-async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber, nomeCliente, horaMaputoStr, foraDoExpediente) {
+async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber, nomeCliente, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente) {
     const option = textMessage.trim();
     switch (option) {
         case '1':
@@ -386,16 +394,19 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
 
             const ultimo = historicoCru.length > 0 ? historicoCru[0] : null;
             let tempoPassado = "O cliente acabou de iniciar a conversa.";
+
             if (ultimo) {
                 const diffMins = Math.floor((Date.now() - new Date(ultimo.criadoEm).getTime()) / 60000);
-                if (diffMins > 60) {
-                    tempoPassado = `Aviso: O cliente regressou após ${Math.floor(diffMins/60)} horas de inatividade.`;
+                if (diffMins > 1440) {
+                    tempoPassado = `Aviso de Estado: O cliente enviou mensagem após ${Math.floor(diffMins/1440)} dias. VOCÊ DEVE OBRIGATORIAMENTE saudar com "${periodoDia}".`;
+                } else if (diffMins > 120) {
+                    tempoPassado = `Aviso de Estado: O cliente retomou a conversa após ${Math.floor(diffMins/60)} horas. É educado dar uma pequena saudação como "${periodoDia}".`;
                 } else {
-                    tempoPassado = `A conversa está super ativa (Última mensagem há ${diffMins} minutos).`;
+                    tempoPassado = `Aviso de Estado: Conversa ATIVA E CONTÍNUA (última mensagem há ${diffMins} minutos). É TOTALMENTE PROIBIDO dar "Bom dia", "Boa tarde" ou "Boa noite" novamente. Responda diretamente ao assunto de forma natural.`;
                 }
             }
 
-            const infoTemporal = `Horário atual em Moçambique: ${horaMaputoStr}. ${tempoPassado} ${foraDoExpediente ? 'ATENÇÃO: A barbearia está FECHADA neste exato horário! Responda às dúvidas normalmente, mas não tentes assumir que agendarão de imediato.' : 'A barbearia está ABERTA.'} Age naturalmente.`;
+            const infoTemporal = `Horário atual em Moçambique: ${horaMaputoStr} (${periodoDia}). ${tempoPassado} ${foraDoExpediente ? 'ATENÇÃO: A barbearia está FECHADA neste exato horário! Responda às dúvidas normalmente, mas deixe claro que estamos fechados se eles perguntarem por atendimento agora.' : 'A barbearia está ABERTA.'} Age com clareza.`;
 
             const textIArid = await responderComGroq(textMessage, 0, historicoCru.reverse(), infoTemporal, nomeCliente);
             const intentCheck = textIArid.trim().toUpperCase().replace(/\s+/g, '');
