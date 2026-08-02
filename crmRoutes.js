@@ -72,14 +72,14 @@ router.get('/kpis', async (req, res) => {
 router.get('/agendamentos/hoje', async (req, res) => {
     try {
         const hojeInicio = startOfDay(new Date());
-        const hojeFim = endOfDay(new Date());
 
+        // Agora busca todos os agendamentos futuros (incluindo o de hoje) para que
+        // mesmo que o cliente agende para amanhã, possas ver na lista da agenda.
         const agendamentos = await prisma.agendamento.findMany({
             where: {
                 status: 'AGENDADO',
                 dataHora: {
-                    gte: hojeInicio,
-                    lte: hojeFim
+                    gte: hojeInicio
                 }
             },
             include: {
@@ -94,7 +94,7 @@ router.get('/agendamentos/hoje', async (req, res) => {
         res.status(200).json(agendamentos);
     } catch (error) {
         res.status(500).json({
-            error: "Erro ao carregar agenda de hoje."
+            error: "Erro ao carregar agenda."
         });
     }
 });

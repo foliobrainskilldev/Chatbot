@@ -111,18 +111,6 @@ async function handleMessage(message, contact) {
     try {
         let cliente = await getOrCreateCliente(senderNumber);
 
-        if ((!cliente.nome || cliente.nome === 'Sem Nome') && contact?.profile?.name) {
-            cliente.nome = contact.profile.name;
-            await prisma.cliente.update({
-                where: {
-                    id: senderNumber
-                },
-                data: {
-                    nome: cliente.nome
-                }
-            });
-        }
-
         if (textMessage.trim().toLowerCase() === '#sair') {
             if (cliente.falarHumano) {
                 await prisma.cliente.update({
@@ -162,7 +150,8 @@ async function handleMessage(message, contact) {
         userState.lastActive = Date.now();
         userState.notified = false;
 
-        if (!cliente.nome && userState.step === STEPS.MENU_PRINCIPAL) {
+        // Se não tiver nome e for a primeira vez que manda mensagem, pergunta de forma natural
+        if ((!cliente.nome || cliente.nome === 'Sem Nome') && userState.step === STEPS.MENU_PRINCIPAL) {
             const historicoCru = await prisma.mensagemIA.count({
                 where: {
                     clienteId: senderNumber
@@ -171,8 +160,7 @@ async function handleMessage(message, contact) {
             if (historicoCru === 0) {
                 userState.step = STEPS.PEDIR_NOME;
                 stateMachine.set(senderNumber, userState);
-                await sendDelayedText(null, jid, 'Olá! Sou o Assistente Virtual da Barbearia, seja muito bem-vindo!');
-                await sendText(jid, 'Para que o nosso atendimento seja mais amigável, como gostarias de ser chamado?');
+                await sendDelayedText(null, jid, 'Olá! Seja muito bem-vindo à nossa barbearia! 💈\n\nEu sou o assistente virtual por aqui. Com quem tenho o prazer de falar?');
                 return;
             }
         }
@@ -183,7 +171,12 @@ async function handleMessage(message, contact) {
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
             } else {
-                const nomeFinal = nomeExtraido.charAt(0).toUpperCase() + nomeExtraido.slice(1).toLowerCase();
+                // Formata o nome para ter a primeira letra maiúscula adequadamente
+                const nomeFinal = nomeExtraido
+                    .split(' ')
+                    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                    .join(' ');
+
                 await prisma.cliente.update({
                     where: {
                         id: senderNumber
@@ -198,21 +191,24 @@ async function handleMessage(message, contact) {
                 await prisma.mensagemIA.create({
                     data: {
                         role: 'user',
-                        content: `O meu nome é ${nomeFinal}`,
+                        content: textMessage,
                         clienteId: senderNumber
                     }
                 });
-                const textoBoasVindas = `Muito prazer, ${nomeFinal}!\n\nEscolhe uma das opções abaixo para começarmos ou conversa comigo à vontade:`;
+
+                // Apresentação e botões conforme solicitado
+                const textoBoasVindas = `Muito prazer, ${nomeFinal}! Aqui na Portal da Barbearia, somos especialistas em cortes modernos, barboterapia e atendimento de excelência. O nosso objetivo é que saias daqui com a tua melhor versão!\n\nComo posso ajudar-te hoje?`;
                 await sendInteractiveMenu(null, jid, textoBoasVindas, [{
-                    id: 'menu',
-                    title: 'Menu Principal'
+                    id: 'btn_servicos',
+                    title: 'Serviços e preços'
                 }, {
-                    id: 'btn_duvidas',
-                    title: 'Dúvidas frequentes'
+                    id: 'menu',
+                    title: 'Menu'
                 }, {
                     id: 'btn_equipe',
-                    title: 'Falar com a equipa'
+                    title: 'Falar com atendente'
                 }]);
+                
                 await prisma.mensagemIA.create({
                     data: {
                         role: 'assistant',
