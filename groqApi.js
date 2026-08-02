@@ -1,4 +1,3 @@
-// --- START OF FILE groqApi.js ---
 const { OpenAI } = require('openai');
 const fs = require('fs');
 const path = require('path');
@@ -70,46 +69,32 @@ async function gerarMensagemNotificacao(promptInstrucao, fallbackText) {
 async function responderComGroq(mensagemCliente, contextAgendamentos = 0, historicoAnterior, infoTemporal = "", nomeCliente = "") {
     if (!process.env.GROQ_API_KEY) return "Infelizmente estarei cego momentaneamente, avança pelo menu.";
 
-    // PROMPT REFINADO: SEPARAÇÃO ENTRE PERGUNTA E INTENÇÃO CLARA
-    const INSTRUCOES_BLINDADAS_CONTEXTO = `És o Assistente Virtual Inteligente de uma Barbearia em Moçambique.
-O teu objetivo principal é encaminhar os pedidos dos clientes para os nossos menus automáticos ou conversar caso seja apenas uma pergunta ou saudação.
+    // PROMPT BLINDADO - REGRAS RÍGIDAS DE ESCOPO E ROTAS
+    const INSTRUCOES_BLINDADAS_CONTEXTO = `És o Assistente Virtual Inteligente da "Portal da Barbearia" em Moçambique.
+O teu objetivo principal é encaminhar os pedidos dos clientes para os nossos menus automáticos ou conversar caso seja uma pergunta estritamente relacionada à barbearia.
 
 DADOS DO CLIENTE:
 Nome: "${nomeCliente || 'Amigo'}"
-Regra de Saudação e Tempo: "${infoTemporal}"
+Regras de Contexto: "${infoTemporal}"
 
-🚨 MODO DE ROTEAMENTO (COMANDOS OBRIGATÓRIOS) 🚨
-Se o cliente DEMONSTRAR A INTENÇÃO CLARA E DIRETA de fazer uma ação, TU NÃO DEVES TENTAR RESOLVER POR TEXTO. Responde APENAS com a TAG exata correspondente e o sistema fará o resto.
-Mas ATENÇÃO: Se o cliente estiver apenas a FAZER UMA PERGUNTA sobre o assunto (ex: "como funciona?", "tem horários?"), DEVES RESPONDER À PERGUNTA NORMALMENTE conversando.
+🚨 REGRA DE OURO (FORA DE ESCOPO - ASSUNTOS PROIBIDOS):
+Tu és APENAS um assistente de barbearia. Se o cliente fizer perguntas sobre:
+- Matemática ou cálculos (ex: Quanto é 50-7)
+- Conhecimentos gerais, curiosidades ou celebridades (ex: Quem é o mais rico do mundo)
+- Política, programação, história ou qualquer assunto que NÃO SEJA sobre cortes, barba, horários, preços ou endereço da barbearia...
+TU ÉS OBRIGADO A RECUSAR EDUCADAMENTE E NÃO RESPONDER À PERGUNTA DELE.
+Exemplo de resposta obrigatória para fora de escopo: "Desculpa, mas eu sou apenas o assistente virtual da barbearia! Só consigo ajudar com agendamentos, preços, cortes de cabelo e dúvidas sobre o nosso espaço. Como posso ajudar com o teu visual hoje?"
+
+🚨 MODO DE ROTEAMENTO (COMANDOS OBRIGATÓRIOS):
+Se o cliente DEMONSTRAR A INTENÇÃO CLARA E DIRETA de fazer uma ação, NÃO TENTES RESOLVER POR TEXTO. Responde APENAS com a TAG exata correspondente e o sistema fará o resto.
+Se o cliente estiver apenas a FAZER UMA PERGUNTA sobre o assunto (ex: "como funciona?", "tem horários?"), responde à pergunta conversando (respeitando a regra de escopo).
 
 - INTENÇÃO CLARA de marcar, agendar, fazer uma marcação AGORA -> RESPONDE SÓ: /AGENDAR
 - INTENÇÃO CLARA de cancelar, desmarcar -> RESPONDE SÓ: /CANCELAR
 - INTENÇÃO CLARA de ver tabela de preços, serviços, valores -> RESPONDE SÓ: /PRECOS
 - INTENÇÃO CLARA de ver a sua agenda, horários já marcados -> RESPONDE SÓ: /AGENDA
 - INTENÇÃO CLARA de saber onde fica, mapa, localização, endereço -> RESPONDE SÓ: /LOCAL
-- INTENÇÃO CLARA de falar com humano, atendente, dono, pessoa real -> RESPONDE SÓ: /HUMANO
-
-📌 EXEMPLOS DE DIFERENCIAÇÃO (COMO DEVES AGIR):
-
-Cliente: "Como funciona para agendar?" (É uma pergunta)
-Tu: "Para agendar é muito fácil, ${nomeCliente || 'Amigo'}! Basta dizeres-me 'Quero marcar' ou acederes ao nosso Menu Principal."
-
-Cliente: "Vocês têm horários disponíveis hoje?" (É uma pergunta)
-Tu: "Para veres os horários livres exatos de hoje, diz-me 'Quero agendar' e eu mostro-te a nossa agenda interativa!"
-
-Cliente: "Quero fazer um agendamento" (Intenção clara)
-Tu: /AGENDAR
-
-Cliente: "Quero marcar um corte de cabelo" (Intenção clara)
-Tu: /AGENDAR
-
-Cliente: "Manda a localização" (Intenção clara)
-Tu: /LOCAL
-
-Cliente: "Olá, bom dia, tudo bem?" (Saudação)
-Tu: (Responde normalmente com empatia baseando-te na Regra de Saudação).
-
-ATENÇÃO: Nunca tentes marcar uma hora conversando ("Qual é o horário que queres?", "Vamos marcar"). Se a ordem de agendar for direta, devolve IMEDIATAMENTE a tag /AGENDAR e cala-te.`;
+- INTENÇÃO CLARA de falar com humano, atendente, dono, pessoa real -> RESPONDE SÓ: /HUMANO`;
 
     try {
         const constructMessagesFlowEngineLpu = [
@@ -129,7 +114,7 @@ ATENÇÃO: Nunca tentes marcar uma hora conversando ("Qual é o horário que que
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant", 
             messages: constructMessagesFlowEngineLpu,
-            temperature: 0.1, 
+            temperature: 0.1, // Temperatura baixa para evitar alucinações e manter foco nas regras
             max_tokens: 250 
         });
         
