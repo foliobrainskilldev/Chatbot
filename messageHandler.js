@@ -59,6 +59,7 @@ function getSettings() {
 }
 
 async function sendMenu(sockIgnorado, jid) {
+    // TEXTO TOTALMENTE FIXO
     const textoMenu = `Selecione uma das opções abaixo para prosseguir:`;
 
     await sendInteractiveMenu(null, jid, textoMenu, [{
@@ -97,7 +98,7 @@ async function sendMenu(sockIgnorado, jid) {
 async function handleMessage(message, contact) {
     const senderNumber = message.from;
     let textMessage = "";
-    let displayMessage = ""; // NOME BONITO PARA O PAINEL CRM
+    let displayMessage = "";
     const jid = senderNumber;
 
     if (message.id) await markAsReadAndTyping(message.id);
@@ -108,7 +109,7 @@ async function handleMessage(message, contact) {
     } else if (message.type === 'interactive') {
         if (message.interactive.type === 'button_reply') {
             textMessage = message.interactive.button_reply.id;
-            displayMessage = message.interactive.button_reply.title; // Salva o nome (ex: "Agendar")
+            displayMessage = message.interactive.button_reply.title;
         } else if (message.interactive.type === 'list_reply') {
             textMessage = message.interactive.list_reply.id;
             displayMessage = message.interactive.list_reply.title;
@@ -119,8 +120,8 @@ async function handleMessage(message, contact) {
             const fileName = `aud_${Date.now()}.ogg`;
             fs.writeFileSync(path.join(uploadsDir, fileName), audioBuffer);
             const transcricao = await transcreverAudioComGroq(audioBuffer);
-            textMessage = transcricao || "(Áudio inaudível)"; // A IA VAI LER A TRANSCRIÇÃO
-            displayMessage = `[MEDIA:audio] /uploads/${fileName} | Transcrição: ${transcricao}`; // O CRM MOSTRA O PLAYER
+            textMessage = transcricao || "(Áudio inaudível)";
+            displayMessage = `[MEDIA:audio] /uploads/${fileName} | Transcrição: ${transcricao}`;
         }
     } else if (message.type === 'image') {
         const imgBuffer = await downloadMedia(message.image.id);
@@ -151,7 +152,7 @@ async function handleMessage(message, contact) {
             });
             let dbServicoId = servicosDb.length > 0 ? servicosDb[0].id.toString() : '1';
             textMessage = 'srv_' + dbServicoId;
-            displayMessage = "Encomenda feita pelo Catálogo";
+            displayMessage = "Encomenda pelo Catálogo";
         }
     }
 
@@ -225,7 +226,7 @@ async function handleMessage(message, contact) {
             data: {}
         };
 
-        // 1ª INTERAÇÃO
+        // 1ª INTERAÇÃO: 100% PRÉ-DEFINIDO (Zero Groq AI para não estragar a mensagem)
         if ((!cliente.nome || cliente.nome === 'Sem Nome') && userState.step === STEPS.MENU_PRINCIPAL) {
             const historicoCru = await prisma.mensagemIA.count({
                 where: {
@@ -236,8 +237,7 @@ async function handleMessage(message, contact) {
                 userState.step = STEPS.PEDIR_NOME;
                 stateMachine.set(senderNumber, userState);
 
-                const promptSaudacao = `Escreve EXATAMENTE esta frase, substituindo apenas a saudação pela hora certa: "${periodoDia}! Sou o assistente da Portal da Barbearia. Para que o nosso atendimento seja mais amigável, como posso te chamar?". PROIBIDO usar aspas ("").`;
-                const msgSaudacao = await gerarMensagemNotificacao(promptSaudacao, `${periodoDia}! Sou o assistente da Portal da Barbearia. Para que o nosso atendimento seja mais amigável, como posso te chamar?`);
+                const msgSaudacao = `${periodoDia}! Sou o assistente da Portal da Barbearia.\nPara que o nosso atendimento seja mais amigável, como posso te chamar?`;
 
                 await prisma.mensagemIA.create({
                     data: {
@@ -267,6 +267,14 @@ async function handleMessage(message, contact) {
         const isGlobalBtn = textMessage.startsWith('cmd_') || textMessage.startsWith('btn_');
 
         if (isGlobalBtn) {
+            await prisma.mensagemIA.create({
+                data: {
+                    role: 'user',
+                    content: displayMessage,
+                    clienteId: senderNumber
+                }
+            });
+
             userState.step = STEPS.MENU_PRINCIPAL;
             userState.data = {};
             stateMachine.set(senderNumber, userState);
@@ -274,13 +282,20 @@ async function handleMessage(message, contact) {
             return;
         }
 
-        // 2ª INTERAÇÃO
+        // 2ª INTERAÇÃO: PRÉ-DEFINIDO
         if (userState.step === STEPS.PEDIR_NOME) {
             const nomeExtraido = await extrairNomeComGroq(textMessage);
 
             if (nomeExtraido.toUpperCase() === 'IGNORAR') {
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
+                await prisma.mensagemIA.create({
+                    data: {
+                        role: 'user',
+                        content: displayMessage,
+                        clienteId: senderNumber
+                    }
+                });
             } else {
                 const nomeFinal = nomeExtraido.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
                 await prisma.cliente.update({
@@ -294,7 +309,6 @@ async function handleMessage(message, contact) {
                 cliente.nome = nomeFinal;
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
-
                 await prisma.mensagemIA.create({
                     data: {
                         role: 'user',
@@ -402,7 +416,7 @@ async function handleMessage(message, contact) {
 
 async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, displayMessage, senderNumber, nomeCliente, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente) {
 
-    // Grava TUDO no banco de dados para o CRM ver bonito (Texto/Áudio/Nome do Botão)
+    // Grava TUDO no banco de dados para o CRM ver bonito
     await prisma.mensagemIA.create({
         data: {
             role: 'user',
@@ -467,7 +481,7 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, display
 
             const infoTemporal = `Horário: ${horaMaputoStr} (${periodoDia}). ${tempoPassado} ${foraDoExpediente ? 'Barbearia FECHADA agora.' : 'Barbearia ABERTA.'}`;
 
-            // A IA analisa o textMessage limpo (se for áudio, lê a transcrição e não os links de media)
+            // A IA analisa APENAS O TEXTO LIMPO / TRANSCRIÇÃO e toma a decisão
             const textIArid = await responderComGroq(textMessage, 0, historicoCru.reverse(), infoTemporal, nomeCliente);
             const intentCheck = textIArid.trim().toUpperCase().replace(/\s+/g, '');
 
