@@ -18,25 +18,15 @@ const api = axios.create({
 async function markAsReadAndTyping(messageId, to) {
     if (!messageId) return;
     try {
-        // 1. Marca a mensagem como LIDA (Blue Ticks)
+        // Marca a mensagem como LIDA (Blue Ticks) e envia o estado "A escrever..." (Typing Indicator) na mesma requisição
         await api.post('/messages', {
             messaging_product: 'whatsapp',
             status: 'read',
-            message_id: messageId
+            message_id: messageId,
+            typing_indicator: {
+                type: 'text'
+            }
         });
-
-        // 2. Envia o estado "A escrever..." (Typing Indicator) separadamente
-        if (to) {
-            await api.post('/messages', {
-                messaging_product: 'whatsapp',
-                recipient_type: 'individual',
-                to: to,
-                type: 'typing_indicator',
-                typing_indicator: {
-                    type: 'text'
-                }
-            });
-        }
     } catch (error) {
         // Ignora erros silenciosos da API da Meta
     }
