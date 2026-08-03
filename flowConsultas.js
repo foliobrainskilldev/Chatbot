@@ -5,7 +5,7 @@ const { sendProductList } = require('./whatsappApi');
 const { gerarMensagemNotificacao } = require('./groqApi');
 
 async function verPrecosEServicos(sockIgnorado, jid) {
-    const txtTabela = await gerarMensagemNotificacao(`Escreve uma frase simpática e curta introduzindo a nossa tabela de serviços e preços que será enviada a seguir.`, `Podes ver os nossos serviços e preços aqui em baixo:`);
+    const txtTabela = await gerarMensagemNotificacao(`Diz APENAS: "Aqui estão os nossos serviços e preços. Clica na opção abaixo:"`, `Aqui estão os nossos serviços e preços. Clica na opção abaixo:`);
     const sections = [{
         title: "Cortes e Barboterapia",
         product_items: [
@@ -33,12 +33,12 @@ async function verMeusAgendamentos(sockIgnorado, jid, senderNumber) {
     });
 
     if (agendamentos.length === 0) {
-        const txtVazio = await gerarMensagemNotificacao(`Informa o cliente com simpatia que ele não possui agendamentos futuros marcados connosco de momento.`, `Não tens nenhum agendamento futuro marcado connosco no momento.`);
+        const txtVazio = await gerarMensagemNotificacao(`Diz APENAS: "Não tens nenhum agendamento marcado no momento."`, `Não tens nenhum agendamento marcado no momento.`);
         await sendDelayedText(null, jid, txtVazio);
         return;
     }
 
-    const txtIntro = await gerarMensagemNotificacao(`Apresenta a lista de agendamentos do cliente com uma frase inicial amigável e curta.`, `📅 *Os teus próximos agendamentos:*`);
+    const txtIntro = await gerarMensagemNotificacao(`Diz APENAS: "📅 *Os teus próximos agendamentos:*"`, `📅 *Os teus próximos agendamentos:*`);
     let texto = `${txtIntro}\n\n`;
     agendamentos.forEach((ag, index) => {
         texto += `*${index + 1}.* ${ag.servico.nome}\n🕑 ${format(ag.dataHora, "dd/MM 'às' HH:mm")}\n💈 ${ag.barbeiro ? ag.barbeiro.nome : 'Qualquer'}\n\n`;

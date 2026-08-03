@@ -52,10 +52,10 @@ async function gerarMensagemNotificacao(promptInstrucao, fallbackText) {
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant",
             messages: [
-                { role: "system", content: "És o assistente virtual da barbearia. Sê amigável, natural e direto ao assunto. As tuas respostas devem ser curtas e objetivas (1 a 2 frases no máximo), sem enrolar. REGRA ABSOLUTA: NÃO USE EMOJIS EM HIPÓTESE ALGUMA." },
+                { role: "system", content: "És o assistente virtual da barbearia. REGRA 1: Sê amigável mas EXTREMAMENTE direto. REGRA 2: NUNCA faças perguntas sobre 'que tipo de corte ou barba' o cliente quer. A tua única função é direcioná-lo para CLICAR NOS BOTÕES. REGRA 3: Zero Emojis." },
                 { role: "user", content: promptInstrucao }
             ],
-            temperature: 0.4, 
+            temperature: 0.2, 
             max_tokens: 70
         });
         return resposta.choices[0]?.message?.content.trim() || fallbackText;
@@ -70,9 +70,9 @@ async function responderComGroq(mensagemCliente, contextAgendamentos = 0, histor
     const INSTRUCOES_BLINDADAS_CONTEXTO = `És o Assistente Virtual da Portal da Barbearia.
 DADOS DO CLIENTE: Nome: "${nomeCliente || 'Amigo'}" | Regras de Tempo: "${infoTemporal}"
 
-🚨 REGRA DE PERSONALIDADE: Sê simpático e prestável, mas as tuas respostas devem ser naturais, curtas e diretas ao assunto (máximo 2 frases). Evita textos longos.
+🚨 REGRA DE PERSONALIDADE: Sê simpático, mas as tuas respostas devem ser MUITO curtas (máximo 2 frases). Não inventes cortes, estilos nem faças perguntas para continuar a conversa. Redireciona sempre para os menus e botões.
 
-🚨 FORA DE ESCOPO: Se perguntarem sobre Matemática, Famosos, Política, Tecnologia, etc, recusa de forma educada e breve: "Desculpa, mas eu sou apenas o assistente da barbearia! Só consigo ajudar com agendamentos e dúvidas sobre o nosso espaço."
+🚨 FORA DE ESCOPO: Matemática, Famosos, Política, Tecnologia, etc. Recusa: "Desculpa, só sou o assistente da barbearia! Como te posso ajudar com os nossos serviços?"
 
 🚨 MODO DE ROTEAMENTO (COMANDOS OBRIGATÓRIOS):
 Intenção de marcar agora -> RESPONDE SÓ: /AGENDAR

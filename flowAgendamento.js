@@ -21,7 +21,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
             const servicos = await prisma.servico.findMany();
             const servicoEscolhido = servicos.find(s => s.id.toString() === msg);
             if (!servicoEscolhido) {
-                await sendDelayedText(null, jid, '⚠️ Escolha inválida. Por favor, tenta novamente no catálogo ou digita 0.');
+                await sendDelayedText(null, jid, '⚠️ Inválido. Por favor, clica na opção do catálogo.');
                 return;
             }
             userState.data.servico = servicoEscolhido;
@@ -31,7 +31,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
             let optBarbeiros = barbeiros.map(b => ({ id: b.id.toString(), title: b.nome }));
             optBarbeiros.push({ id: 'qualquer', title: 'Qualquer um' }, { id: '0', title: 'Cancelar' });
 
-            const txtBarbeiro = await gerarMensagemNotificacao(`O cliente escolheu o serviço. Pergunta de forma simpática e natural com qual dos nossos barbeiros ele prefere ser atendido.`, `Boa escolha! Preferes ser atendido por qual barbeiro?`);
+            const txtBarbeiro = await gerarMensagemNotificacao(`Diz APENAS: "Excelente! Com qual barbeiro preferes ser atendido? Escolhe num dos botões abaixo:"`, `Excelente! Com qual barbeiro preferes ser atendido? Escolhe abaixo:`);
             await sendInteractiveMenu(null, jid, txtBarbeiro, optBarbeiros);
             break;
         }
@@ -42,7 +42,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
             if (msg !== 'qualquer') {
                 barbeiroSelecionado = barbs.find(b => b.id.toString() === msg);
                 if (!barbeiroSelecionado && msg !== '0') {
-                    await sendDelayedText(null, jid, '⚠️ Escolha inválida. Usa os botões ou digita 0.');
+                    await sendDelayedText(null, jid, '⚠️ Inválido. Por favor, clica num dos botões.');
                     return;
                 }
             }
@@ -54,7 +54,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
             let optDias = dias.map(d => ({ id: d, title: d }));
             optDias.push({ id: '0', title: 'Cancelar' });
 
-            const txtData = await gerarMensagemNotificacao(`O cliente já escolheu o barbeiro. Pede de forma gentil e curta para ele selecionar a data do agendamento nos botões.`, `Perfeito! Escolhe a data nos botões abaixo:`);
+            const txtData = await gerarMensagemNotificacao(`Diz APENAS: "Certo! Agora, clica num dos botões para escolher a data:"`, `Certo! Agora, clica num dos botões para escolher a data:`);
             await sendInteractiveMenu(null, jid, txtData, optDias);
             break;
         }
@@ -62,7 +62,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
         case STEPS.AGENDAMENTO_DATA: {
             const diasDisp = userState.data.diasDisponiveis;
             if (!diasDisp.includes(msg)) {
-                await sendDelayedText(null, jid, '⚠️ Data inválida. Escolhe nos botões ou digita 0.');
+                await sendDelayedText(null, jid, '⚠️ Inválido. Clica num dos botões.');
                 return;
             }
 
@@ -72,7 +72,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
 
             if (horasLivres.length === 0) {
                 userState.step = STEPS.AGENDAMENTO_DATA;
-                const semH = await gerarMensagemNotificacao(`Informa o cliente de forma amigável e direta que a agenda está cheia nesse dia, e pede para ele escolher outra data.`, `Infelizmente, a agenda está cheia para esse dia. Podes escolher outra data?`);
+                const semH = await gerarMensagemNotificacao(`Diz APENAS: "Agenda cheia neste dia. Clica noutra data nos botões:"`, `Agenda cheia. Escolhe outra data nos botões:`);
                 let optDiasRetry = diasDisp.map(d => ({ id: d, title: d }));
                 optDiasRetry.push({ id: '0', title: 'Cancelar' });
                 await sendInteractiveMenu(null, jid, semH, optDiasRetry);
@@ -83,14 +83,14 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
             let optHoras = horasLivres.map(h => ({ id: h, title: h }));
             optHoras.push({ id: '0', title: 'Cancelar' });
 
-            const txtHora = await gerarMensagemNotificacao(`Pede de forma simpática e rápida para o cliente escolher o horário exato para o dia ${msg}.`, `Certo! Para o dia ${msg}, seleciona o horário pretendido:`);
+            const txtHora = await gerarMensagemNotificacao(`Diz APENAS: "Selecione o horário desejado nos botões abaixo:"`, `Selecione o horário desejado nos botões abaixo:`);
             await sendInteractiveMenu(null, jid, txtHora, optHoras);
             break;
         }
 
         case STEPS.AGENDAMENTO_HORA: {
             if (!userState.data.horasLivres.includes(msg)) {
-                await sendDelayedText(null, jid, '⚠️ Horário selecionado já passou ou é inválido. Tenta novamente ou digita 0.');
+                await sendDelayedText(null, jid, '⚠️ Horário selecionado já passou ou é inválido. Clica num botão válido.');
                 return;
             }
 
@@ -99,7 +99,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
 
             const srv = userState.data.servico;
             const brb = userState.data.barbeiro ? userState.data.barbeiro.nome : 'Qualquer um';
-            const txtIntro = await gerarMensagemNotificacao(`Pede ao cliente, de forma simpática e rápida, para confirmar se os dados do agendamento estão corretos.`, `Estamos quase lá! Por favor, confirma se está tudo certinho:`);
+            const txtIntro = await gerarMensagemNotificacao(`Diz APENAS: "Por favor, verifica os dados e clica em Confirmar:"`, `Por favor, verifica os dados e clica em Confirmar:`);
             const resumo = `${txtIntro}\n\n✂️ Serviço: ${srv.nome}\n💈 Barbeiro: ${brb}\n📅 Data: ${userState.data.dataString}\n🕑 Hora: ${msg}`;
 
             await sendInteractiveMenu(null, jid, resumo, [{ id: '1', title: 'Confirmar' }, { id: '0', title: 'Cancelar' }]);
@@ -113,7 +113,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
                     data: { dataHora: dataHoraDb, clienteId: senderNumber, servicoId: userState.data.servico.id, barbeiroId: userState.data.barbeiro?.id || null }
                 });
 
-                const txtSucesso = await gerarMensagemNotificacao(`Redige uma mensagem simpática confirmando o agendamento com sucesso. Diz que estamos à espera dele e que para voltar ao menu basta digitar "Menu".`, `✅ Agendamento confirmado! Aguardamos a tua visita.\n(Para voltares, digita "Menu").`);
+                const txtSucesso = await gerarMensagemNotificacao(`Diz APENAS: "✅ Agendamento Confirmado! Aguardamos por ti."`, `✅ Agendamento Confirmado! Aguardamos por ti.`);
                 await sendDelayedText(null, jid, txtSucesso);
                 stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
             } else if (msg === '0') {
@@ -131,12 +131,12 @@ async function iniciarAgendamento(sockIgnorado, jid, senderNumber, stateMachine,
     });
 
     if (agendamentos >= 2) {
-        await sendDelayedText(null, jid, '⚠️ Já tens 2 agendamentos futuros marcados. Podes cancelar um primeiro se precisares de remarcar.');
+        await sendDelayedText(null, jid, '⚠️ Tens 2 agendamentos futuros. Cancela um antes de marcar.');
         return;
     }
 
     stateMachine.set(senderNumber, { step: STEPS.AGENDAMENTO_SERVICO, data: {} });
-    const txtCat = await gerarMensagemNotificacao(`Inicia o processo de agendamento pedindo de forma amigável e direta para o cliente selecionar o serviço desejado.`, "Vamos agendar! Escolhe o serviço abaixo que preferes:");
+    const txtCat = await gerarMensagemNotificacao(`Diz APENAS: "Para começarmos, por favor clica no botão abaixo para escolher o serviço:"`, "Para começarmos, clica no botão abaixo para escolher o serviço:");
 
     const sections = [{
         title: "Cortes e Barboterapia",
