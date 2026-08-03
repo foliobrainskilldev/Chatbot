@@ -97,19 +97,18 @@ async function sendMenu(sockIgnorado, jid) {
 async function handleMessage(message, contact) {
     const senderNumber = message.from;
     let textMessage = "";
-    let displayMessage = ""; // NOVO: Variável que guarda o texto bonito para o Painel
+    let displayMessage = ""; // NOME BONITO PARA O PAINEL CRM
     const jid = senderNumber;
 
     if (message.id) await markAsReadAndTyping(message.id);
 
-    // RESTAURAÇÃO: Mídia e Tradução dos Textos dos Botões
     if (message.type === 'text') {
         textMessage = message.text.body;
         displayMessage = textMessage;
     } else if (message.type === 'interactive') {
         if (message.interactive.type === 'button_reply') {
             textMessage = message.interactive.button_reply.id;
-            displayMessage = message.interactive.button_reply.title; // Salva "Agendar" em vez de "cmd_agendar"
+            displayMessage = message.interactive.button_reply.title; // Salva o nome (ex: "Agendar")
         } else if (message.interactive.type === 'list_reply') {
             textMessage = message.interactive.list_reply.id;
             displayMessage = message.interactive.list_reply.title;
@@ -120,26 +119,26 @@ async function handleMessage(message, contact) {
             const fileName = `aud_${Date.now()}.ogg`;
             fs.writeFileSync(path.join(uploadsDir, fileName), audioBuffer);
             const transcricao = await transcreverAudioComGroq(audioBuffer);
-            textMessage = `[MEDIA:audio] /uploads/${fileName} | Transcrição: ${transcricao}`;
-            displayMessage = textMessage;
+            textMessage = transcricao || "(Áudio inaudível)"; // A IA VAI LER A TRANSCRIÇÃO
+            displayMessage = `[MEDIA:audio] /uploads/${fileName} | Transcrição: ${transcricao}`; // O CRM MOSTRA O PLAYER
         }
     } else if (message.type === 'image') {
         const imgBuffer = await downloadMedia(message.image.id);
         if (imgBuffer) {
             const fileName = `img_${Date.now()}.jpeg`;
             fs.writeFileSync(path.join(uploadsDir, fileName), imgBuffer);
-            const caption = message.image.caption ? ` | Transcrição: ${message.image.caption}` : '';
-            textMessage = `[MEDIA:image] /uploads/${fileName}${caption}`;
-            displayMessage = textMessage;
+            const caption = message.image.caption || '';
+            textMessage = caption || "(Imagem enviada)";
+            displayMessage = `[MEDIA:image] /uploads/${fileName}` + (caption ? ` | Transcrição: ${caption}` : '');
         }
     } else if (message.type === 'video') {
         const vidBuffer = await downloadMedia(message.video.id);
         if (vidBuffer) {
             const fileName = `vid_${Date.now()}.mp4`;
             fs.writeFileSync(path.join(uploadsDir, fileName), vidBuffer);
-            const caption = message.video.caption ? ` | Transcrição: ${message.video.caption}` : '';
-            textMessage = `[MEDIA:video] /uploads/${fileName}${caption}`;
-            displayMessage = textMessage;
+            const caption = message.video.caption || '';
+            textMessage = caption || "(Vídeo enviado)";
+            displayMessage = `[MEDIA:video] /uploads/${fileName}` + (caption ? ` | Transcrição: ${caption}` : '');
         }
     } else if (message.type === 'order') {
         const orderItems = message.order.product_items;
@@ -152,11 +151,11 @@ async function handleMessage(message, contact) {
             });
             let dbServicoId = servicosDb.length > 0 ? servicosDb[0].id.toString() : '1';
             textMessage = 'srv_' + dbServicoId;
-            displayMessage = "Encomenda pelo Catálogo";
+            displayMessage = "Encomenda feita pelo Catálogo";
         }
     }
 
-    if (!textMessage) return;
+    if (!textMessage && !displayMessage) return;
 
     try {
         const config = getSettings();
@@ -265,22 +264,13 @@ async function handleMessage(message, contact) {
             }
         }
 
-        // Se ele clicar num botão, anula qualquer passo anterior
         const isGlobalBtn = textMessage.startsWith('cmd_') || textMessage.startsWith('btn_');
-        if (isGlobalBtn) {
-            // Guarda o nome bonito no painel (ex: "Agendar" em vez de "cmd_agendar")
-            await prisma.mensagemIA.create({
-                data: {
-                    role: 'user',
-                    content: displayMessage,
-                    clienteId: senderNumber
-                }
-            });
 
+        if (isGlobalBtn) {
             userState.step = STEPS.MENU_PRINCIPAL;
             userState.data = {};
             stateMachine.set(senderNumber, userState);
-            await handleEstrategiaLLMSalvos(null, jid, textMessage, senderNumber, cliente.nome, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente);
+            await handleEstrategiaLLMSalvos(null, jid, textMessage, displayMessage, senderNumber, cliente.nome, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente);
             return;
         }
 
@@ -291,13 +281,6 @@ async function handleMessage(message, contact) {
             if (nomeExtraido.toUpperCase() === 'IGNORAR') {
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
-                await prisma.mensagemIA.create({
-                    data: {
-                        role: 'user',
-                        content: displayMessage,
-                        clienteId: senderNumber
-                    }
-                });
             } else {
                 const nomeFinal = nomeExtraido.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
                 await prisma.cliente.update({
@@ -311,6 +294,7 @@ async function handleMessage(message, contact) {
                 cliente.nome = nomeFinal;
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
+
                 await prisma.mensagemIA.create({
                     data: {
                         role: 'user',
@@ -362,19 +346,47 @@ async function handleMessage(message, contact) {
         if (cmdsIntuitosUI.includes(msgLower)) {
             userState.step = STEPS.MENU_PRINCIPAL;
             userState.data = {};
+            await prisma.mensagemIA.create({
+                data: {
+                    role: 'user',
+                    content: displayMessage,
+                    clienteId: senderNumber
+                }
+            });
             await sendMenu(null, jid);
         } else if (textMessage.startsWith('srv_')) {
             userState.step = STEPS.AGENDAMENTO_SERVICO;
             stateMachine.set(senderNumber, userState);
+            await prisma.mensagemIA.create({
+                data: {
+                    role: 'user',
+                    content: displayMessage,
+                    clienteId: senderNumber
+                }
+            });
             await handleAgendamento(null, jid, textMessage, senderNumber, stateMachine, STEPS);
         } else if (userState.step.startsWith('AGENDAMENTO_')) {
+            await prisma.mensagemIA.create({
+                data: {
+                    role: 'user',
+                    content: displayMessage,
+                    clienteId: senderNumber
+                }
+            });
             await handleAgendamento(null, jid, textMessage, senderNumber, stateMachine, STEPS);
         } else {
             switch (userState.step) {
                 case STEPS.MENU_PRINCIPAL:
-                    await handleEstrategiaLLMSalvos(null, jid, textMessage, senderNumber, cliente.nome, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente);
+                    await handleEstrategiaLLMSalvos(null, jid, textMessage, displayMessage, senderNumber, cliente.nome, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente);
                     break;
                 case STEPS.CANCELAR_AGENDAMENTO:
+                    await prisma.mensagemIA.create({
+                        data: {
+                            role: 'user',
+                            content: displayMessage,
+                            clienteId: senderNumber
+                        }
+                    });
                     await processarCancelamento(null, jid, textMessage, senderNumber, stateMachine, STEPS);
                     break;
                 default:
@@ -388,7 +400,17 @@ async function handleMessage(message, contact) {
     }
 }
 
-async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber, nomeCliente, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente) {
+async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, displayMessage, senderNumber, nomeCliente, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente) {
+
+    // Grava TUDO no banco de dados para o CRM ver bonito (Texto/Áudio/Nome do Botão)
+    await prisma.mensagemIA.create({
+        data: {
+            role: 'user',
+            content: displayMessage,
+            clienteId: senderNumber
+        }
+    });
+
     const option = textMessage.trim();
     switch (option) {
         case 'cmd_agendar':
@@ -434,14 +456,6 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
                 },
                 take: 4
             });
-            // Guarda a mensagem real no DB, mesmo se for texto solto
-            await prisma.mensagemIA.create({
-                data: {
-                    role: 'user',
-                    content: textMessage,
-                    clienteId: senderNumber
-                }
-            });
 
             let tempoPassado = "O cliente acabou de iniciar a conversa.";
             if (historicoCru.length > 0) {
@@ -452,6 +466,8 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
             }
 
             const infoTemporal = `Horário: ${horaMaputoStr} (${periodoDia}). ${tempoPassado} ${foraDoExpediente ? 'Barbearia FECHADA agora.' : 'Barbearia ABERTA.'}`;
+
+            // A IA analisa o textMessage limpo (se for áudio, lê a transcrição e não os links de media)
             const textIArid = await responderComGroq(textMessage, 0, historicoCru.reverse(), infoTemporal, nomeCliente);
             const intentCheck = textIArid.trim().toUpperCase().replace(/\s+/g, '');
 

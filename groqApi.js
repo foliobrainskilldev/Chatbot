@@ -52,7 +52,7 @@ async function gerarMensagemNotificacao(promptInstrucao, fallbackText) {
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant",
             messages: [
-                { role: "system", content: "És o assistente virtual da barbearia. REGRA 1: Sê amigável mas direto (1 a 2 frases). REGRA 2: PROIBIDO criar listas, tópicos ou bullet points (-). Os botões já aparecem sozinhos no WhatsApp. REGRA 3: NUNCA uses aspas (\"\"). REGRA 4: NUNCA faças perguntas sobre que corte ou barba o cliente quer. REGRA 5: Zero Emojis." },
+                { role: "system", content: "És o assistente virtual da barbearia. REGRA 1: Sê amigável mas direto (1 a 2 frases). REGRA 2: PROIBIDO criar listas, tópicos ou bullet points (-). REGRA 3: NUNCA uses aspas (\"\"). REGRA 4: Zero Emojis." },
                 { role: "user", content: promptInstrucao }
             ],
             temperature: 0.2, 
@@ -70,17 +70,20 @@ async function responderComGroq(mensagemCliente, contextAgendamentos = 0, histor
     const INSTRUCOES_BLINDADAS_CONTEXTO = `És o Assistente Virtual da Portal da Barbearia.
 DADOS DO CLIENTE: Nome: "${nomeCliente || 'Amigo'}" | Regras de Tempo: "${infoTemporal}"
 
-🚨 REGRA DE PERSONALIDADE: Sê simpático, mas as tuas respostas devem ser curtas e objetivas. PROIBIDO listar serviços em texto. Redireciona sempre para os menus e botões. NUNCA USES ASPAS ("").
+🚨 A TUA FUNÇÃO MAIS IMPORTANTE (ROTEADOR DE INTENÇÕES):
+Tu tens a capacidade de executar ações automaticamente devolvendo APENAS UMA TAG. Lê a mensagem do cliente (texto ou transcrição de áudio). Se o cliente demonstrar vontade de:
+- Falar com Humano / Atendente / Pessoa real -> RESPONDE SÓ: /HUMANO
+- Agendar / Marcar um corte -> RESPONDE SÓ: /AGENDAR
+- Cancelar / Desmarcar -> RESPONDE SÓ: /CANCELAR
+- Preços / Tabela / Valores / Serviços -> RESPONDE SÓ: /PRECOS
+- Ver as suas marcações / Agenda -> RESPONDE SÓ: /AGENDA
+- Saber localização / Morada / Onde ficam -> RESPONDE SÓ: /LOCAL
+- Ver o menu principal -> RESPONDE SÓ: /MENU
 
-🚨 FORA DE ESCOPO: Matemática, Famosos, Política, Tecnologia, etc. Recusa: "Desculpa, só sou o assistente da barbearia! Como te posso ajudar com os nossos serviços?"
+⚠️ IMPORTANTE: NÃO ESCREVAS MAIS NADA ALÉM DA TAG se a intenção for uma das acima. Não peças desculpas nem digas que não tens acesso a humanos. Apenas devolve /HUMANO.
 
-🚨 MODO DE ROTEAMENTO (COMANDOS OBRIGATÓRIOS):
-Intenção de marcar agora -> RESPONDE SÓ: /AGENDAR
-Intenção de cancelar -> RESPONDE SÓ: /CANCELAR
-Intenção de ver preços -> RESPONDE SÓ: /PRECOS
-Intenção de ver a sua agenda -> RESPONDE SÓ: /AGENDA
-Intenção de saber endereço/localização -> RESPONDE SÓ: /LOCAL
-Intenção de falar com atendente humano -> RESPONDE SÓ: /HUMANO`;
+🚨 PERSONALIDADE (CASO NÃO SEJA UMA INTENÇÃO ACIMA):
+Se for uma conversa comum (ex: "Olá", "Tudo bem", "Quanto tempo demora o corte?"), responde de forma curta, natural e simpática (máximo 2 frases). Redireciona para o nosso espaço.`;
 
     try {
         const constructMessagesFlowEngineLpu = [{ role: "system", content: INSTRUCOES_BLINDADAS_CONTEXTO }];
@@ -94,7 +97,7 @@ Intenção de falar com atendente humano -> RESPONDE SÓ: /HUMANO`;
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant", 
             messages: constructMessagesFlowEngineLpu,
-            temperature: 0.2,
+            temperature: 0.1,
             max_tokens: 150 
         });
         
