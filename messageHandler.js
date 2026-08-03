@@ -59,7 +59,7 @@ function getSettings() {
 }
 
 async function sendMenu(sockIgnorado, jid) {
-    // TEXTO FIXO - Sem IA
+    // TEXTO FIXO - Direto e objetivo conforme pediste
     const textoMenu = `Selecione uma das opções abaixo para prosseguir:`;
 
     await sendInteractiveMenu(null, jid, textoMenu, [{
@@ -160,7 +160,7 @@ async function handleMessage(message, contact) {
             return;
         }
 
-        // NOVO CÁLCULO DE HORA 100% PRECISO
+        // CÁLCULO RIGOROSO DA HORA EM MAPUTO
         const agora = new Date();
         const horaFormatoEn = agora.toLocaleString("en-US", {
             timeZone: "Africa/Maputo",
@@ -191,7 +191,7 @@ async function handleMessage(message, contact) {
             data: {}
         };
 
-        // 1ª INTERAÇÃO: IA gera as boas vindas humanizadas
+        // 1ª INTERAÇÃO: IA gera as boas vindas humanizadas E GUARDA NA MEMÓRIA PARA NÃO REPETIR
         if ((!cliente.nome || cliente.nome === 'Sem Nome') && userState.step === STEPS.MENU_PRINCIPAL) {
             const historicoCru = await prisma.mensagemIA.count({
                 where: {
@@ -205,16 +205,25 @@ async function handleMessage(message, contact) {
                 const promptSaudacao = `Escreve EXATAMENTE esta frase, substituindo apenas a saudação pela hora certa: "${periodoDia}! Sou o assistente da Portal da Barbearia. Para que o nosso atendimento seja mais amigável, como posso te chamar?". PROIBIDO usar aspas ("").`;
                 const msgSaudacao = await gerarMensagemNotificacao(promptSaudacao, `${periodoDia}! Sou o assistente da Portal da Barbearia. Para que o nosso atendimento seja mais amigável, como posso te chamar?`);
 
+                // GRAVAR A SAUDAÇÃO NO HISTÓRICO - ISTO RESOLVE O LOOP!
+                await prisma.mensagemIA.create({
+                    data: {
+                        role: 'assistant',
+                        content: msgSaudacao,
+                        clienteId: senderNumber
+                    }
+                });
+
                 await sendInteractiveMenu(null, jid, msgSaudacao, [{
                         id: 'cmd_menu',
                         title: 'Menu Principal'
                     },
                     {
-                        id: 'btn_servicos',
+                        id: 'cmd_precos',
                         title: 'Serviços e preços'
                     },
                     {
-                        id: 'btn_equipe',
+                        id: 'cmd_humano',
                         title: 'Falar com atendente'
                     }
                 ]);
@@ -222,11 +231,18 @@ async function handleMessage(message, contact) {
             }
         }
 
-        // BLINDAGEM DE BOTÕES GLOBAIS: Se o cliente clicou num botão do menu, ABORTA TUDO e obedece
+        // BLINDAGEM CONTRA CHOQUE DE BOTÕES (Se clicar num botão do menu, apaga qualquer passo pendente)
         const isGlobalBtn = textMessage.startsWith('cmd_') || textMessage.startsWith('btn_');
 
         if (isGlobalBtn) {
-            // Removemos o estado de "Pedir Nome" ou "Agendar" se ele clicou num botão!
+            await prisma.mensagemIA.create({
+                data: {
+                    role: 'user',
+                    content: textMessage,
+                    clienteId: senderNumber
+                }
+            });
+
             userState.step = STEPS.MENU_PRINCIPAL;
             userState.data = {};
             stateMachine.set(senderNumber, userState);
@@ -234,12 +250,12 @@ async function handleMessage(message, contact) {
             return;
         }
 
-        // 2ª INTERAÇÃO: Avalia se ele escreveu o nome (Caso não tenha clicado em botões)
+        // 2ª INTERAÇÃO: Avalia o Nome digitado (Se não tiver clicado em botões)
         if (userState.step === STEPS.PEDIR_NOME) {
             const nomeExtraido = await extrairNomeComGroq(textMessage);
 
             if (nomeExtraido.toUpperCase() === 'IGNORAR') {
-                // NÃO GRAVA "AMIGO" NO DB! Apenas reverte o estado.
+                // NÃO GRAVA "AMIGO" NA BD! Fica como está (Sem Nome).
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
                 await prisma.mensagemIA.create({
@@ -249,7 +265,9 @@ async function handleMessage(message, contact) {
                         clienteId: senderNumber
                     }
                 });
+                // Não há "return", ele continua para baixo para processar a intenção do cliente!
             } else {
+                // Grava o nome real que o cliente disse
                 const nomeFinal = nomeExtraido.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
                 await prisma.cliente.update({
                     where: {
@@ -271,6 +289,7 @@ async function handleMessage(message, contact) {
                 });
 
                 const txtBoasVindas = `Muito prazer, ${nomeFinal}! Selecione uma das opções abaixo para prosseguir:`;
+
                 await sendInteractiveMenu(null, jid, txtBoasVindas, [{
                         id: 'cmd_agendar',
                         title: 'Agendar',
@@ -334,7 +353,9 @@ async function handleMessage(message, contact) {
                     break;
             }
         }
-    } catch (error) {}
+    } catch (error) {
+        console.error(`❌ Erro no Engine Central:`, error);
+    }
 }
 
 async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber, nomeCliente, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente) {
