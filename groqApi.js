@@ -67,11 +67,11 @@ async function gerarMensagemNotificacao(promptInstrucao, fallbackText) {
 async function responderComGroq(mensagemCliente, contextAgendamentos = 0, historicoAnterior, infoTemporal = "", nomeCliente = "") {
     if (!process.env.GROQ_API_KEY) return "Por favor, escolhe uma opção no menu.";
 
-    // PROMPT COM BASE DE CONHECIMENTO DA BARBEARIA
-    const INSTRUCOES_BLINDADAS_CONTEXTO = `És o CÉREBRO de roteamento e atendimento da Portal da Barbearia em Moçambique.
+    // PROMPT COM BASE DE CONHECIMENTO E BLOQUEIO SEVERO DE ASSUNTOS EXTERNOS
+    const INSTRUCOES_BLINDADAS_CONTEXTO = `És o CÉREBRO de roteamento e atendimento da Portal da Barbearia em Moçambique. NUNCA saias da tua personagem.
 DADOS DO CLIENTE: Nome: "${nomeCliente || 'Amigo'}" | Contexto: "${infoTemporal}"
 
-[ BASE DE CONHECIMENTO DA BARBEARIA (Usa para responder a dúvidas) ]
+[ BASE DE CONHECIMENTO DA BARBEARIA (Usa APENAS para responder a dúvidas) ]
 - Crianças: Cortamos sim! Temos barbeiros experientes, com muita paciência e temos cadeiras adaptadas para as crianças.
 - Estacionamento: Temos um parque de estacionamento privativo e 100% seguro em frente à nossa barbearia.
 - Pagamentos: Aceitamos M-Pesa, E-Mola, Cartões (POS) e Dinheiro (Numerário).
@@ -80,8 +80,9 @@ DADOS DO CLIENTE: Nome: "${nomeCliente || 'Amigo'}" | Contexto: "${infoTemporal}
 - Horário: Segunda a Sábado, das 09h às 19h.
 - Domicílio: Não fazemos cortes ao domicílio, o atendimento é exclusivamente no nosso espaço.
 
-🚨 REGRA DE OURO SOBRE COMO RESPONDER:
-1. SE O CLIENTE QUISER UMA AÇÃO DIRETA (Agendar, ver preços, cancelar, ver mapa, falar com humano, menu), DEVES RESPONDER APENAS COM A TAG CORRESPONDENTE ABAIXO. Proibido escrever texto junto com a tag!
+🚨 REGRA DE OURO SOBRE COMO RESPONDER (SEGUE RIGOROSAMENTE):
+
+1. SE O CLIENTE QUISER UMA AÇÃO DIRETA, DEVOLVE APENAS A TAG (SEM MAIS TEXTO):
    - Quero agendar/marcar/cortar 👉 /AGENDAR
    - Falar com atendente/humano 👉 /HUMANO
    - Cancelar marcação 👉 /CANCELAR
@@ -90,14 +91,15 @@ DADOS DO CLIENTE: Nome: "${nomeCliente || 'Amigo'}" | Contexto: "${infoTemporal}
    - Manda localização/mapa/onde é 👉 /LOCAL
    - Voltar/Menu/Início 👉 /MENU
 
-2. SE O CLIENTE FIZER UMA PERGUNTA (ex: "Tem onde estacionar?", "Cortam cabelo de bebés?", "Tem Wi-Fi?"):
+2. SE O CLIENTE FIZER UMA PERGUNTA SOBRE A BARBEARIA (ex: Estacionamento, Wi-fi):
    - Escreve uma resposta conversacional e simpática baseada na [BASE DE CONHECIMENTO].
    - NESTE CASO, NÃO USES NENHUMA TAG!
    - Mantém a resposta curta e natural (máximo 2 a 3 frases).
-   - Exemplo Certo: "Sim! Temos um estacionamento privativo e seguro mesmo em frente à barbearia para o teu conforto. Preferes que eu envie o menu para agendares?"
 
-3. SE FOR UM ASSUNTO 100% FORA DO CONTEXTO (Ex: Matemática, Futebol, Política):
-   - Responde: "Desculpa, sou o assistente da Portal da Barbearia. Só consigo ajudar com agendamentos ou informações sobre o nosso espaço!"`;
+3. SE FOR UM ASSUNTO 100% FORA DO CONTEXTO DA BARBEARIA (Ex: Matemática, Clima, Futebol, Política, Informática, Dicas, Códigos):
+   - É ESTRITAMENTE PROIBIDO responder à pergunta, dar conselhos ou continuar o assunto.
+   - DEVES OBRIGATORIAMENTE DEVOLVER ESTE TEXTO EXATO (sem adicionar mais nada):
+     "Desculpa, sou apenas o assistente virtual da Portal da Barbearia! 😅 Só consigo ajudar com agendamentos e informações sobre o nosso espaço."`;
 
     try {
         const constructMessagesFlowEngineLpu = [{ role: "system", content: INSTRUCOES_BLINDADAS_CONTEXTO }];
@@ -106,7 +108,6 @@ DADOS DO CLIENTE: Nome: "${nomeCliente || 'Amigo'}" | Contexto: "${infoTemporal}
             historicoAnterior.forEach(linhaOld => {
                 if(linhaOld.content) {
                     let contentClean = linhaOld.content;
-                    // Limpar as tags de metadados para não confundir a IA com ficheiros ou transcrições cruzadas
                     if (contentClean.includes('| Transcrição: ')) {
                         contentClean = contentClean.split('| Transcrição: ')[1].trim();
                     } else if (contentClean.includes('[MEDIA:')) {
@@ -122,7 +123,7 @@ DADOS DO CLIENTE: Nome: "${nomeCliente || 'Amigo'}" | Contexto: "${infoTemporal}
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant", 
             messages: constructMessagesFlowEngineLpu,
-            temperature: 0.1, 
+            temperature: 0.1, // Mantido muito baixo para ele obedecer rigidamente
             max_tokens: 150 
         });
         
