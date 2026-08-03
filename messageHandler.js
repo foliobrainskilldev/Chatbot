@@ -225,6 +225,10 @@ async function handleMessage(message, contact) {
             data: {}
         };
 
+        // ALARME DE RECUPERAÇÃO ATIVADO: Guarda a hora exata da interação do cliente para o CronJob atuar se ele desaparecer
+        userState.lastActive = Date.now();
+        userState.notified = false;
+
         if ((!cliente.nome || cliente.nome === 'Sem Nome') && userState.step === STEPS.MENU_PRINCIPAL) {
             const historicoCru = await prisma.mensagemIA.count({
                 where: {
@@ -463,6 +467,7 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, display
             // Filtramos a mensagem que acabámos de gravar para não enviarmos duplicado para a IA ler
             const historicoAnterior = historicoCru.filter(msg => msg.id !== novaMensagem.id).reverse();
 
+            // LÓGICA DE MEMÓRIA E TEMPO: O bot percebe o contexto temporal aqui
             let tempoPassado = "O cliente acabou de iniciar a conversa.";
             if (historicoAnterior.length > 0) {
                 const diffMins = Math.floor((Date.now() - new Date(historicoAnterior[historicoAnterior.length - 1].criadoEm).getTime()) / 60000);
