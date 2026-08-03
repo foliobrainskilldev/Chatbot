@@ -1,8 +1,7 @@
-// --- START OF FILE whatsappApi.js ---
 const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
-const path = require('path'); // NOVO IMPORT
+const path = require('path'); 
 
 const META_TOKEN = process.env.META_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
@@ -15,18 +14,32 @@ const api = axios.create({
     }
 });
 
-async function markAsReadAndTyping(messageId) {
+// CORREÇÃO DO TYPING INDICATOR (COM BASE NAS REGRAS META 2026)
+async function markAsReadAndTyping(messageId, to) {
     if (!messageId) return;
     try {
+        // 1. Marca a mensagem como LIDA (Blue Ticks)
         await api.post('/messages', {
             messaging_product: 'whatsapp',
             status: 'read',
-            message_id: messageId,
-            typing_indicator: {
-                type: 'text'
-            }
+            message_id: messageId
         });
-    } catch (error) {}
+
+        // 2. Envia o estado "A escrever..." (Typing Indicator) separadamente
+        if (to) {
+            await api.post('/messages', {
+                messaging_product: 'whatsapp',
+                recipient_type: 'individual',
+                to: to,
+                type: 'typing_indicator',
+                typing_indicator: {
+                    type: 'text'
+                }
+            });
+        }
+    } catch (error) {
+        // Ignora erros silenciosos da API da Meta
+    }
 }
 
 async function sendText(to, text) {
@@ -144,11 +157,10 @@ async function downloadMedia(mediaId) {
     }
 }
 
-// CORREÇÃO: Força o nome do ficheiro e a extensão para a Meta não rejeitar
 async function uploadMediaToMeta(filePath, mimeType) {
     try {
         const form = new FormData();
-        const fileName = path.basename(filePath); // Ex: 1700000.jpg
+        const fileName = path.basename(filePath); 
 
         form.append('file', fs.createReadStream(filePath), {
             filename: fileName,
@@ -198,4 +210,3 @@ module.exports = {
     uploadMediaToMeta,
     sendMediaMessage
 };
-// --- END OF FILE whatsappApi.js ---

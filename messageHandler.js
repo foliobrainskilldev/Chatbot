@@ -100,7 +100,8 @@ async function handleMessage(message, contact) {
     let displayMessage = "";
     const jid = senderNumber;
 
-    if (message.id) await markAsReadAndTyping(message.id);
+    // CORREÇÃO AQUI: Passamos o ID e o senderNumber para acionar o Visto Azul + "A Escrever..."
+    if (message.id) await markAsReadAndTyping(message.id, senderNumber);
 
     if (message.type === 'text') {
         textMessage = message.text.body;
