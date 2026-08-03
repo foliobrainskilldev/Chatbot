@@ -11,7 +11,7 @@ async function iniciarCancelamento(sockIgnorado, jid, senderNumber, stateMachine
     });
 
     if (agendamentos.length === 0) {
-        const txtVazio = await gerarMensagemNotificacao(`Diz APENAS: "Não tens nenhum agendamento para cancelar."`, `Não tens nenhum agendamento para cancelar.`);
+        const txtVazio = await gerarMensagemNotificacao(`Informa o cliente de forma gentil e direta que ele não possui nenhum agendamento futuro para cancelar no momento.`, `Não tens nenhum agendamento para cancelar de momento.`);
         await sendDelayedText(null, jid, txtVazio);
         stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
         return;
@@ -23,7 +23,7 @@ async function iniciarCancelamento(sockIgnorado, jid, senderNumber, stateMachine
     opcoes.push({ id: '0', title: 'Voltar ao Menu' });
 
     stateMachine.set(senderNumber, { step: STEPS.CANCELAR_AGENDAMENTO, data: { agendamentos } });
-    const txtCanc = await gerarMensagemNotificacao(`Diz APENAS: "Qual horário pretendes cancelar?"`, `Qual horário pretendes cancelar?`);
+    const txtCanc = await gerarMensagemNotificacao(`Pede ao cliente, de forma amável, para selecionar na lista qual dos horários ele pretende cancelar.`, `Qual destes horários pretendes cancelar?`);
     await sendInteractiveMenu(null, jid, txtCanc, opcoes);
 }
 
@@ -39,13 +39,13 @@ async function processarCancelamento(sockIgnorado, jid, textMessage, senderNumbe
 
     const agendamentoAlvo = userState.data.agendamentos[escolha - 1];
     if (!agendamentoAlvo) {
-        await sendDelayedText(null, jid, 'Opção inválida.');
+        await sendDelayedText(null, jid, 'Opção inválida. Escolhe a opção correta na lista.');
         return;
     }
 
     await prisma.agendamento.update({ where: { id: agendamentoAlvo.id }, data: { status: 'CANCELADO' } });
 
-    const txtFim = await gerarMensagemNotificacao(`Diz APENAS: "✅ Agendamento cancelado com sucesso!"`, `✅ Agendamento cancelado com sucesso!`);
+    const txtFim = await gerarMensagemNotificacao(`Confirma de forma simpática e breve que o agendamento foi cancelado com sucesso.`, `✅ O teu agendamento foi cancelado com sucesso.`);
     await sendDelayedText(null, jid, txtFim);
     stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
 }

@@ -52,11 +52,11 @@ async function gerarMensagemNotificacao(promptInstrucao, fallbackText) {
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant",
             messages: [
-                { role: "system", content: "És um assistente de barbearia EXTREMAMENTE OBJETIVO. REGRA 1: As tuas respostas devem ter NO MÁXIMO 1 frase e 15 palavras. REGRA 2: VAI DIRETO AO PONTO. ZERO explicações. REGRA 3: NENHUM EMOJI EM HIPÓTESE ALGUMA." },
+                { role: "system", content: "És o assistente virtual da barbearia. Sê amigável, natural e direto ao assunto. As tuas respostas devem ser curtas e objetivas (1 a 2 frases no máximo), sem enrolar. REGRA ABSOLUTA: NÃO USE EMOJIS EM HIPÓTESE ALGUMA." },
                 { role: "user", content: promptInstrucao }
             ],
-            temperature: 0.2, 
-            max_tokens: 50
+            temperature: 0.4, 
+            max_tokens: 70
         });
         return resposta.choices[0]?.message?.content.trim() || fallbackText;
     } catch (erro) {
@@ -70,9 +70,9 @@ async function responderComGroq(mensagemCliente, contextAgendamentos = 0, histor
     const INSTRUCOES_BLINDADAS_CONTEXTO = `És o Assistente Virtual da Portal da Barbearia.
 DADOS DO CLIENTE: Nome: "${nomeCliente || 'Amigo'}" | Regras de Tempo: "${infoTemporal}"
 
-🚨 REGRA DE PERSONALIDADE: As tuas respostas devem ser EXTREMAMENTE CURTAS (máximo 20 palavras). Responde diretamente sem justificações.
+🚨 REGRA DE PERSONALIDADE: Sê simpático e prestável, mas as tuas respostas devem ser naturais, curtas e diretas ao assunto (máximo 2 frases). Evita textos longos.
 
-🚨 FORA DE ESCOPO: Se perguntarem sobre Matemática, Famosos, Política, Tecnologia, etc, recusa IMEDIATAMENTE e de forma MUITO CURTA: "Só falo sobre a barbearia. Como ajudo com o teu visual?"
+🚨 FORA DE ESCOPO: Se perguntarem sobre Matemática, Famosos, Política, Tecnologia, etc, recusa de forma educada e breve: "Desculpa, mas eu sou apenas o assistente da barbearia! Só consigo ajudar com agendamentos e dúvidas sobre o nosso espaço."
 
 🚨 MODO DE ROTEAMENTO (COMANDOS OBRIGATÓRIOS):
 Intenção de marcar agora -> RESPONDE SÓ: /AGENDAR
@@ -94,7 +94,7 @@ Intenção de falar com atendente humano -> RESPONDE SÓ: /HUMANO`;
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant", 
             messages: constructMessagesFlowEngineLpu,
-            temperature: 0.1,
+            temperature: 0.2,
             max_tokens: 150 
         });
         
