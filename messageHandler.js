@@ -59,7 +59,6 @@ function getSettings() {
 }
 
 async function sendMenu(sockIgnorado, jid) {
-    // TEXTO FIXO - Direto e objetivo conforme pediste
     const textoMenu = `Selecione uma das opções abaixo para prosseguir:`;
 
     await sendInteractiveMenu(null, jid, textoMenu, [{
@@ -98,14 +97,50 @@ async function sendMenu(sockIgnorado, jid) {
 async function handleMessage(message, contact) {
     const senderNumber = message.from;
     let textMessage = "";
+    let displayMessage = ""; // NOVO: Variável que guarda o texto bonito para o Painel
     const jid = senderNumber;
 
     if (message.id) await markAsReadAndTyping(message.id);
 
-    if (message.type === 'text') textMessage = message.text.body;
-    else if (message.type === 'interactive') {
-        if (message.interactive.type === 'button_reply') textMessage = message.interactive.button_reply.id;
-        else if (message.interactive.type === 'list_reply') textMessage = message.interactive.list_reply.id;
+    // RESTAURAÇÃO: Mídia e Tradução dos Textos dos Botões
+    if (message.type === 'text') {
+        textMessage = message.text.body;
+        displayMessage = textMessage;
+    } else if (message.type === 'interactive') {
+        if (message.interactive.type === 'button_reply') {
+            textMessage = message.interactive.button_reply.id;
+            displayMessage = message.interactive.button_reply.title; // Salva "Agendar" em vez de "cmd_agendar"
+        } else if (message.interactive.type === 'list_reply') {
+            textMessage = message.interactive.list_reply.id;
+            displayMessage = message.interactive.list_reply.title;
+        }
+    } else if (message.type === 'audio') {
+        const audioBuffer = await downloadMedia(message.audio.id);
+        if (audioBuffer) {
+            const fileName = `aud_${Date.now()}.ogg`;
+            fs.writeFileSync(path.join(uploadsDir, fileName), audioBuffer);
+            const transcricao = await transcreverAudioComGroq(audioBuffer);
+            textMessage = `[MEDIA:audio] /uploads/${fileName} | Transcrição: ${transcricao}`;
+            displayMessage = textMessage;
+        }
+    } else if (message.type === 'image') {
+        const imgBuffer = await downloadMedia(message.image.id);
+        if (imgBuffer) {
+            const fileName = `img_${Date.now()}.jpeg`;
+            fs.writeFileSync(path.join(uploadsDir, fileName), imgBuffer);
+            const caption = message.image.caption ? ` | Transcrição: ${message.image.caption}` : '';
+            textMessage = `[MEDIA:image] /uploads/${fileName}${caption}`;
+            displayMessage = textMessage;
+        }
+    } else if (message.type === 'video') {
+        const vidBuffer = await downloadMedia(message.video.id);
+        if (vidBuffer) {
+            const fileName = `vid_${Date.now()}.mp4`;
+            fs.writeFileSync(path.join(uploadsDir, fileName), vidBuffer);
+            const caption = message.video.caption ? ` | Transcrição: ${message.video.caption}` : '';
+            textMessage = `[MEDIA:video] /uploads/${fileName}${caption}`;
+            displayMessage = textMessage;
+        }
     } else if (message.type === 'order') {
         const orderItems = message.order.product_items;
         if (orderItems && orderItems.length > 0) {
@@ -117,6 +152,7 @@ async function handleMessage(message, contact) {
             });
             let dbServicoId = servicosDb.length > 0 ? servicosDb[0].id.toString() : '1';
             textMessage = 'srv_' + dbServicoId;
+            displayMessage = "Encomenda pelo Catálogo";
         }
     }
 
@@ -149,7 +185,7 @@ async function handleMessage(message, contact) {
             const novaMsg = await prisma.mensagemIA.create({
                 data: {
                     role: 'user',
-                    content: textMessage,
+                    content: displayMessage,
                     clienteId: senderNumber
                 }
             });
@@ -160,7 +196,6 @@ async function handleMessage(message, contact) {
             return;
         }
 
-        // CÁLCULO RIGOROSO DA HORA EM MAPUTO
         const agora = new Date();
         const horaFormatoEn = agora.toLocaleString("en-US", {
             timeZone: "Africa/Maputo",
@@ -191,7 +226,7 @@ async function handleMessage(message, contact) {
             data: {}
         };
 
-        // 1ª INTERAÇÃO: IA gera as boas vindas humanizadas E GUARDA NA MEMÓRIA PARA NÃO REPETIR
+        // 1ª INTERAÇÃO
         if ((!cliente.nome || cliente.nome === 'Sem Nome') && userState.step === STEPS.MENU_PRINCIPAL) {
             const historicoCru = await prisma.mensagemIA.count({
                 where: {
@@ -205,7 +240,6 @@ async function handleMessage(message, contact) {
                 const promptSaudacao = `Escreve EXATAMENTE esta frase, substituindo apenas a saudação pela hora certa: "${periodoDia}! Sou o assistente da Portal da Barbearia. Para que o nosso atendimento seja mais amigável, como posso te chamar?". PROIBIDO usar aspas ("").`;
                 const msgSaudacao = await gerarMensagemNotificacao(promptSaudacao, `${periodoDia}! Sou o assistente da Portal da Barbearia. Para que o nosso atendimento seja mais amigável, como posso te chamar?`);
 
-                // GRAVAR A SAUDAÇÃO NO HISTÓRICO - ISTO RESOLVE O LOOP!
                 await prisma.mensagemIA.create({
                     data: {
                         role: 'assistant',
@@ -231,14 +265,14 @@ async function handleMessage(message, contact) {
             }
         }
 
-        // BLINDAGEM CONTRA CHOQUE DE BOTÕES (Se clicar num botão do menu, apaga qualquer passo pendente)
+        // Se ele clicar num botão, anula qualquer passo anterior
         const isGlobalBtn = textMessage.startsWith('cmd_') || textMessage.startsWith('btn_');
-
         if (isGlobalBtn) {
+            // Guarda o nome bonito no painel (ex: "Agendar" em vez de "cmd_agendar")
             await prisma.mensagemIA.create({
                 data: {
                     role: 'user',
-                    content: textMessage,
+                    content: displayMessage,
                     clienteId: senderNumber
                 }
             });
@@ -250,24 +284,21 @@ async function handleMessage(message, contact) {
             return;
         }
 
-        // 2ª INTERAÇÃO: Avalia o Nome digitado (Se não tiver clicado em botões)
+        // 2ª INTERAÇÃO
         if (userState.step === STEPS.PEDIR_NOME) {
             const nomeExtraido = await extrairNomeComGroq(textMessage);
 
             if (nomeExtraido.toUpperCase() === 'IGNORAR') {
-                // NÃO GRAVA "AMIGO" NA BD! Fica como está (Sem Nome).
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
                 await prisma.mensagemIA.create({
                     data: {
                         role: 'user',
-                        content: textMessage,
+                        content: displayMessage,
                         clienteId: senderNumber
                     }
                 });
-                // Não há "return", ele continua para baixo para processar a intenção do cliente!
             } else {
-                // Grava o nome real que o cliente disse
                 const nomeFinal = nomeExtraido.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
                 await prisma.cliente.update({
                     where: {
@@ -283,13 +314,12 @@ async function handleMessage(message, contact) {
                 await prisma.mensagemIA.create({
                     data: {
                         role: 'user',
-                        content: textMessage,
+                        content: displayMessage,
                         clienteId: senderNumber
                     }
                 });
 
                 const txtBoasVindas = `Muito prazer, ${nomeFinal}! Selecione uma das opções abaixo para prosseguir:`;
-
                 await sendInteractiveMenu(null, jid, txtBoasVindas, [{
                         id: 'cmd_agendar',
                         title: 'Agendar',
@@ -404,6 +434,7 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
                 },
                 take: 4
             });
+            // Guarda a mensagem real no DB, mesmo se for texto solto
             await prisma.mensagemIA.create({
                 data: {
                     role: 'user',
