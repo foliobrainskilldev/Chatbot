@@ -1,34 +1,60 @@
-const { prisma } = require('./db');
-const { getProximosDiasUteis, getHorariosDisponiveis } = require('./dateUtils');
-const { parse } = require('date-fns');
-const { sendInteractiveMenu, sendDelayedText } = require('./botUtils');
-const { sendProductList } = require('./whatsappApi');
+const {
+    prisma
+} = require('./db');
+const {
+    getProximosDiasUteis,
+    getHorariosDisponiveis
+} = require('./dateUtils');
+const {
+    parse
+} = require('date-fns');
+const {
+    sendInteractiveMenu,
+    sendDelayedText
+} = require('./botUtils');
+const {
+    sendProductList
+} = require('./whatsappApi');
 
 async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, stateMachine, STEPS) {
     const userState = stateMachine.get(senderNumber);
     const step = userState.step;
-    const msg = textMessage.trim();
+    let msg = textMessage.trim();
 
     if (msg === '0') {
-        stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
+        stateMachine.set(senderNumber, {
+            step: STEPS.MENU_PRINCIPAL,
+            data: {}
+        });
         await sendDelayedText(null, jid, 'Operação cancelada. A voltar ao menu...');
         return;
     }
 
     switch (step) {
         case STEPS.AGENDAMENTO_SERVICO: {
+            if (msg.startsWith('srv_')) msg = msg.replace('srv_', '');
+
             const servicos = await prisma.servico.findMany();
             const servicoEscolhido = servicos.find(s => s.id.toString() === msg);
             if (!servicoEscolhido) {
-                await sendDelayedText(null, jid, '⚠️ Escolha inválida. Por favor, tenta novamente no catálogo ou digita 0.');
+                await sendDelayedText(null, jid, '⚠️ Escolha inválida. Por favor, seleciona pelo catálogo ou digita 0 para cancelar.');
                 return;
             }
             userState.data.servico = servicoEscolhido;
             userState.step = STEPS.AGENDAMENTO_BARBEIRO;
 
             const barbeiros = await prisma.barbeiro.findMany();
-            let optBarbeiros = barbeiros.map(b => ({ id: b.id.toString(), title: b.nome }));
-            optBarbeiros.push({ id: 'qualquer', title: 'Qualquer um' }, { id: '0', title: 'Cancelar' });
+            let optBarbeiros = barbeiros.map(b => ({
+                id: `barb_${b.id}`,
+                title: b.nome
+            }));
+            optBarbeiros.push({
+                id: 'barb_qualquer',
+                title: 'Qualquer um'
+            }, {
+                id: '0',
+                title: 'Cancelar'
+            });
 
             const txtBarbeiro = "Boa escolha! Preferes ser atendido por qual barbeiro?";
             await sendInteractiveMenu(null, jid, txtBarbeiro, optBarbeiros);
@@ -36,12 +62,14 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
         }
 
         case STEPS.AGENDAMENTO_BARBEIRO: {
+            if (msg.startsWith('barb_')) msg = msg.replace('barb_', '');
+
             const barbs = await prisma.barbeiro.findMany();
             let barbeiroSelecionado = null;
             if (msg !== 'qualquer') {
                 barbeiroSelecionado = barbs.find(b => b.id.toString() === msg);
                 if (!barbeiroSelecionado && msg !== '0') {
-                    await sendDelayedText(null, jid, '⚠️ Escolha inválida. Usa os botões ou digita 0.');
+                    await sendDelayedText(null, jid, '⚠️ Escolha inválida. Usa os botões ou digita 0 para cancelar.');
                     return;
                 }
             }
@@ -50,8 +78,14 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
 
             const dias = getProximosDiasUteis(5);
             userState.data.diasDisponiveis = dias;
-            let optDias = dias.map(d => ({ id: d, title: d }));
-            optDias.push({ id: '0', title: 'Cancelar' });
+            let optDias = dias.map(d => ({
+                id: d,
+                title: d
+            }));
+            optDias.push({
+                id: '0',
+                title: 'Cancelar'
+            });
 
             const txtData = "Perfeito! Escolhe a data nos botões abaixo:";
             await sendInteractiveMenu(null, jid, txtData, optDias);
@@ -61,7 +95,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
         case STEPS.AGENDAMENTO_DATA: {
             const diasDisp = userState.data.diasDisponiveis;
             if (!diasDisp.includes(msg)) {
-                await sendDelayedText(null, jid, '⚠️ Data inválida. Escolhe nos botões ou digita 0.');
+                await sendDelayedText(null, jid, '⚠️ Data inválida. Escolhe nos botões ou digita 0 para cancelar.');
                 return;
             }
 
@@ -72,15 +106,27 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
             if (horasLivres.length === 0) {
                 userState.step = STEPS.AGENDAMENTO_DATA;
                 const semH = "Infelizmente, a agenda está cheia para esse dia. Podes escolher outra data?";
-                let optDiasRetry = diasDisp.map(d => ({ id: d, title: d }));
-                optDiasRetry.push({ id: '0', title: 'Cancelar' });
+                let optDiasRetry = diasDisp.map(d => ({
+                    id: d,
+                    title: d
+                }));
+                optDiasRetry.push({
+                    id: '0',
+                    title: 'Cancelar'
+                });
                 await sendInteractiveMenu(null, jid, semH, optDiasRetry);
                 return;
             }
 
             userState.data.horasLivres = horasLivres;
-            let optHoras = horasLivres.map(h => ({ id: h, title: h }));
-            optHoras.push({ id: '0', title: 'Cancelar' });
+            let optHoras = horasLivres.map(h => ({
+                id: h,
+                title: h
+            }));
+            optHoras.push({
+                id: '0',
+                title: 'Cancelar'
+            });
 
             const txtHora = `Certo! Para o dia ${msg}, seleciona o horário pretendido:`;
             await sendInteractiveMenu(null, jid, txtHora, optHoras);
@@ -101,7 +147,13 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
             const txtIntro = "Estamos quase lá! Por favor, confirma se está tudo certinho:";
             const resumo = `${txtIntro}\n\n✂️ Serviço: ${srv.nome}\n💈 Barbeiro: ${brb}\n📅 Data: ${userState.data.dataString}\n🕑 Hora: ${msg}`;
 
-            await sendInteractiveMenu(null, jid, resumo, [{ id: '1', title: 'Confirmar' }, { id: '0', title: 'Cancelar' }]);
+            await sendInteractiveMenu(null, jid, resumo, [{
+                id: '1',
+                title: 'Confirmar'
+            }, {
+                id: '0',
+                title: 'Cancelar'
+            }]);
             break;
         }
 
@@ -109,15 +161,26 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
             if (msg === '1') {
                 const dataHoraDb = parse(`${userState.data.dataString} ${userState.data.horaString}`, 'dd/MM/yyyy HH:mm', new Date());
                 await prisma.agendamento.create({
-                    data: { dataHora: dataHoraDb, clienteId: senderNumber, servicoId: userState.data.servico.id, barbeiroId: userState.data.barbeiro?.id || null }
+                    data: {
+                        dataHora: dataHoraDb,
+                        clienteId: senderNumber,
+                        servicoId: userState.data.servico.id,
+                        barbeiroId: userState.data.barbeiro?.id || null
+                    }
                 });
 
                 const txtSucesso = "✅ Agendamento confirmado! Aguardamos a tua visita.\n(Para voltares, digita \"Menu\").";
                 await sendDelayedText(null, jid, txtSucesso);
-                stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
+                stateMachine.set(senderNumber, {
+                    step: STEPS.MENU_PRINCIPAL,
+                    data: {}
+                });
             } else if (msg === '0') {
-                stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
-                await sendDelayedText(null, jid, 'Agendamento cancelado.');
+                stateMachine.set(senderNumber, {
+                    step: STEPS.MENU_PRINCIPAL,
+                    data: {}
+                });
+                await sendDelayedText(null, jid, 'Agendamento cancelado com sucesso.');
             }
             break;
         }
@@ -126,7 +189,13 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
 
 async function iniciarAgendamento(sockIgnorado, jid, senderNumber, stateMachine, STEPS) {
     const agendamentos = await prisma.agendamento.count({
-        where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } }
+        where: {
+            clienteId: senderNumber,
+            status: 'AGENDADO',
+            dataHora: {
+                gte: new Date()
+            }
+        }
     });
 
     if (agendamentos >= 2) {
@@ -134,15 +203,23 @@ async function iniciarAgendamento(sockIgnorado, jid, senderNumber, stateMachine,
         return;
     }
 
-    stateMachine.set(senderNumber, { step: STEPS.AGENDAMENTO_SERVICO, data: {} });
+    stateMachine.set(senderNumber, {
+        step: STEPS.AGENDAMENTO_SERVICO,
+        data: {}
+    });
     const txtCat = "Vamos agendar! Escolhe o serviço abaixo que preferes:";
 
     const sections = [{
         title: "Cortes e Barboterapia",
-        product_items: [
-            { product_retailer_id: process.env.PRODUTO_1_ID || "h5fj6325da" },
-            { product_retailer_id: process.env.PRODUTO_2_ID || "8pdji0vdor" },
-            { product_retailer_id: process.env.PRODUTO_3_ID || "af2o2iuwey" }
+        product_items: [{
+                product_retailer_id: process.env.PRODUTO_1_ID || "h5fj6325da"
+            },
+            {
+                product_retailer_id: process.env.PRODUTO_2_ID || "8pdji0vdor"
+            },
+            {
+                product_retailer_id: process.env.PRODUTO_3_ID || "af2o2iuwey"
+            }
         ]
     }];
 
@@ -150,10 +227,20 @@ async function iniciarAgendamento(sockIgnorado, jid, senderNumber, stateMachine,
         await sendProductList(jid, process.env.CATALOG_ID, "Tabela de Serviços ✂️", txtCat, sections);
     } catch (error) {
         const servicos = await prisma.servico.findMany();
-        let optServicos = servicos.map(s => ({ id: s.id.toString(), title: s.nome, description: `${s.preco} MT` }));
-        optServicos.push({ id: '0', title: 'Cancelar' });
+        let optServicos = servicos.map(s => ({
+            id: `srv_${s.id}`,
+            title: s.nome,
+            description: `${s.preco} MT`
+        }));
+        optServicos.push({
+            id: '0',
+            title: 'Cancelar'
+        });
         await sendInteractiveMenu(null, jid, txtCat, optServicos);
     }
 }
 
-module.exports = { iniciarAgendamento, handleAgendamento };
+module.exports = {
+    iniciarAgendamento,
+    handleAgendamento
+};

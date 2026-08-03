@@ -1,40 +1,97 @@
-const { prisma, getOrCreateCliente } = require('./db');
-const { iniciarAgendamento, handleAgendamento } = require('./flowAgendamento');
-const { verPrecosEServicos, verMeusAgendamentos } = require('./flowConsultas');
-const { iniciarCancelamento, processarCancelamento } = require('./flowCancelamento');
-const { sendDelayedText, sendInteractiveMenu, sendDelayedLocation } = require('./botUtils');
-const { responderComGroq, extrairNomeComGroq, gerarMensagemNotificacao, transcreverAudioComGroq } = require('./groqApi');
-const { markAsReadAndTyping, sendText, downloadMedia } = require('./whatsappApi');
+const {
+    prisma,
+    getOrCreateCliente
+} = require('./db');
+const {
+    iniciarAgendamento,
+    handleAgendamento
+} = require('./flowAgendamento');
+const {
+    verPrecosEServicos,
+    verMeusAgendamentos
+} = require('./flowConsultas');
+const {
+    iniciarCancelamento,
+    processarCancelamento
+} = require('./flowCancelamento');
+const {
+    sendDelayedText,
+    sendInteractiveMenu,
+    sendDelayedLocation
+} = require('./botUtils');
+const {
+    responderComGroq,
+    extrairNomeComGroq,
+    gerarMensagemNotificacao,
+    transcreverAudioComGroq
+} = require('./groqApi');
+const {
+    markAsReadAndTyping,
+    sendText,
+    downloadMedia
+} = require('./whatsappApi');
 const fs = require('fs');
 const path = require('path');
 
 const stateMachine = new Map();
 const STEPS = {
-    MENU_PRINCIPAL: 'MENU_PRINCIPAL', PEDIR_NOME: 'PEDIR_NOME', AGENDAMENTO_SERVICO: 'AGENDAMENTO_SERVICO',
-    AGENDAMENTO_BARBEIRO: 'AGENDAMENTO_BARBEIRO', AGENDAMENTO_DATA: 'AGENDAMENTO_DATA', AGENDAMENTO_HORA: 'AGENDAMENTO_HORA',
-    AGENDAMENTO_CONFIRMAR: 'AGENDAMENTO_CONFIRMAR', CANCELAR_AGENDAMENTO: 'CANCELAR_AGENDAMENTO',
+    MENU_PRINCIPAL: 'MENU_PRINCIPAL',
+    PEDIR_NOME: 'PEDIR_NOME',
+    AGENDAMENTO_SERVICO: 'AGENDAMENTO_SERVICO',
+    AGENDAMENTO_BARBEIRO: 'AGENDAMENTO_BARBEIRO',
+    AGENDAMENTO_DATA: 'AGENDAMENTO_DATA',
+    AGENDAMENTO_HORA: 'AGENDAMENTO_HORA',
+    AGENDAMENTO_CONFIRMAR: 'AGENDAMENTO_CONFIRMAR',
+    CANCELAR_AGENDAMENTO: 'CANCELAR_AGENDAMENTO',
 };
 
 const uploadsDir = path.join(__dirname, 'uploads');
 const settingsPath = path.join(__dirname, 'settings.json');
 
 function getSettings() {
-    if (!fs.existsSync(settingsPath)) return { botAtivo: true, diasTrabalho: [1, 2, 3, 4, 5, 6], horaInicio: "09:00", horaFim: "19:00" };
+    if (!fs.existsSync(settingsPath)) return {
+        botAtivo: true,
+        diasTrabalho: [1, 2, 3, 4, 5, 6],
+        horaInicio: "09:00",
+        horaFim: "19:00"
+    };
     return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
 }
 
-async function sendMenu(sockIgnorado, jid, nomeCliente = '') {
-    // TEXTO FIXO E SEGURO (Sem IA para não quebrar botões)
-    const saudacao = nomeCliente && nomeCliente !== 'Amigo' ? `, ${nomeCliente}` : '';
-    const textoMenu = `Como posso ajudar-te hoje${saudacao}? Por favor, escolhe uma das opções abaixo:`;
+async function sendMenu(sockIgnorado, jid) {
+    // TEXTO FIXO - Sem IA
+    const textoMenu = `Selecione uma das opções abaixo para prosseguir:`;
 
-    await sendInteractiveMenu(null, jid, textoMenu, [
-        { id: '1', title: 'Agendar', description: 'Cortar/Marcar novo!' },
-        { id: '2', title: 'Serviços e Preços', description: 'Tabela C/ preçários' },
-        { id: '3', title: 'A Minha Agenda', description: 'Check dos apontamentos' },
-        { id: '4', title: 'Cancelar Marcas', description: 'Pausar Canceladas!' },
-        { id: '5', title: 'Av., Mapa / Hrs', description: 'Geolocalização' },
-        { id: '6', title: 'Falar com Humano', description: 'Atendimento Orgânico' }
+    await sendInteractiveMenu(null, jid, textoMenu, [{
+            id: 'cmd_agendar',
+            title: 'Agendar',
+            description: 'Cortar/Marcar novo!'
+        },
+        {
+            id: 'cmd_precos',
+            title: 'Serviços e Preços',
+            description: 'Tabela C/ preçários'
+        },
+        {
+            id: 'cmd_agenda',
+            title: 'A Minha Agenda',
+            description: 'Check dos apontamentos'
+        },
+        {
+            id: 'cmd_cancelar',
+            title: 'Cancelar Marcas',
+            description: 'Pausar Canceladas!'
+        },
+        {
+            id: 'cmd_local',
+            title: 'Av., Mapa / Hrs',
+            description: 'Geolocalização'
+        },
+        {
+            id: 'cmd_humano',
+            title: 'Falar com Humano',
+            description: 'Atendimento Orgânico'
+        }
     ]);
 }
 
@@ -53,7 +110,11 @@ async function handleMessage(message, contact) {
         const orderItems = message.order.product_items;
         if (orderItems && orderItems.length > 0) {
             const produtoSKU = orderItems[0].product_retailer_id;
-            const servicosDb = await prisma.servico.findMany({ orderBy: { id: 'asc' } });
+            const servicosDb = await prisma.servico.findMany({
+                orderBy: {
+                    id: 'asc'
+                }
+            });
             let dbServicoId = servicosDb.length > 0 ? servicosDb[0].id.toString() : '1';
             textMessage = 'srv_' + dbServicoId;
         }
@@ -63,87 +124,183 @@ async function handleMessage(message, contact) {
 
     try {
         const config = getSettings();
-        if (!config.botAtivo) return; 
+        if (!config.botAtivo) return;
 
         let cliente = await getOrCreateCliente(senderNumber);
 
         if (textMessage.trim().toLowerCase() === '#sair') {
             if (cliente.falarHumano) {
-                await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: false } });
+                await prisma.cliente.update({
+                    where: {
+                        id: senderNumber
+                    },
+                    data: {
+                        falarHumano: false
+                    }
+                });
                 if (global.io) global.io.emit('atualizar_fila');
             }
             await sendDelayedText(null, jid, 'Atendimento automático restaurado.');
-            await sendMenu(null, jid, cliente.nome);
+            await sendMenu(null, jid);
             return;
         }
 
         if (cliente.falarHumano) {
-            const novaMsg = await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber } });
-            if (global.io) global.io.emit('nova_mensagem', { clienteId: senderNumber, mensagem: novaMsg });
+            const novaMsg = await prisma.mensagemIA.create({
+                data: {
+                    role: 'user',
+                    content: textMessage,
+                    clienteId: senderNumber
+                }
+            });
+            if (global.io) global.io.emit('nova_mensagem', {
+                clienteId: senderNumber,
+                mensagem: novaMsg
+            });
             return;
         }
 
+        // NOVO CÁLCULO DE HORA 100% PRECISO
         const agora = new Date();
-        const maputoHour = parseInt(new Intl.DateTimeFormat('pt-PT', { timeZone: 'Africa/Maputo', hour: 'numeric', hour12: false }).format(agora));
-        const horaMaputoStr = agora.toLocaleString("pt-PT", { timeZone: "Africa/Maputo" });
-        
+        const horaFormatoEn = agora.toLocaleString("en-US", {
+            timeZone: "Africa/Maputo",
+            hour12: false,
+            hour: "numeric"
+        });
+        const maputoHour = parseInt(horaFormatoEn, 10);
+        const horaMaputoStr = agora.toLocaleString("pt-PT", {
+            timeZone: "Africa/Maputo"
+        });
+
         let periodoDia = 'Boa noite';
         if (maputoHour >= 5 && maputoHour < 12) periodoDia = 'Bom dia';
         else if (maputoHour >= 12 && maputoHour < 18) periodoDia = 'Boa tarde';
 
-        const horaMin = new Intl.DateTimeFormat('pt-PT', { timeZone: 'Africa/Maputo', hour: '2-digit', minute: '2-digit' }).format(agora);
-        const diaDaSemana = new Date(agora.toLocaleString('en-US', { timeZone: 'Africa/Maputo' })).getDay();
+        const horaMin = new Intl.DateTimeFormat('pt-PT', {
+            timeZone: 'Africa/Maputo',
+            hour: '2-digit',
+            minute: '2-digit'
+        }).format(agora);
+        const diaDaSemana = new Date(agora.toLocaleString('en-US', {
+            timeZone: 'Africa/Maputo'
+        })).getDay();
         let foraDoExpediente = (!config.diasTrabalho.includes(diaDaSemana) || horaMin < config.horaInicio || horaMin > config.horaFim);
 
-        let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {} };
+        let userState = stateMachine.get(senderNumber) || {
+            step: STEPS.MENU_PRINCIPAL,
+            data: {}
+        };
 
-        // 1ª INTERAÇÃO: A ÚNICA MENSAGEM GERADA PELA IA PARA OS BOTÕES
+        // 1ª INTERAÇÃO: IA gera as boas vindas humanizadas
         if ((!cliente.nome || cliente.nome === 'Sem Nome') && userState.step === STEPS.MENU_PRINCIPAL) {
-            const historicoCru = await prisma.mensagemIA.count({ where: { clienteId: senderNumber } });
+            const historicoCru = await prisma.mensagemIA.count({
+                where: {
+                    clienteId: senderNumber
+                }
+            });
             if (historicoCru === 0) {
                 userState.step = STEPS.PEDIR_NOME;
                 stateMachine.set(senderNumber, userState);
-                
-                const promptSaudacao = `Escreve uma frase de boas vindas usando "${periodoDia}". Apresenta-te como assistente da Portal da Barbearia e diz EXATAMENTE algo como: "Para que o nosso atendimento seja mais amigável, como posso te chamar?". PROIBIDO usar aspas ("").`;
-                const msgSaudacao = await gerarMensagemNotificacao(promptSaudacao, `${periodoDia}! Sou o assistente da Portal da Barbearia. Para que o nosso atendimento seja mais amigável, como posso te chamar? (Ou escolhe uma opção):`);
-                
-                await sendInteractiveMenu(null, jid, msgSaudacao, [
-                    { id: 'menu', title: 'Menu Principal' },
-                    { id: 'btn_servicos', title: 'Serviços e preços' },
-                    { id: 'btn_equipe', title: 'Falar com atendente' }
+
+                const promptSaudacao = `Escreve EXATAMENTE esta frase, substituindo apenas a saudação pela hora certa: "${periodoDia}! Sou o assistente da Portal da Barbearia. Para que o nosso atendimento seja mais amigável, como posso te chamar?". PROIBIDO usar aspas ("").`;
+                const msgSaudacao = await gerarMensagemNotificacao(promptSaudacao, `${periodoDia}! Sou o assistente da Portal da Barbearia. Para que o nosso atendimento seja mais amigável, como posso te chamar?`);
+
+                await sendInteractiveMenu(null, jid, msgSaudacao, [{
+                        id: 'cmd_menu',
+                        title: 'Menu Principal'
+                    },
+                    {
+                        id: 'btn_servicos',
+                        title: 'Serviços e preços'
+                    },
+                    {
+                        id: 'btn_equipe',
+                        title: 'Falar com atendente'
+                    }
                 ]);
                 return;
             }
         }
 
-        // 2ª INTERAÇÃO: Avalia o Nome ou Botão (Texto Fixo)
+        // BLINDAGEM DE BOTÕES GLOBAIS: Se o cliente clicou num botão do menu, ABORTA TUDO e obedece
+        const isGlobalBtn = textMessage.startsWith('cmd_') || textMessage.startsWith('btn_');
+
+        if (isGlobalBtn) {
+            // Removemos o estado de "Pedir Nome" ou "Agendar" se ele clicou num botão!
+            userState.step = STEPS.MENU_PRINCIPAL;
+            userState.data = {};
+            stateMachine.set(senderNumber, userState);
+            await handleEstrategiaLLMSalvos(null, jid, textMessage, senderNumber, cliente.nome, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente);
+            return;
+        }
+
+        // 2ª INTERAÇÃO: Avalia se ele escreveu o nome (Caso não tenha clicado em botões)
         if (userState.step === STEPS.PEDIR_NOME) {
             const nomeExtraido = await extrairNomeComGroq(textMessage);
-            
+
             if (nomeExtraido.toUpperCase() === 'IGNORAR') {
-                await prisma.cliente.update({ where: { id: senderNumber }, data: { nome: 'Amigo' } });
-                cliente.nome = 'Amigo';
+                // NÃO GRAVA "AMIGO" NO DB! Apenas reverte o estado.
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
-                await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber } });
+                await prisma.mensagemIA.create({
+                    data: {
+                        role: 'user',
+                        content: textMessage,
+                        clienteId: senderNumber
+                    }
+                });
             } else {
                 const nomeFinal = nomeExtraido.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-                await prisma.cliente.update({ where: { id: senderNumber }, data: { nome: nomeFinal } });
+                await prisma.cliente.update({
+                    where: {
+                        id: senderNumber
+                    },
+                    data: {
+                        nome: nomeFinal
+                    }
+                });
                 cliente.nome = nomeFinal;
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
-                await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber } });
+                await prisma.mensagemIA.create({
+                    data: {
+                        role: 'user',
+                        content: textMessage,
+                        clienteId: senderNumber
+                    }
+                });
 
-                // TEXTO FIXO E SEGURO (Sem IA)
-                const txtBoasVindas = `Muito prazer, ${nomeFinal}! Para começarmos, escolhe uma das opções no menu abaixo:`;
-                
-                await sendInteractiveMenu(null, jid, txtBoasVindas, [
-                    { id: '1', title: 'Agendar', description: 'Cortar/Marcar novo!' },
-                    { id: '2', title: 'Serviços e Preços', description: 'Tabela C/ preçários' },
-                    { id: '3', title: 'A Minha Agenda', description: 'Check dos apontamentos' },
-                    { id: '4', title: 'Cancelar Marcas', description: 'Pausar Canceladas!' },
-                    { id: '5', title: 'Av., Mapa / Hrs', description: 'Geolocalização' },
-                    { id: '6', title: 'Falar com Humano', description: 'Atendimento Orgânico' }
+                const txtBoasVindas = `Muito prazer, ${nomeFinal}! Selecione uma das opções abaixo para prosseguir:`;
+                await sendInteractiveMenu(null, jid, txtBoasVindas, [{
+                        id: 'cmd_agendar',
+                        title: 'Agendar',
+                        description: 'Cortar/Marcar novo!'
+                    },
+                    {
+                        id: 'cmd_precos',
+                        title: 'Serviços e Preços',
+                        description: 'Tabela C/ preçários'
+                    },
+                    {
+                        id: 'cmd_agenda',
+                        title: 'A Minha Agenda',
+                        description: 'Check dos apontamentos'
+                    },
+                    {
+                        id: 'cmd_cancelar',
+                        title: 'Cancelar Marcas',
+                        description: 'Pausar Canceladas!'
+                    },
+                    {
+                        id: 'cmd_local',
+                        title: 'Av., Mapa / Hrs',
+                        description: 'Geolocalização'
+                    },
+                    {
+                        id: 'cmd_humano',
+                        title: 'Falar com Humano',
+                        description: 'Atendimento Orgânico'
+                    }
                 ]);
                 return;
             }
@@ -156,12 +313,11 @@ async function handleMessage(message, contact) {
         if (cmdsIntuitosUI.includes(msgLower)) {
             userState.step = STEPS.MENU_PRINCIPAL;
             userState.data = {};
-            await sendMenu(null, jid, cliente.nome);
+            await sendMenu(null, jid);
         } else if (textMessage.startsWith('srv_')) {
-            const servicoId = textMessage.replace('srv_', '');
             userState.step = STEPS.AGENDAMENTO_SERVICO;
             stateMachine.set(senderNumber, userState);
-            await handleAgendamento(null, jid, servicoId, senderNumber, stateMachine, STEPS);
+            await handleAgendamento(null, jid, textMessage, senderNumber, stateMachine, STEPS);
         } else if (userState.step.startsWith('AGENDAMENTO_')) {
             await handleAgendamento(null, jid, textMessage, senderNumber, stateMachine, STEPS);
         } else {
@@ -184,24 +340,56 @@ async function handleMessage(message, contact) {
 async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderNumber, nomeCliente, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente) {
     const option = textMessage.trim();
     switch (option) {
-        case '1': await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS); break;
-        case '2':
-        case 'btn_servicos': await verPrecosEServicos(null, jid); break;
-        case '3': await verMeusAgendamentos(null, jid, senderNumber); break;
-        case '4': await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS); break;
-        case '5':
+        case 'cmd_agendar':
+            await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);
+            break;
+        case 'cmd_precos':
+        case 'btn_servicos':
+            await verPrecosEServicos(null, jid);
+            break;
+        case 'cmd_agenda':
+            await verMeusAgendamentos(null, jid, senderNumber);
+            break;
+        case 'cmd_cancelar':
+            await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS);
+            break;
+        case 'cmd_menu':
+            await sendMenu(null, jid);
+            break;
+        case 'cmd_local':
             await sendDelayedText(null, jid, "Ficamos na Av. 24 de Julho, Maputo. Segue o mapa abaixo:");
             await sendDelayedLocation(jid, -25.9744, 32.5885, "Portal Da Barbearia", "Av. 24 de Julho, Maputo");
             break;
-        case '6':
+        case 'cmd_humano':
         case 'btn_equipe':
-            await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
+            await prisma.cliente.update({
+                where: {
+                    id: senderNumber
+                },
+                data: {
+                    falarHumano: true
+                }
+            });
             await sendDelayedText(null, jid, 'Transferido para o nosso atendente. Aguarda só um instante!\n(Para voltar ao bot, digita *#sair*)');
             if (global.io) global.io.emit('atualizar_fila');
             break;
         default:
-            const historicoCru = await prisma.mensagemIA.findMany({ where: { clienteId: senderNumber }, orderBy: { criadoEm: 'desc' }, take: 4 });
-            await prisma.mensagemIA.create({ data: { role: 'user', content: textMessage, clienteId: senderNumber } });
+            const historicoCru = await prisma.mensagemIA.findMany({
+                where: {
+                    clienteId: senderNumber
+                },
+                orderBy: {
+                    criadoEm: 'desc'
+                },
+                take: 4
+            });
+            await prisma.mensagemIA.create({
+                data: {
+                    role: 'user',
+                    content: textMessage,
+                    clienteId: senderNumber
+                }
+            });
 
             let tempoPassado = "O cliente acabou de iniciar a conversa.";
             if (historicoCru.length > 0) {
@@ -223,18 +411,35 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, senderN
                 await sendDelayedText(null, jid, "Ficamos na Av. 24 de Julho, Maputo. Segue o mapa:");
                 await sendDelayedLocation(jid, -25.9744, 32.5885, "Portal Da Barbearia", "Av. 24 de Julho, Maputo");
             } else if (intentCheck.includes('/HUMANO')) {
-                await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
+                await prisma.cliente.update({
+                    where: {
+                        id: senderNumber
+                    },
+                    data: {
+                        falarHumano: true
+                    }
+                });
                 await sendDelayedText(null, jid, 'A transferir para um atendente humano. Aguarda um pouco.\n(Para voltar, digita *#sair*)');
                 if (global.io) global.io.emit('atualizar_fila');
-            } else if (intentCheck.includes('/MENU')) await sendMenu(null, jid, nomeCliente);
+            } else if (intentCheck.includes('/MENU')) await sendMenu(null, jid);
             else {
-                if (textIArid.trim().startsWith('/')) await sendMenu(null, jid, nomeCliente);
+                if (textIArid.trim().startsWith('/')) await sendMenu(null, jid);
                 else {
-                    await prisma.mensagemIA.create({ data: { role: 'assistant', content: textIArid, clienteId: senderNumber } });
+                    await prisma.mensagemIA.create({
+                        data: {
+                            role: 'assistant',
+                            content: textIArid,
+                            clienteId: senderNumber
+                        }
+                    });
                     await sendDelayedText(null, jid, textIArid);
                 }
             }
             break;
     }
 }
-module.exports = { handleMessage, stateMachine, STEPS };
+module.exports = {
+    handleMessage,
+    stateMachine,
+    STEPS
+};
