@@ -2,10 +2,9 @@ const { prisma } = require('./db');
 const { format } = require('date-fns');
 const { sendDelayedText, sendInteractiveMenu } = require('./botUtils');
 const { sendProductList } = require('./whatsappApi');
-const { gerarMensagemNotificacao } = require('./groqApi');
 
 async function verPrecosEServicos(sockIgnorado, jid) {
-    const txtTabela = await gerarMensagemNotificacao(`Escreve uma frase introduzindo a tabela de serviços. PROIBIDO usar aspas ("") e PROIBIDO criar listas (-).`, `Podes ver os nossos serviços e preços aqui em baixo:`);
+    const txtTabela = "Podes ver os nossos serviços e preços aqui em baixo:";
     const sections = [{
         title: "Cortes e Barboterapia",
         product_items: [
@@ -33,12 +32,12 @@ async function verMeusAgendamentos(sockIgnorado, jid, senderNumber) {
     });
 
     if (agendamentos.length === 0) {
-        const txtVazio = await gerarMensagemNotificacao(`Informa o cliente que ele não possui agendamentos futuros. PROIBIDO usar aspas ("") e PROIBIDO criar listas (-).`, `Não tens nenhum agendamento futuro marcado connosco no momento.`);
+        const txtVazio = "Não tens nenhum agendamento futuro marcado connosco no momento.";
         await sendDelayedText(null, jid, txtVazio);
         return;
     }
 
-    const txtIntro = await gerarMensagemNotificacao(`Apresenta a lista de agendamentos do cliente. PROIBIDO usar aspas ("").`, `📅 *Os teus próximos agendamentos:*`);
+    const txtIntro = "📅 *Os teus próximos agendamentos:*";
     let texto = `${txtIntro}\n\n`;
     agendamentos.forEach((ag, index) => {
         texto += `*${index + 1}.* ${ag.servico.nome}\n🕑 ${format(ag.dataHora, "dd/MM 'às' HH:mm")}\n💈 ${ag.barbeiro ? ag.barbeiro.nome : 'Qualquer'}\n\n`;

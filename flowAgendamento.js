@@ -3,7 +3,6 @@ const { getProximosDiasUteis, getHorariosDisponiveis } = require('./dateUtils');
 const { parse } = require('date-fns');
 const { sendInteractiveMenu, sendDelayedText } = require('./botUtils');
 const { sendProductList } = require('./whatsappApi');
-const { gerarMensagemNotificacao } = require('./groqApi');
 
 async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, stateMachine, STEPS) {
     const userState = stateMachine.get(senderNumber);
@@ -31,7 +30,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
             let optBarbeiros = barbeiros.map(b => ({ id: b.id.toString(), title: b.nome }));
             optBarbeiros.push({ id: 'qualquer', title: 'Qualquer um' }, { id: '0', title: 'Cancelar' });
 
-            const txtBarbeiro = await gerarMensagemNotificacao(`Pergunta de forma simpática com qual barbeiro o cliente prefere cortar. PROIBIDO usar aspas (""). PROIBIDO criar listas (-).`, `Boa escolha! Preferes ser atendido por qual barbeiro?`);
+            const txtBarbeiro = "Boa escolha! Preferes ser atendido por qual barbeiro?";
             await sendInteractiveMenu(null, jid, txtBarbeiro, optBarbeiros);
             break;
         }
@@ -54,7 +53,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
             let optDias = dias.map(d => ({ id: d, title: d }));
             optDias.push({ id: '0', title: 'Cancelar' });
 
-            const txtData = await gerarMensagemNotificacao(`Pede de forma gentil para ele selecionar a data do agendamento nos botões. PROIBIDO usar aspas ("") e PROIBIDO criar listas (-).`, `Perfeito! Escolhe a data nos botões abaixo:`);
+            const txtData = "Perfeito! Escolhe a data nos botões abaixo:";
             await sendInteractiveMenu(null, jid, txtData, optDias);
             break;
         }
@@ -72,7 +71,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
 
             if (horasLivres.length === 0) {
                 userState.step = STEPS.AGENDAMENTO_DATA;
-                const semH = await gerarMensagemNotificacao(`Informa o cliente de forma amigável que a agenda está cheia nesse dia. PROIBIDO usar aspas ("") e PROIBIDO criar listas (-).`, `Infelizmente, a agenda está cheia para esse dia. Podes escolher outra data?`);
+                const semH = "Infelizmente, a agenda está cheia para esse dia. Podes escolher outra data?";
                 let optDiasRetry = diasDisp.map(d => ({ id: d, title: d }));
                 optDiasRetry.push({ id: '0', title: 'Cancelar' });
                 await sendInteractiveMenu(null, jid, semH, optDiasRetry);
@@ -83,7 +82,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
             let optHoras = horasLivres.map(h => ({ id: h, title: h }));
             optHoras.push({ id: '0', title: 'Cancelar' });
 
-            const txtHora = await gerarMensagemNotificacao(`Pede de forma simpática para o cliente escolher o horário exato. PROIBIDO usar aspas ("") e PROIBIDO criar listas (-).`, `Certo! Para o dia ${msg}, seleciona o horário pretendido:`);
+            const txtHora = `Certo! Para o dia ${msg}, seleciona o horário pretendido:`;
             await sendInteractiveMenu(null, jid, txtHora, optHoras);
             break;
         }
@@ -99,7 +98,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
 
             const srv = userState.data.servico;
             const brb = userState.data.barbeiro ? userState.data.barbeiro.nome : 'Qualquer um';
-            const txtIntro = await gerarMensagemNotificacao(`Pede ao cliente para confirmar se os dados do agendamento estão corretos. PROIBIDO usar aspas ("") e PROIBIDO criar listas (-).`, `Estamos quase lá! Por favor, confirma se está tudo certinho:`);
+            const txtIntro = "Estamos quase lá! Por favor, confirma se está tudo certinho:";
             const resumo = `${txtIntro}\n\n✂️ Serviço: ${srv.nome}\n💈 Barbeiro: ${brb}\n📅 Data: ${userState.data.dataString}\n🕑 Hora: ${msg}`;
 
             await sendInteractiveMenu(null, jid, resumo, [{ id: '1', title: 'Confirmar' }, { id: '0', title: 'Cancelar' }]);
@@ -113,7 +112,7 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
                     data: { dataHora: dataHoraDb, clienteId: senderNumber, servicoId: userState.data.servico.id, barbeiroId: userState.data.barbeiro?.id || null }
                 });
 
-                const txtSucesso = await gerarMensagemNotificacao(`Redige uma mensagem simpática confirmando o agendamento. PROIBIDO usar aspas ("") e PROIBIDO criar listas (-).`, `✅ Agendamento confirmado! Aguardamos a tua visita.\n(Para voltares, digita "Menu").`);
+                const txtSucesso = "✅ Agendamento confirmado! Aguardamos a tua visita.\n(Para voltares, digita \"Menu\").";
                 await sendDelayedText(null, jid, txtSucesso);
                 stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
             } else if (msg === '0') {
@@ -136,7 +135,7 @@ async function iniciarAgendamento(sockIgnorado, jid, senderNumber, stateMachine,
     }
 
     stateMachine.set(senderNumber, { step: STEPS.AGENDAMENTO_SERVICO, data: {} });
-    const txtCat = await gerarMensagemNotificacao(`Inicia o agendamento pedindo amigavelmente para selecionar o serviço. PROIBIDO usar aspas ("") e PROIBIDO criar listas (-).`, "Vamos agendar! Escolhe o serviço abaixo que preferes:");
+    const txtCat = "Vamos agendar! Escolhe o serviço abaixo que preferes:";
 
     const sections = [{
         title: "Cortes e Barboterapia",

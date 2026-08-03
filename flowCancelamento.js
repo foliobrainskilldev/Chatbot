@@ -1,7 +1,6 @@
 const { prisma } = require('./db');
 const { format } = require('date-fns');
 const { sendInteractiveMenu, sendDelayedText } = require('./botUtils');
-const { gerarMensagemNotificacao } = require('./groqApi');
 
 async function iniciarCancelamento(sockIgnorado, jid, senderNumber, stateMachine, STEPS) {
     const agendamentos = await prisma.agendamento.findMany({
@@ -11,7 +10,7 @@ async function iniciarCancelamento(sockIgnorado, jid, senderNumber, stateMachine
     });
 
     if (agendamentos.length === 0) {
-        const txtVazio = await gerarMensagemNotificacao(`Informa o cliente que ele não possui agendamentos para cancelar. PROIBIDO usar aspas ("") e PROIBIDO criar listas (-).`, `Não tens nenhum agendamento para cancelar de momento.`);
+        const txtVazio = "Não tens nenhum agendamento para cancelar de momento.";
         await sendDelayedText(null, jid, txtVazio);
         stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
         return;
@@ -23,7 +22,7 @@ async function iniciarCancelamento(sockIgnorado, jid, senderNumber, stateMachine
     opcoes.push({ id: '0', title: 'Voltar ao Menu' });
 
     stateMachine.set(senderNumber, { step: STEPS.CANCELAR_AGENDAMENTO, data: { agendamentos } });
-    const txtCanc = await gerarMensagemNotificacao(`Pede ao cliente para selecionar qual horário pretende cancelar. PROIBIDO usar aspas ("") e PROIBIDO criar listas (-).`, `Qual destes horários pretendes cancelar?`);
+    const txtCanc = "Qual destes horários pretendes cancelar?";
     await sendInteractiveMenu(null, jid, txtCanc, opcoes);
 }
 
@@ -45,7 +44,7 @@ async function processarCancelamento(sockIgnorado, jid, textMessage, senderNumbe
 
     await prisma.agendamento.update({ where: { id: agendamentoAlvo.id }, data: { status: 'CANCELADO' } });
 
-    const txtFim = await gerarMensagemNotificacao(`Confirma que o agendamento foi cancelado com sucesso. PROIBIDO usar aspas ("").`, `✅ O teu agendamento foi cancelado com sucesso.`);
+    const txtFim = "✅ O teu agendamento foi cancelado com sucesso.";
     await sendDelayedText(null, jid, txtFim);
     stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
 }
