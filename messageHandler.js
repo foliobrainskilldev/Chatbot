@@ -59,7 +59,6 @@ function getSettings() {
 }
 
 async function sendMenu(sockIgnorado, jid) {
-    // TEXTO TOTALMENTE FIXO
     const textoMenu = `Selecione uma das opções abaixo para prosseguir:`;
 
     await sendInteractiveMenu(null, jid, textoMenu, [{
@@ -226,7 +225,6 @@ async function handleMessage(message, contact) {
             data: {}
         };
 
-        // 1ª INTERAÇÃO: 100% PRÉ-DEFINIDO (Zero Groq AI para não estragar a mensagem)
         if ((!cliente.nome || cliente.nome === 'Sem Nome') && userState.step === STEPS.MENU_PRINCIPAL) {
             const historicoCru = await prisma.mensagemIA.count({
                 where: {
@@ -267,14 +265,6 @@ async function handleMessage(message, contact) {
         const isGlobalBtn = textMessage.startsWith('cmd_') || textMessage.startsWith('btn_');
 
         if (isGlobalBtn) {
-            await prisma.mensagemIA.create({
-                data: {
-                    role: 'user',
-                    content: displayMessage,
-                    clienteId: senderNumber
-                }
-            });
-
             userState.step = STEPS.MENU_PRINCIPAL;
             userState.data = {};
             stateMachine.set(senderNumber, userState);
@@ -282,7 +272,6 @@ async function handleMessage(message, contact) {
             return;
         }
 
-        // 2ª INTERAÇÃO: PRÉ-DEFINIDO
         if (userState.step === STEPS.PEDIR_NOME) {
             const nomeExtraido = await extrairNomeComGroq(textMessage);
 
@@ -416,8 +405,8 @@ async function handleMessage(message, contact) {
 
 async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, displayMessage, senderNumber, nomeCliente, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente) {
 
-    // Grava TUDO no banco de dados para o CRM ver bonito
-    await prisma.mensagemIA.create({
+    // Grava TUDO no banco de dados para o CRM ver bonito e salva a referência
+    const novaMensagem = await prisma.mensagemIA.create({
         data: {
             role: 'user',
             content: displayMessage,
@@ -468,12 +457,15 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, display
                 orderBy: {
                     criadoEm: 'desc'
                 },
-                take: 4
+                take: 5
             });
 
+            // Filtramos a mensagem que acabámos de gravar para não enviarmos duplicado para a IA ler
+            const historicoAnterior = historicoCru.filter(msg => msg.id !== novaMensagem.id).reverse();
+
             let tempoPassado = "O cliente acabou de iniciar a conversa.";
-            if (historicoCru.length > 0) {
-                const diffMins = Math.floor((Date.now() - new Date(historicoCru[0].criadoEm).getTime()) / 60000);
+            if (historicoAnterior.length > 0) {
+                const diffMins = Math.floor((Date.now() - new Date(historicoAnterior[historicoAnterior.length - 1].criadoEm).getTime()) / 60000);
                 if (diffMins > 1440) tempoPassado = `Saudação "${periodoDia}" OBRIGATÓRIA.`;
                 else if (diffMins > 120) tempoPassado = `Dê a saudação "${periodoDia}".`;
                 else tempoPassado = `Conversa ATIVA. PROIBIDO dizer "Bom dia/tarde". Responda direto.`;
@@ -482,7 +474,7 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, display
             const infoTemporal = `Horário: ${horaMaputoStr} (${periodoDia}). ${tempoPassado} ${foraDoExpediente ? 'Barbearia FECHADA agora.' : 'Barbearia ABERTA.'}`;
 
             // A IA analisa APENAS O TEXTO LIMPO / TRANSCRIÇÃO e toma a decisão
-            const textIArid = await responderComGroq(textMessage, 0, historicoCru.reverse(), infoTemporal, nomeCliente);
+            const textIArid = await responderComGroq(textMessage, 0, historicoAnterior, infoTemporal, nomeCliente);
             const intentCheck = textIArid.trim().toUpperCase().replace(/\s+/g, '');
 
             if (intentCheck.includes('/AGENDAR')) await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);

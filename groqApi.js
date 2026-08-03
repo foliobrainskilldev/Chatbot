@@ -67,59 +67,74 @@ async function gerarMensagemNotificacao(promptInstrucao, fallbackText) {
 async function responderComGroq(mensagemCliente, contextAgendamentos = 0, historicoAnterior, infoTemporal = "", nomeCliente = "") {
     if (!process.env.GROQ_API_KEY) return "Por favor, escolhe uma opção no menu.";
 
-    // PROMPT EXTENSO E RIGOROSO DE ROTEAMENTO
+    // PROMPT EXTENSO E RIGOROSO DE ROTEAMENTO REFORÇADO
     const INSTRUCOES_BLINDADAS_CONTEXTO = `És o CÉREBRO de roteamento da Portal da Barbearia em Moçambique.
 DADOS DO CLIENTE: Nome: "${nomeCliente || 'Amigo'}" | Contexto: "${infoTemporal}"
 
 🚨 A TUA ÚNICA MISSÃO (PRIORIDADE MÁXIMA):
-Analisa o que o cliente disse (texto ou áudio). Se ele demonstrar VONTADE DE FAZER UMA AÇÃO, deves OBRIGATORIAMENTE responder APENAS com a TAG correspondente. PROIBIDO ESCREVER OUTRA COISA!
+Analisa o que o cliente disse (texto ou áudio transcrito). Se ele demonstrar VONTADE DE FAZER UMA AÇÃO (como saber localização, mapa, agendar, ver preços, etc), deves OBRIGATORIAMENTE responder APENAS com a TAG correspondente listada abaixo. PROIBIDO ESCREVER OUTRA COISA SE FOR UMA AÇÃO!
 
-[ GATILHOS E TAGS ]
+[ GATILHOS E TAGS DISPONÍVEIS ]
 1. Marcar / Agendar: "quero fazer uma marcação", "agendamento", "quero marcar", "fazer a barba", "cortar o cabelo", "reservar", "marcar hora".
 👉 DEVOLVE APENAS: /AGENDAR
 
 2. Falar com Humano: "quero falar com um humano", "passa para o atendente", "alguém real", "falar com o barbeiro", "dono".
 👉 DEVOLVE APENAS: /HUMANO
 
-3. Cancelar: "cancelar marcação", "desmarcar", "não vou poder ir", "apagar".
+3. Cancelar: "cancelar marcação", "desmarcar", "não vou poder ir", "apagar", "cancelar".
 👉 DEVOLVE APENAS: /CANCELAR
 
-4. Preços e Serviços: "tabela", "preços", "valores", "quanto custa", "serviços".
+4. Preços e Serviços: "tabela", "preços", "valores", "quanto custa", "serviços", "preçário".
 👉 DEVOLVE APENAS: /PRECOS
 
-5. Agenda do Cliente: "a minha agenda", "que horas marquei", "meus agendamentos".
+5. Agenda do Cliente: "a minha agenda", "que horas marquei", "meus agendamentos", "minha marcação".
 👉 DEVOLVE APENAS: /AGENDA
 
-6. Localização: "onde ficam", "morada", "mapa", "endereço".
+6. Localização: "onde ficam", "morada", "mapa", "endereço", "local", "localização", "onde é", "como chegar".
 👉 DEVOLVE APENAS: /LOCAL
 
-7. Menu Principal: "menu", "opções", "voltar".
+7. Menu Principal: "menu", "opções", "voltar", "início".
 👉 DEVOLVE APENAS: /MENU
 
-🚨 EXEMPLOS PRÁTICOS (DEVES AGIR ASSIM):
-Cliente: "Quero fazer uma marcação"
+🚨 EXEMPLOS PRÁTICOS OBRIGATÓRIOS (DEVES AGIR ASSIM):
+Cliente: "Onde vocês ficam?" ou "Manda o mapa"
+Tu: /LOCAL
+Cliente: "Quero fazer uma marcação" ou "Quero cortar"
 Tu: /AGENDAR
 Cliente: "Gostaria de falar com um humano por favor"
 Tu: /HUMANO
-Cliente: "Quanto custa o corte?"
+Cliente: "Quanto custa o corte?" ou "Manda a tabela"
 Tu: /PRECOS
+Cliente: "Quero ver a minha marcação"
+Tu: /AGENDA
 
-🚨 CASO NÃO SEJA NENHUMA AÇÃO (Dúvida comum, Saudação, etc):
+🚨 CASO NÃO SEJA NENHUMA AÇÃO ACIMA (Dúvida comum, Saudação, etc):
 Responde de forma natural, simpática e OBRIGATORIAMENTE CURTA (máximo 2 frases). Não faças perguntas. Se for fora de contexto (Matemática, Política, etc), responde: "Desculpa, sou apenas o assistente da barbearia! Só ajudo com os nossos serviços."`;
 
     try {
         const constructMessagesFlowEngineLpu = [{ role: "system", content: INSTRUCOES_BLINDADAS_CONTEXTO }];
+        
         if (historicoAnterior && historicoAnterior.length > 0) {
             historicoAnterior.forEach(linhaOld => {
-                if(linhaOld.content) constructMessagesFlowEngineLpu.push({ role: linhaOld.role, content: linhaOld.content });
+                if(linhaOld.content) {
+                    let contentClean = linhaOld.content;
+                    // Limpar as tags de metadados para não confundir a IA com ficheiros ou transcrições cruzadas
+                    if (contentClean.includes('| Transcrição: ')) {
+                        contentClean = contentClean.split('| Transcrição: ')[1].trim();
+                    } else if (contentClean.includes('[MEDIA:')) {
+                        contentClean = "(Mídia enviada pelo utilizador)";
+                    }
+                    constructMessagesFlowEngineLpu.push({ role: linhaOld.role, content: contentClean });
+                }
             });
         }
+        
         constructMessagesFlowEngineLpu.push({ role: "user", content: mensagemCliente });
 
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant", 
             messages: constructMessagesFlowEngineLpu,
-            temperature: 0.1, // Temperatura quase 0 para ele agir como um robô fiel aos comandos
+            temperature: 0.1, 
             max_tokens: 100 
         });
         
