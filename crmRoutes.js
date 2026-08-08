@@ -28,6 +28,39 @@ const upload = multer({
     storage
 });
 
+const settingsPath = path.join(__dirname, 'settings.json');
+
+// Rotas de Configuração (Operação Horários)
+router.get('/settings', (req, res) => {
+    try {
+        if (!fs.existsSync(settingsPath)) {
+            return res.status(200).json({
+                botAtivo: true,
+                diasTrabalho: [1, 2, 3, 4, 5, 6],
+                horaInicio: "09:00",
+                horaFim: "19:00"
+            });
+        }
+        res.status(200).json(JSON.parse(fs.readFileSync(settingsPath, 'utf8')));
+    } catch (e) {
+        res.status(500).json({
+            error: "Erro"
+        });
+    }
+});
+router.post('/settings', (req, res) => {
+    try {
+        fs.writeFileSync(settingsPath, JSON.stringify(req.body, null, 2));
+        res.status(200).json({
+            message: "Salvo"
+        });
+    } catch (e) {
+        res.status(500).json({
+            error: "Erro"
+        });
+    }
+});
+
 // ==========================================
 // 1. DASHBOARD & MÉTRICAS AVANÇADAS
 // ==========================================
@@ -53,7 +86,6 @@ router.get('/dashboard/stats', async (req, res) => {
             }
         });
 
-        // Funil de Vendas CRM
         const funil = {
             novos: await prisma.cliente.count({
                 where: {
@@ -105,19 +137,29 @@ router.get('/config', async (req, res) => {
     }
 });
 
+// ATUALIZAÇÃO IMPORTANTE (Solução do Erro): Usando UPSERT
 router.post('/config', async (req, res) => {
     try {
         const dados = req.body;
-        await prisma.configSistema.update({
+        // O Upsert tenta atualizar o id: 1. Se o banco estiver recém-criado e o id: 1 não existir, ele cria sozinho.
+        await prisma.configSistema.upsert({
             where: {
                 id: 1
             },
-            data: {
-                modoAtivo: dados.modoAtivo, // 'BARBEARIA' ou 'CLINICA'
-                nomeAssistente: dados.nomeAssistente,
-                tomDeVoz: dados.tomDeVoz,
-                regrasExtrasIA: dados.regrasExtrasIA,
-                ignorarDiagnosticos: dados.ignorarDiagnosticos
+            update: {
+                modoAtivo: dados.modoAtivo,
+                nomeAssistente: dados.nomeAssistente || "Assistente Virtual",
+                tomDeVoz: dados.tomDeVoz || "Amigável",
+                regrasExtrasIA: dados.regrasExtrasIA || "",
+                ignorarDiagnosticos: dados.ignorarDiagnosticos || false
+            },
+            create: {
+                id: 1,
+                modoAtivo: dados.modoAtivo || "BARBEARIA",
+                nomeAssistente: dados.nomeAssistente || "Assistente Virtual",
+                tomDeVoz: dados.tomDeVoz || "Amigável",
+                regrasExtrasIA: dados.regrasExtrasIA || "",
+                ignorarDiagnosticos: dados.ignorarDiagnosticos || false
             }
         });
         res.status(200).json({
@@ -143,7 +185,7 @@ router.get('/leads', async (req, res) => {
         res.status(200).json(leads);
     } catch (error) {
         res.status(500).json({
-            error: "Erro ao listar Leads."
+            error: "Erro"
         });
     }
 });
@@ -170,13 +212,13 @@ router.put('/leads/:id/status', async (req, res) => {
         res.status(200).json(lead);
     } catch (error) {
         res.status(500).json({
-            error: "Erro ao atualizar Lead."
+            error: "Erro"
         });
     }
 });
 
 // ==========================================
-// 4. CENTRAL DE MENSAGENS (Atendimento Humano)
+// 4. CENTRAL DE MENSAGENS E ATENDIMENTO
 // ==========================================
 router.get('/conversas/pendentes', async (req, res) => {
     try {
@@ -190,7 +232,7 @@ router.get('/conversas/pendentes', async (req, res) => {
         }));
     } catch (error) {
         res.status(500).json({
-            error: "Erro."
+            error: "Erro"
         });
     }
 });
@@ -207,7 +249,7 @@ router.get('/conversas/:clienteId', async (req, res) => {
         }));
     } catch (error) {
         res.status(500).json({
-            error: "Erro."
+            error: "Erro"
         });
     }
 });
@@ -247,7 +289,7 @@ router.post('/conversas/:clienteId/enviar', upload.single('arquivo'), async (req
         res.status(200).json(novaMsg);
     } catch (error) {
         res.status(500).json({
-            error: "Erro ao enviar."
+            error: "Erro"
         });
     }
 });
@@ -275,7 +317,29 @@ router.post('/conversas/:clienteId/resolver', async (req, res) => {
     }
 });
 
-// Rotas antigas de compatibilidade (agendamentos) mantidas
+// ==========================================
+// 5. ZONA DE PERIGO
+// ==========================================
+router.post('/reset', async (req, res) => {
+    try {
+        await prisma.mensagemIA.deleteMany({});
+        await prisma.agendamento.deleteMany({});
+        await prisma.cliente.deleteMany({});
+        // Não apagamos ConfigSistema nem Profissionais/Tratamentos/Barbeiros
+        const {
+            stateMachine
+        } = require('./messageHandler');
+        if (stateMachine) stateMachine.clear();
+        res.status(200).json({
+            message: "Memória do bot apagada com sucesso!"
+        });
+    } catch (error) {
+        res.status(500).json({
+            error: "Erro interno."
+        });
+    }
+});
+
 router.get('/agendamentos/hoje', async (req, res) => {
     try {
         const hojeInicio = startOfDay(new Date());
@@ -300,7 +364,7 @@ router.get('/agendamentos/hoje', async (req, res) => {
         res.status(200).json(agendamentos);
     } catch (error) {
         res.status(500).json({
-            error: "Erro ao carregar agenda."
+            error: "Erro"
         });
     }
 });
