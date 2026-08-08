@@ -1,34 +1,32 @@
-// --- START OF FILE server.js ---
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const fs = require('fs');
 const path = require('path');
-const { handleMessage, stateMachine } = require('./messageHandler');
+const { handleMessage } = require('./messageHandler');
 const { iniciarLembretesEFollowUp } = require('./cronJobs');
 const crmRoutes = require('./crmRoutes'); 
 
 const app = express();
 const server = http.createServer(app); 
 
+// WebSockets para o CRM Multi-Nicho
 const io = new Server(server, { cors: { origin: "*" } });
 global.io = io; 
 
-// Garante que a pasta de uploads existe para não dar erro
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir);
 }
 
-// Permite aceder às imagens/áudios via URL no navegador/CRM
 app.use('/uploads', express.static(uploadsDir));
-
 app.use(express.json());
 app.use(cors());
 
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'barbearia_secreta_2024';
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'barbearia_secreta_2024'; // Pode manter, serve apenas para validação Meta
 
+// Rota Base do CRM (Onde o Dashboard frontend vai buscar os dados)
 app.use('/api/crm', crmRoutes);
 
 app.get('/webhook', (req, res) => {
@@ -63,10 +61,11 @@ app.post('/webhook', (req, res) => {
     })(); 
 });
 
-app.get('/ping', (req, res) => res.send('Pong! I.A Engine Livre e Desembaraçada!'));
+app.get('/ping', (req, res) => res.send('Pong! Motor CRM Multi-Nichos (Barbearia/Clínica) Ativo!'));
 
 const PORT = process.env.PORT || 3000;
+
+// Liga os Robôs de Automação (Follow-Up, Lembretes, Avaliações)
 iniciarLembretesEFollowUp();
 
-server.listen(PORT, () => console.log(`🚀 Meta API, CRM e WebSockets a correr na porta ${PORT}`));
-// --- END OF FILE server.js ---
+server.listen(PORT, () => console.log(`🚀 Meta API, CRM Multi-Nicho e Automações rodando na porta ${PORT}`));

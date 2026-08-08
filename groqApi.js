@@ -52,7 +52,7 @@ async function gerarMensagemNotificacao(promptInstrucao, fallbackText) {
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant",
             messages: [
-                { role: "system", content: "És o assistente virtual da barbearia. REGRA 1: Sê amigável mas direto (1 a 2 frases). REGRA 2: PROIBIDO criar listas, tópicos ou bullet points (-). REGRA 3: NUNCA uses aspas (\"\"). REGRA 4: Zero Emojis." },
+                { role: "system", content: "És um assistente virtual automático. Sê amigável mas direto (1 a 2 frases). PROIBIDO criar listas. Zero Emojis." },
                 { role: "user", content: promptInstrucao }
             ],
             temperature: 0.2, 
@@ -64,67 +64,48 @@ async function gerarMensagemNotificacao(promptInstrucao, fallbackText) {
     }
 }
 
-async function responderComGroq(mensagemCliente, contextAgendamentos = 0, historicoAnterior, infoTemporal = "", nomeCliente = "") {
-    if (!process.env.GROQ_API_KEY) return "Por favor, escolhe uma opção no menu.";
+// ATUALIZADO: Agora aceita o systemPromptOpcional (O Cérebro Flexível)
+async function responderComGroq(mensagemCliente, contextAgendamentos = 0, historicoAnterior, systemPromptOpcional = "", nomeCliente = "") {
+    if (!process.env.GROQ_API_KEY) return "Por favor, escolha uma opção no menu.";
 
-    // PROMPT COM BASE DE CONHECIMENTO E BLOQUEIO SEVERO DE ASSUNTOS EXTERNOS
-    const INSTRUCOES_BLINDADAS_CONTEXTO = `És o CÉREBRO de roteamento e atendimento da Portal da Barbearia em Moçambique. NUNCA saias da tua personagem.
-DADOS DO CLIENTE: Nome: "${nomeCliente || 'Amigo'}" | Contexto: "${infoTemporal}"
+    // Se não passarem um prompt (ex: chamadas antigas da barbearia), mantemos o original
+    const promptPadraoBarbearia = `És o CÉREBRO de roteamento da Portal da Barbearia. NUNCA saias da personagem. Nome do Cliente: "${nomeCliente}". Contexto Temporal: ${systemPromptOpcional}.
+[ BASE DA BARBEARIA ] Aceitamos crianças, temos estacionamento, M-Pesa, Wi-Fi, PS5. Seg a Sáb 09h às 19h. Av. 24 de Julho.
+REGRA: 
+1. Se quiser agendar 👉 /AGENDAR
+2. Falar com atendente 👉 /HUMANO
+3. Cancelar 👉 /CANCELAR
+4. Preços 👉 /PRECOS
+5. Local 👉 /LOCAL
+6. Voltar 👉 /MENU
+7. Assuntos fora de contexto 👉 "Desculpa, sou apenas o assistente da barbearia! Só consigo ajudar com agendamentos e informações sobre o nosso espaço."
+Se for dúvida da base de conhecimento, responda naturalmente SEM TAG.`;
 
-[ BASE DE CONHECIMENTO DA BARBEARIA (Usa APENAS para responder a dúvidas) ]
-- Crianças: Cortamos sim! Temos barbeiros experientes, com muita paciência e temos cadeiras adaptadas para as crianças.
-- Estacionamento: Temos um parque de estacionamento privativo e 100% seguro em frente à nossa barbearia.
-- Pagamentos: Aceitamos M-Pesa, E-Mola, Cartões (POS) e Dinheiro (Numerário).
-- Comodidades: Temos Wi-Fi grátis, PlayStation 5 para jogar enquanto aguardas, ar condicionado, e oferecemos água, refrigerante ou cerveja como cortesia.
-- Endereço / Local: Av. 24 de Julho, Maputo.
-- Horário: Segunda a Sábado, das 09h às 19h.
-- Domicílio: Não fazemos cortes ao domicílio, o atendimento é exclusivamente no nosso espaço.
-
-🚨 REGRA DE OURO SOBRE COMO RESPONDER (SEGUE RIGOROSAMENTE):
-
-1. SE O CLIENTE QUISER UMA AÇÃO DIRETA, DEVOLVE APENAS A TAG (SEM MAIS TEXTO):
-   - Quero agendar/marcar/cortar 👉 /AGENDAR
-   - Falar com atendente/humano 👉 /HUMANO
-   - Cancelar marcação 👉 /CANCELAR
-   - Preços/Tabela/Serviços 👉 /PRECOS
-   - Ver minha agenda/marcações 👉 /AGENDA
-   - Manda localização/mapa/onde é 👉 /LOCAL
-   - Voltar/Menu/Início 👉 /MENU
-
-2. SE O CLIENTE FIZER UMA PERGUNTA SOBRE A BARBEARIA (ex: Estacionamento, Wi-fi):
-   - Escreve uma resposta conversacional e simpática baseada na [BASE DE CONHECIMENTO].
-   - NESTE CASO, NÃO USES NENHUMA TAG!
-   - Mantém a resposta curta e natural (máximo 2 a 3 frases).
-
-3. SE FOR UM ASSUNTO 100% FORA DO CONTEXTO DA BARBEARIA (Ex: Matemática, Clima, Futebol, Política, Informática, Dicas, Códigos):
-   - É ESTRITAMENTE PROIBIDO responder à pergunta, dar conselhos ou continuar o assunto.
-   - DEVES OBRIGATORIAMENTE DEVOLVER ESTE TEXTO EXATO (sem adicionar mais nada):
-     "Desculpa, sou apenas o assistente virtual da Portal da Barbearia! 😅 Só consigo ajudar com agendamentos e informações sobre o nosso espaço."`;
+    const systemInstrucoes = systemPromptOpcional && systemPromptOpcional.includes('És o assistente') 
+        ? systemPromptOpcional 
+        : promptPadraoBarbearia;
 
     try {
-        const constructMessagesFlowEngineLpu = [{ role: "system", content: INSTRUCOES_BLINDADAS_CONTEXTO }];
+        const constructMessagesFlowEngine = [{ role: "system", content: systemInstrucoes }];
         
         if (historicoAnterior && historicoAnterior.length > 0) {
             historicoAnterior.forEach(linhaOld => {
                 if(linhaOld.content) {
                     let contentClean = linhaOld.content;
-                    if (contentClean.includes('| Transcrição: ')) {
-                        contentClean = contentClean.split('| Transcrição: ')[1].trim();
-                    } else if (contentClean.includes('[MEDIA:')) {
-                        contentClean = "(Mídia enviada pelo utilizador)";
-                    }
-                    constructMessagesFlowEngineLpu.push({ role: linhaOld.role, content: contentClean });
+                    if (contentClean.includes('| Transcrição: ')) contentClean = contentClean.split('| Transcrição: ')[1].trim();
+                    else if (contentClean.includes('[MEDIA:')) contentClean = "(Mídia enviada pelo utilizador)";
+                    constructMessagesFlowEngine.push({ role: linhaOld.role, content: contentClean });
                 }
             });
         }
         
-        constructMessagesFlowEngineLpu.push({ role: "user", content: mensagemCliente });
+        constructMessagesFlowEngine.push({ role: "user", content: mensagemCliente });
 
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant", 
-            messages: constructMessagesFlowEngineLpu,
-            temperature: 0.1, // Mantido muito baixo para ele obedecer rigidamente
-            max_tokens: 150 
+            messages: constructMessagesFlowEngine,
+            temperature: 0.1, 
+            max_tokens: 200 
         });
         
         return resposta.choices[0]?.message?.content || "/MENU";

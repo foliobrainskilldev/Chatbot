@@ -5,14 +5,12 @@ const path = require('path');
 const fs = require('fs');
 const {
     startOfDay,
-    endOfDay
+    endOfDay,
+    subDays
 } = require('date-fns');
 const {
     prisma
 } = require('./db');
-const {
-    stateMachine
-} = require('./messageHandler');
 const {
     sendText,
     uploadMediaToMeta,
@@ -27,139 +25,159 @@ const storage = multer.diskStorage({
     }
 });
 const upload = multer({
-    storage: storage
-});
-const settingsPath = path.join(__dirname, 'settings.json');
-
-// Rotas de Configuração
-router.get('/settings', (req, res) => {
-    try {
-        if (!fs.existsSync(settingsPath)) {
-            return res.status(200).json({
-                botAtivo: true,
-                diasTrabalho: [1, 2, 3, 4, 5, 6],
-                horaInicio: "09:00",
-                horaFim: "19:00"
-            });
-        }
-        const config = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-        res.status(200).json(config);
-    } catch (e) {
-        res.status(500).json({
-            error: "Erro ao ler configurações"
-        });
-    }
+    storage
 });
 
-router.post('/settings', (req, res) => {
+// ==========================================
+// 1. DASHBOARD & MÉTRICAS AVANÇADAS
+// ==========================================
+router.get('/dashboard/stats', async (req, res) => {
     try {
-        fs.writeFileSync(settingsPath, JSON.stringify(req.body, null, 2));
-        res.status(200).json({
-            message: "Configurações salvas!"
+        const totalLeads = await prisma.cliente.count();
+        const leadsHoje = await prisma.cliente.count({
+            where: {
+                criadoEm: {
+                    gte: startOfDay(new Date())
+                }
+            }
         });
-    } catch (e) {
-        res.status(500).json({
-            error: "Erro ao salvar"
-        });
-    }
-});
 
-router.get('/kpis', async (req, res) => {
-    try {
-        const totalClientes = await prisma.cliente.count();
-        const totalAgendamentos = await prisma.agendamento.count({
+        const agendamentosTotais = await prisma.agendamento.count({
             where: {
                 status: 'AGENDADO'
             }
         });
-        const conversasPendentes = await prisma.cliente.count({
+        const cancelamentosTotais = await prisma.agendamento.count({
             where: {
-                falarHumano: true
+                status: 'CANCELADO'
             }
         });
 
-        const hojeInicio = startOfDay(new Date());
-        const hojeFim = endOfDay(new Date());
-        const agendamentosHoje = await prisma.agendamento.count({
-            where: {
-                status: 'AGENDADO',
-                dataHora: {
-                    gte: hojeInicio,
-                    lte: hojeFim
+        // Funil de Vendas CRM
+        const funil = {
+            novos: await prisma.cliente.count({
+                where: {
+                    leadStatus: 'NOVO'
                 }
-            }
-        });
+            }),
+            emConversa: await prisma.cliente.count({
+                where: {
+                    leadStatus: 'EM_CONVERSA'
+                }
+            }),
+            qualificados: await prisma.cliente.count({
+                where: {
+                    leadStatus: 'QUALIFICADO'
+                }
+            }),
+            agendados: await prisma.cliente.count({
+                where: {
+                    leadStatus: 'AGENDADO'
+                }
+            }),
+        };
 
         res.status(200).json({
-            totalClientes,
-            totalAgendamentos,
-            conversasPendentes,
-            agendamentosHoje
+            totalLeads,
+            leadsHoje,
+            agendamentosTotais,
+            cancelamentosTotais,
+            funil
         });
     } catch (error) {
         res.status(500).json({
-            error: "Erro ao carregar estatísticas."
+            error: "Erro ao carregar Dashboard."
         });
     }
 });
 
-router.get('/agendamentos/hoje', async (req, res) => {
+// ==========================================
+// 2. GESTÃO DA I.A E CONFIGURAÇÃO (MULTI-NICHO)
+// ==========================================
+router.get('/config', async (req, res) => {
     try {
-        const hojeInicio = startOfDay(new Date());
-        const agendamentos = await prisma.agendamento.findMany({
+        let config = await prisma.configSistema.findFirst();
+        res.status(200).json(config);
+    } catch (e) {
+        res.status(500).json({
+            error: "Erro ao ler configurações da IA"
+        });
+    }
+});
+
+router.post('/config', async (req, res) => {
+    try {
+        const dados = req.body;
+        await prisma.configSistema.update({
             where: {
-                status: 'AGENDADO',
-                dataHora: {
-                    gte: hojeInicio
-                }
+                id: 1
             },
-            include: {
-                cliente: true,
-                servico: true,
-                barbeiro: true
-            },
-            orderBy: {
-                dataHora: 'asc'
+            data: {
+                modoAtivo: dados.modoAtivo, // 'BARBEARIA' ou 'CLINICA'
+                nomeAssistente: dados.nomeAssistente,
+                tomDeVoz: dados.tomDeVoz,
+                regrasExtrasIA: dados.regrasExtrasIA,
+                ignorarDiagnosticos: dados.ignorarDiagnosticos
             }
         });
-        res.status(200).json(agendamentos);
-    } catch (error) {
-        res.status(500).json({
-            error: "Erro ao carregar agenda."
-        });
-    }
-});
-
-router.post('/reset', async (req, res) => {
-    try {
-        await prisma.mensagemIA.deleteMany({});
-        await prisma.agendamento.deleteMany({});
-        await prisma.cliente.deleteMany({});
-        if (stateMachine) stateMachine.clear();
         res.status(200).json({
-            message: "Memória do bot apagada com sucesso!"
+            message: "Configurações Globais atualizadas com sucesso!"
         });
-    } catch (error) {
+    } catch (e) {
         res.status(500).json({
-            error: "Erro interno."
+            error: "Erro ao salvar Configurações"
         });
     }
 });
 
-router.get('/clientes', async (req, res) => {
+// ==========================================
+// 3. CRM E CENTRAL DE LEADS
+// ==========================================
+router.get('/leads', async (req, res) => {
     try {
-        res.status(200).json(await prisma.cliente.findMany({
+        const leads = await prisma.cliente.findMany({
             orderBy: {
-                id: 'desc'
+                ultimaInteracao: 'desc'
             }
-        }));
+        });
+        res.status(200).json(leads);
     } catch (error) {
         res.status(500).json({
-            error: "Erro."
+            error: "Erro ao listar Leads."
         });
     }
 });
 
+router.put('/leads/:id/status', async (req, res) => {
+    try {
+        const {
+            status,
+            tags,
+            observacoes,
+            valorPotencial
+        } = req.body;
+        const lead = await prisma.cliente.update({
+            where: {
+                id: req.params.id
+            },
+            data: {
+                leadStatus: status,
+                tags: tags,
+                observacoes: observacoes,
+                valorPotencial: valorPotencial
+            }
+        });
+        res.status(200).json(lead);
+    } catch (error) {
+        res.status(500).json({
+            error: "Erro ao atualizar Lead."
+        });
+    }
+});
+
+// ==========================================
+// 4. CENTRAL DE MENSAGENS (Atendimento Humano)
+// ==========================================
 router.get('/conversas/pendentes', async (req, res) => {
     try {
         res.status(200).json(await prisma.cliente.findMany({
@@ -167,7 +185,7 @@ router.get('/conversas/pendentes', async (req, res) => {
                 falarHumano: true
             },
             orderBy: {
-                id: 'desc'
+                ultimaInteracao: 'desc'
             }
         }));
     } catch (error) {
@@ -210,10 +228,6 @@ router.post('/conversas/:clienteId/enviar', upload.single('arquivo'), async (req
             if (mediaId) {
                 await sendMediaMessage(clienteId, type, mediaId, texto);
                 mensagemParaBD = `[MEDIA:${type}] /${req.file.path} | Transcrição: ${texto}`;
-            } else {
-                return res.status(500).json({
-                    error: "A Meta rejeitou o ficheiro."
-                });
             }
         } else if (texto) {
             await sendText(clienteId, texto);
@@ -245,7 +259,8 @@ router.post('/conversas/:clienteId/resolver', async (req, res) => {
                 id: req.params.clienteId
             },
             data: {
-                falarHumano: false
+                falarHumano: false,
+                leadStatus: 'ATENDIDO'
             }
         });
         await sendText(req.params.clienteId, "Atendimento humano encerrado. O Assistente Virtual assumiu novamente o comando.");
@@ -256,6 +271,36 @@ router.post('/conversas/:clienteId/resolver', async (req, res) => {
     } catch (error) {
         res.status(500).json({
             error: "Erro."
+        });
+    }
+});
+
+// Rotas antigas de compatibilidade (agendamentos) mantidas
+router.get('/agendamentos/hoje', async (req, res) => {
+    try {
+        const hojeInicio = startOfDay(new Date());
+        const agendamentos = await prisma.agendamento.findMany({
+            where: {
+                status: 'AGENDADO',
+                dataHora: {
+                    gte: hojeInicio
+                }
+            },
+            include: {
+                cliente: true,
+                servico: true,
+                barbeiro: true,
+                tratamento: true,
+                profissionalSaude: true
+            },
+            orderBy: {
+                dataHora: 'asc'
+            }
+        });
+        res.status(200).json(agendamentos);
+    } catch (error) {
+        res.status(500).json({
+            error: "Erro ao carregar agenda."
         });
     }
 });

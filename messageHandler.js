@@ -15,6 +15,10 @@ const {
     processarCancelamento
 } = require('./flowCancelamento');
 const {
+    handleClinicaMessage,
+    STEPS_CLINICA
+} = require('./flowClinica'); // NOVO
+const {
     sendDelayedText,
     sendInteractiveMenu,
     sendDelayedLocation
@@ -22,7 +26,6 @@ const {
 const {
     responderComGroq,
     extrairNomeComGroq,
-    gerarMensagemNotificacao,
     transcreverAudioComGroq
 } = require('./groqApi');
 const {
@@ -34,6 +37,8 @@ const fs = require('fs');
 const path = require('path');
 
 const stateMachine = new Map();
+
+// Mantém os steps da Barbearia
 const STEPS = {
     MENU_PRINCIPAL: 'MENU_PRINCIPAL',
     PEDIR_NOME: 'PEDIR_NOME',
@@ -60,7 +65,6 @@ function getSettings() {
 
 async function sendMenu(sockIgnorado, jid) {
     const textoMenu = `Selecione uma das opções abaixo para prosseguir:`;
-
     await sendInteractiveMenu(null, jid, textoMenu, [{
             id: 'cmd_agendar',
             title: 'Agendar',
@@ -100,7 +104,6 @@ async function handleMessage(message, contact) {
     let displayMessage = "";
     const jid = senderNumber;
 
-    // CORREÇÃO AQUI: Passamos o ID e o senderNumber para acionar o Visto Azul + "A Escrever..."
     if (message.id) await markAsReadAndTyping(message.id, senderNumber);
 
     if (message.type === 'text') {
@@ -131,6 +134,16 @@ async function handleMessage(message, contact) {
             const caption = message.image.caption || '';
             textMessage = caption || "(Imagem enviada)";
             displayMessage = `[MEDIA:image] /uploads/${fileName}` + (caption ? ` | Transcrição: ${caption}` : '');
+
+            // Se for modo Clínica, talvez seja um exame/documento
+            await prisma.cliente.update({
+                where: {
+                    id: senderNumber
+                },
+                data: {
+                    tags: 'enviou_imagem'
+                }
+            });
         }
     } else if (message.type === 'video') {
         const vidBuffer = await downloadMedia(message.video.id);
@@ -141,28 +154,22 @@ async function handleMessage(message, contact) {
             textMessage = caption || "(Vídeo enviado)";
             displayMessage = `[MEDIA:video] /uploads/${fileName}` + (caption ? ` | Transcrição: ${caption}` : '');
         }
-    } else if (message.type === 'order') {
-        const orderItems = message.order.product_items;
-        if (orderItems && orderItems.length > 0) {
-            const produtoSKU = orderItems[0].product_retailer_id;
-            const servicosDb = await prisma.servico.findMany({
-                orderBy: {
-                    id: 'asc'
-                }
-            });
-            let dbServicoId = servicosDb.length > 0 ? servicosDb[0].id.toString() : '1';
-            textMessage = 'srv_' + dbServicoId;
-            displayMessage = "Encomenda pelo Catálogo";
-        }
     }
 
     if (!textMessage && !displayMessage) return;
 
     try {
-        const config = getSettings();
-        if (!config.botAtivo) return;
+        const configLocal = getSettings();
+        if (!configLocal.botAtivo) return;
 
         let cliente = await getOrCreateCliente(senderNumber);
+
+        // Verifica o modo do sistema (CRM Central)
+        let configDb = await prisma.configSistema.findFirst();
+        if (!configDb) configDb = {
+            modoAtivo: 'BARBEARIA'
+        };
+        const MODO_ATIVO = configDb.modoAtivo;
 
         if (textMessage.trim().toLowerCase() === '#sair') {
             if (cliente.falarHumano) {
@@ -177,7 +184,8 @@ async function handleMessage(message, contact) {
                 if (global.io) global.io.emit('atualizar_fila');
             }
             await sendDelayedText(null, jid, 'Atendimento automático restaurado.');
-            await sendMenu(null, jid);
+            if (MODO_ATIVO === 'BARBEARIA') await sendMenu(null, jid);
+            // Se for clínica, o menu da clínica será enviado no flowClinica
             return;
         }
 
@@ -197,19 +205,15 @@ async function handleMessage(message, contact) {
         }
 
         const agora = new Date();
-        const horaFormatoEn = agora.toLocaleString("en-US", {
-            timeZone: "Africa/Maputo",
-            hour12: false,
-            hour: "numeric"
-        });
-        const maputoHour = parseInt(horaFormatoEn, 10);
         const horaMaputoStr = agora.toLocaleString("pt-PT", {
             timeZone: "Africa/Maputo"
         });
-
-        let periodoDia = 'Boa noite';
-        if (maputoHour >= 5 && maputoHour < 12) periodoDia = 'Bom dia';
-        else if (maputoHour >= 12 && maputoHour < 18) periodoDia = 'Boa tarde';
+        const maputoHour = parseInt(agora.toLocaleString("en-US", {
+            timeZone: "Africa/Maputo",
+            hour12: false,
+            hour: "numeric"
+        }), 10);
+        let periodoDia = maputoHour >= 5 && maputoHour < 12 ? 'Bom dia' : (maputoHour >= 12 && maputoHour < 18 ? 'Boa tarde' : 'Boa noite');
 
         const horaMin = new Intl.DateTimeFormat('pt-PT', {
             timeZone: 'Africa/Maputo',
@@ -219,17 +223,23 @@ async function handleMessage(message, contact) {
         const diaDaSemana = new Date(agora.toLocaleString('en-US', {
             timeZone: 'Africa/Maputo'
         })).getDay();
-        let foraDoExpediente = (!config.diasTrabalho.includes(diaDaSemana) || horaMin < config.horaInicio || horaMin > config.horaFim);
+        let foraDoExpediente = (!configLocal.diasTrabalho.includes(diaDaSemana) || horaMin < configLocal.horaInicio || horaMin > configLocal.horaFim);
 
         let userState = stateMachine.get(senderNumber) || {
             step: STEPS.MENU_PRINCIPAL,
             data: {}
         };
-
-        // ALARME DE RECUPERAÇÃO ATIVADO: Guarda a hora exata da interação do cliente para o CronJob atuar se ele desaparecer
         userState.lastActive = Date.now();
         userState.notified = false;
 
+        // --- ROTEAMENTO INTELIGENTE (BARBEARIA VS CLÍNICA) ---
+        if (MODO_ATIVO === 'CLINICA') {
+            // Entrega o controle totalmente para o Flow da Clínica
+            await handleClinicaMessage(jid, textMessage, displayMessage, senderNumber, cliente, stateMachine, configDb, periodoDia, foraDoExpediente);
+            return;
+        }
+
+        // --- FLUXO ORIGINAL DA BARBEARIA (MANTIDO INTACTO) ---
         if ((!cliente.nome || cliente.nome === 'Sem Nome') && userState.step === STEPS.MENU_PRINCIPAL) {
             const historicoCru = await prisma.mensagemIA.count({
                 where: {
@@ -239,9 +249,7 @@ async function handleMessage(message, contact) {
             if (historicoCru === 0) {
                 userState.step = STEPS.PEDIR_NOME;
                 stateMachine.set(senderNumber, userState);
-
                 const msgSaudacao = `${periodoDia}! Sou o assistente da Portal da Barbearia.\nPara que o nosso atendimento seja mais amigável, como posso te chamar?`;
-
                 await prisma.mensagemIA.create({
                     data: {
                         role: 'assistant',
@@ -249,7 +257,6 @@ async function handleMessage(message, contact) {
                         clienteId: senderNumber
                     }
                 });
-
                 await sendInteractiveMenu(null, jid, msgSaudacao, [{
                         id: 'cmd_menu',
                         title: 'Menu Principal'
@@ -268,7 +275,6 @@ async function handleMessage(message, contact) {
         }
 
         const isGlobalBtn = textMessage.startsWith('cmd_') || textMessage.startsWith('btn_');
-
         if (isGlobalBtn) {
             userState.step = STEPS.MENU_PRINCIPAL;
             userState.data = {};
@@ -279,7 +285,6 @@ async function handleMessage(message, contact) {
 
         if (userState.step === STEPS.PEDIR_NOME) {
             const nomeExtraido = await extrairNomeComGroq(textMessage);
-
             if (nomeExtraido.toUpperCase() === 'IGNORAR') {
                 userState.step = STEPS.MENU_PRINCIPAL;
                 stateMachine.set(senderNumber, userState);
@@ -312,37 +317,7 @@ async function handleMessage(message, contact) {
                 });
 
                 const txtBoasVindas = `Muito prazer, ${nomeFinal}! Selecione uma das opções abaixo para prosseguir:`;
-                await sendInteractiveMenu(null, jid, txtBoasVindas, [{
-                        id: 'cmd_agendar',
-                        title: 'Agendar',
-                        description: 'Cortar/Marcar novo!'
-                    },
-                    {
-                        id: 'cmd_precos',
-                        title: 'Serviços e Preços',
-                        description: 'Tabela C/ preçários'
-                    },
-                    {
-                        id: 'cmd_agenda',
-                        title: 'A Minha Agenda',
-                        description: 'Check dos apontamentos'
-                    },
-                    {
-                        id: 'cmd_cancelar',
-                        title: 'Cancelar Marcas',
-                        description: 'Pausar Canceladas!'
-                    },
-                    {
-                        id: 'cmd_local',
-                        title: 'Av., Mapa / Hrs',
-                        description: 'Geolocalização'
-                    },
-                    {
-                        id: 'cmd_humano',
-                        title: 'Falar com Humano',
-                        description: 'Atendimento Orgânico'
-                    }
-                ]);
+                await sendMenu(null, jid);
                 return;
             }
         }
@@ -409,8 +384,6 @@ async function handleMessage(message, contact) {
 }
 
 async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, displayMessage, senderNumber, nomeCliente, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente) {
-
-    // Grava TUDO no banco de dados para o CRM ver bonito e salva a referência
     const novaMensagem = await prisma.mensagemIA.create({
         data: {
             role: 'user',
@@ -418,8 +391,8 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, display
             clienteId: senderNumber
         }
     });
-
     const option = textMessage.trim();
+
     switch (option) {
         case 'cmd_agendar':
             await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);
@@ -464,11 +437,7 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, display
                 },
                 take: 5
             });
-
-            // Filtramos a mensagem que acabámos de gravar para não enviarmos duplicado para a IA ler
             const historicoAnterior = historicoCru.filter(msg => msg.id !== novaMensagem.id).reverse();
-
-            // LÓGICA DE MEMÓRIA E TEMPO: O bot percebe o contexto temporal aqui
             let tempoPassado = "O cliente acabou de iniciar a conversa.";
             if (historicoAnterior.length > 0) {
                 const diffMins = Math.floor((Date.now() - new Date(historicoAnterior[historicoAnterior.length - 1].criadoEm).getTime()) / 60000);
@@ -477,9 +446,7 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, display
                 else tempoPassado = `Conversa ATIVA. PROIBIDO dizer "Bom dia/tarde". Responda direto.`;
             }
 
-            const infoTemporal = `Horário: ${horaMaputoStr} (${periodoDia}). ${tempoPassado} ${foraDoExpediente ? 'Barbearia FECHADA agora.' : 'Barbearia ABERTA.'}`;
-
-            // A IA analisa APENAS O TEXTO LIMPO / TRANSCRIÇÃO e toma a decisão
+            const infoTemporal = `Horário: ${horaMaputoStr} (${periodoDia}). ${tempoPassado} ${foraDoExpediente ? 'FECHADA agora.' : 'ABERTA.'}`;
             const textIArid = await responderComGroq(textMessage, 0, historicoAnterior, infoTemporal, nomeCliente);
             const intentCheck = textIArid.trim().toUpperCase().replace(/\s+/g, '');
 
