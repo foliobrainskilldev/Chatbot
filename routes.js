@@ -16,19 +16,17 @@ router.get('/webhook', botEngine.verificarWebhook);
 router.post('/webhook', botEngine.processarWebhook);
 
 // ==========================================
-// HUB NEUTRO (Painel Central de Seleção)
+// HUB NEUTRO (Painel Central de Controle)
 // ==========================================
 router.get('/hub/config', hubController.getConfigSistema);
 router.post('/hub/config', hubController.saveConfigSistema);
 router.get('/hub/stats', hubController.getHubStats);
+router.post('/hub/reset', hubController.formatarSistemaCompleto); // Novo Endpoint para formatar TUDO
 
 // ==========================================
 // ENDPOINTS ISOLADOS (NUNCA SE MISTURAM)
 // ==========================================
-// Tudo que bater em /api/barbearia vai para a pasta de barbearia
 router.use('/api/barbearia', barbeariaRoutes);
-
-// Tudo que bater em /api/clinica vai para a pasta de clínica
 router.use('/api/clinica', clinicaRoutes);
 
 module.exports = router;
