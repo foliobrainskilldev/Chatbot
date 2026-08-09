@@ -3,139 +3,125 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
-// Configuração Global (Hub, IA, Automações e Integrações)
 model ConfigSistema {
-  id                     Int      @id @default(1)
-  modoAtivo              String   @default("BARBEARIA") // "BARBEARIA" ou "CLINICA"
-  
-  // Gestão IA
-  nomeAssistente         String   @default("Assistente Virtual")
-  tomDeVoz               String   @default("Amigável e profissional")
-  objetivos              String   @default("Agendar clientes e tirar dúvidas")
-  regrasExtrasIA         String   @default("")
-  faq                    String   @default("")
-  ignorarDiagnosticos    Boolean  @default(false)
-  regrasTransferencia    String   @default("Transferir se o cliente disser 'humano'")
-
-  // Automações
-  notificarNovosLeads    Boolean  @default(true)
-  autoFollowUp           Boolean  @default(true)
-  autoLembrete           Boolean  @default(true)
-  distribuicaoLeads      String   @default("MANUAL") // MANUAL ou ROTATIVO
-  
-  // Integrações
-  webhookUrl             String?
-  metaToken              String?
-  googleCalendarKey      String?
+  id                  Int     @id @default(1)
+  modoAtivo           String  @default("BARBEARIA") // BARBEARIA ou CLINICA
+  nomeAssistente      String  @default("Assistente")
+  tomDeVoz            String  @default("Profissional")
+  objetivos           String? @db.Text
+  regrasExtrasIA      String? @db.Text
+  faq                 String? @db.Text
+  metaToken           String? @db.Text
+  webhookUrl          String?
+  notificarNovosLeads Boolean @default(true)
 }
 
-// Equipe
 model Usuario {
-  id           Int           @id @default(autoincrement())
-  nome         String
-  email        String        @unique
-  senha        String
-  funcao       String        @default("ATENDENTE") // ADMIN, ATENDENTE
-  status       String        @default("OFFLINE")   // ONLINE, OFFLINE
-  clientes     Cliente[]     // Leads vinculados a este usuário
-  notas        NotaInterna[]
+  id          Int           @id @default(autoincrement())
+  nome        String
+  email       String        @unique
+  senha       String
+  funcao      String        @default("ATENDENTE") // ADMIN, GERENTE, ATENDENTE
+  status      String        @default("ONLINE")
+  notas       NotaInterna[]
+  criadoEm    DateTime      @default(now())
 }
 
 model Cliente {
-  id               String        @id // Número do WhatsApp
-  nome             String?
-  falarHumano      Boolean       @default(false)
-  criadoEm         DateTime      @default(now())
-  
-  // CRM Avançado
-  leadStatus       String        @default("NOVO")
-  origem           String        @default("WhatsApp")
-  interesse        String?       
-  valorPotencial   Float         @default(0.0)
-  observacoes      String?
-  tags             String?       // Tags separadas por vírgula
-  ultimaInteracao  DateTime      @default(now())
-  
-  responsavelId    Int?
-  responsavel      Usuario?      @relation(fields: [responsavelId], references: [id])
-  
-  mensagensIA      MensagemIA[]
-  agendamentos     Agendamento[]
-  notasInternas    NotaInterna[]
-}
-
-// Histórico de Notas Internas do Chat
-model NotaInterna {
-  id        Int      @id @default(autoincrement())
-  texto     String
-  criadoEm  DateTime @default(now())
-  
-  clienteId String
-  cliente   Cliente  @relation(fields: [clienteId], references: [id])
-  
-  usuarioId Int
-  usuario   Usuario  @relation(fields: [usuarioId], references: [id])
+  id              String        @id // Número do WhatsApp
+  nome            String?
+  email           String?
+  fotoUrl         String?       @db.Text // Cloudinary URL
+  leadStatus      String        @default("NOVO") // NOVO, INTERESSADO, QUALIFICADO, AGENDADO, CLIENTE, PERDIDO
+  falarHumano     Boolean       @default(false)
+  tags            String?
+  valorPotencial  Float         @default(0.0)
+  origem          String        @default("WhatsApp")
+  observacoes     String?       @db.Text
+  ultimaInteracao DateTime      @default(now())
+  criadoEm        DateTime      @default(now())
+  mensagens       MensagemIA[]
+  agendamentos    Agendamento[]
+  notas           NotaInterna[]
 }
 
 model MensagemIA {
-  id        Int      @id @default(autoincrement())
-  role      String   
-  content   String
-  criadoEm  DateTime @default(now())
-  clienteId String
-  cliente   Cliente  @relation(fields: [clienteId], references: [id])
-}
-
-model Servico {
-  id           Int           @id @default(autoincrement())
-  nome         String
-  preco        Float
-  duracaoMin   Int
-  agendamentos Agendamento[]
-}
-
-model Barbeiro {
-  id           Int           @id @default(autoincrement())
-  nome         String
-  agendamentos Agendamento[]
+  id              Int      @id @default(autoincrement())
+  clienteId       String
+  cliente         Cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  role            String   // 'user', 'assistant', 'system'
+  content         String   @db.Text
+  midiaUrl        String?  @db.Text // Cloudinary URL se houver arquivo
+  tipoMidia       String?  // image, audio, document
+  atendenteHumano Boolean  @default(false) // True se foi enviada pelo painel
+  criadoEm        DateTime @default(now())
 }
 
 model Tratamento {
-  id           Int           @id @default(autoincrement())
-  nome         String
-  preco        Float
-  duracaoMin   Int
-  descricao    String?
+  id          Int           @id @default(autoincrement())
+  nome        String
+  descricao   String?       @db.Text
+  preco       Float
+  duracaoMin  Int           @default(30)
+  imagemUrl   String?       @db.Text // Cloudinary URL
+  faq         String?       @db.Text
+  status      String        @default("ATIVO")
+  criadoEm    DateTime      @default(now())
   agendamentos Agendamento[]
 }
 
 model ProfissionalSaude {
-  id           Int           @id @default(autoincrement())
-  nome         String
+  id            Int           @id @default(autoincrement())
+  nome          String
   especialidade String
-  agendamentos Agendamento[]
+  agendamentos  Agendamento[]
 }
 
 model Agendamento {
-  id                  Int       @id @default(autoincrement())
+  id                  Int                @id @default(autoincrement())
   dataHora            DateTime
-  status              String    @default("AGENDADO") // AGENDADO, CONCLUIDO, CANCELADO, REMARCADO, AVALIADO
-  criadoEm            DateTime  @default(now())
-  
+  status              String             @default("AGENDADO") // AGENDADO, CONCLUIDO, CANCELADO, REMARCADO
   clienteId           String
-  cliente             Cliente   @relation(fields: [clienteId], references: [id])
-  
-  servicoId           Int?
-  servico             Servico?  @relation(fields: [servicoId], references: [id])
-  barbeiroId          Int?
-  barbeiro            Barbeiro? @relation(fields: [barbeiroId], references: [id])
-  
+  cliente             Cliente            @relation(fields: [clienteId], references: [id])
   tratamentoId        Int?
-  tratamento          Tratamento? @relation(fields: [tratamentoId], references: [id])
+  tratamento          Tratamento?        @relation(fields: [tratamentoId], references: [id])
   profissionalSaudeId Int?
   profissionalSaude   ProfissionalSaude? @relation(fields: [profissionalSaudeId], references: [id])
+  criadoEm            DateTime           @default(now())
+  atualizadoEm        DateTime           @updatedAt
+}
+
+model NotaInterna {
+  id        Int      @id @default(autoincrement())
+  texto     String   @db.Text
+  clienteId String
+  cliente   Cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  usuarioId Int
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id])
+  criadoEm  DateTime @default(now())
+}
+
+model WebhookEndpoint {
+  id        Int      @id @default(autoincrement())
+  url       String   @db.Text
+  secret    String?
+  eventos   String   // Ex: lead.created, appointment.created
+  ativo     Boolean  @default(true)
+  criadoEm  DateTime @default(now())
+}
+
+// Modelos mantidos para Barbearia (Retrocompatibilidade)
+model Servico {
+  id          Int           @id @default(autoincrement())
+  nome        String
+  preco       Float
+  duracaoMin  Int           @default(30)
+}
+model Barbeiro {
+  id          Int           @id @default(autoincrement())
+  nome        String
 }

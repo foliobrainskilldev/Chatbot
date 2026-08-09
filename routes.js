@@ -1,32 +1,29 @@
 const express = require('express');
 const router = express.Router();
 
-// Controladores Centrais (Direcionadores)
 const botEngine = require('./botEngine');
+const clinicaRoutes = require('./clinica/routes');
+const barbeariaRoutes = require('./barbearia/routes');
 const hubController = require('./hubController');
 
-// Rotas Isoladas por Nicho
-const barbeariaRoutes = require('./barbearia/routes');
-const clinicaRoutes = require('./clinica/routes');
-
 // ==========================================
-// WEBHOOK (WHATSAPP META API) - Roteador Central
+// WEBHOOK (WHATSAPP META API)
 // ==========================================
 router.get('/webhook', botEngine.verificarWebhook);
 router.post('/webhook', botEngine.processarWebhook);
 
 // ==========================================
-// HUB NEUTRO (Painel Central de Controle)
+// HUB CENTRAL (Gestão Global do SaaS)
 // ==========================================
 router.get('/hub/config', hubController.getConfigSistema);
 router.post('/hub/config', hubController.saveConfigSistema);
 router.get('/hub/stats', hubController.getHubStats);
-router.post('/hub/reset', hubController.formatarSistemaCompleto); // Novo Endpoint para formatar TUDO
+router.post('/hub/reset', hubController.formatarSistemaCompleto);
 
 // ==========================================
-// ENDPOINTS ISOLADOS (NUNCA SE MISTURAM)
+// ROTEAMENTO ISOLADO POR NICHO (TENANTS)
 // ==========================================
-router.use('/api/barbearia', barbeariaRoutes);
 router.use('/api/clinica', clinicaRoutes);
+router.use('/api/barbearia', barbeariaRoutes);
 
 module.exports = router;

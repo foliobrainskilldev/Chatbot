@@ -1,57 +1,88 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
-const fs = require('fs');
 const path = require('path');
-const routes = require('./routes');
+
+const { seedDatabase, prisma } = require('./db');
 const { iniciarAutomaçoes } = require('./cronJobs');
-const { seedDatabase } = require('./db');
+const routes = require('./routes');
+const security = require('./middlewares/security');
 
 const app = express();
 const server = http.createServer(app);
 
-// Configuração do WebSocket totalmente aberto para o Frontend externo
+// ==========================================
+// CONFIGURAÇÃO DO WEBSOCKET (REAL-TIME)
+// ==========================================
 const io = new Server(server, { 
     cors: { 
-        origin: "*",
+        origin: "*", // Em produção estrita, mude para o domínio do painel
         methods: ["GET", "POST", "PUT", "DELETE"]
     } 
 });
-global.io = io; // Disponibiliza o Socket globalmente
+global.io = io; // Disponibiliza globalmente para os controllers
 
-// Diretório de Uploads reais de mídia do WhatsApp
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir);
-}
+// ==========================================
+// MIDDLEWARES DE SEGURANÇA E PARSERS
+// ==========================================
+app.use(security.securityHeaders);
+app.use(cors());
+app.use(security.payloadLimit);
+app.use(security.urlEncodedLimit);
 
-// Serve APENAS as mídias estaticamente para as imagens/áudios funcionarem no Frontend
-app.use('/uploads', express.static(uploadsDir));
+// ==========================================
+// ROTEAMENTO PRINCIPAL
+// ==========================================
+// O limitador global é aplicado em todas as rotas abaixo desta linha
+app.use('/api', security.globalLimiter); 
 
-// Middlewares essenciais para a API pura
-app.use(express.json());
-app.use(cors()); // Permite que o Frontend em outro domínio consuma esta API
+// O limitador exclusivo para o Webhook da Meta
+app.use('/webhook', security.webhookLimiter); 
 
-// Rota de Teste de Vida da API
-app.get('/ping', (req, res) => {
+// Conecta o roteador central (que ramifica Clínica, Barbearia e Webhooks)
+app.use('/', routes);
+
+// ==========================================
+// HEALTH CHECK (SaaS Status)
+// ==========================================
+app.get('/health', (req, res) => {
     res.status(200).json({ 
         status: "online", 
-        message: "Pong! Motor CRM Multi-Nichos Ativo e Operante como API pura!" 
+        timestamp: new Date().toISOString(),
+        memoryUsage: process.memoryUsage().heapUsed / 1024 / 1024 + " MB"
     });
 });
 
-// Conectar as Rotas Principais e Webhook
-app.use('/', routes);
-
+// ==========================================
+// INICIALIZAÇÃO & GRACEFUL SHUTDOWN
+// ==========================================
 const PORT = process.env.PORT || 3000;
 
-server.listen(PORT, async () => {
+async function bootstrap() {
     try {
         await seedDatabase();
-        iniciarAutomaçoes();
-        console.log(`🚀 API Central e Webhook iniciados com sucesso na porta ${PORT}`);
+        iniciarAutomaçoes(); // Inicia os CRONs de lembretes e follow-ups
+        
+        server.listen(PORT, () => {
+            console.log(`[SYSTEM] API Central SaaS operando na porta ${PORT}`);
+            console.log(`[SYSTEM] Proteções ativas: Helmet, Rate-Limit, Memory-Capping`);
+        });
     } catch (error) {
-        console.error("❌ Erro fatal ao iniciar servidor:", error);
+        console.error("[ERRO CRÍTICO] Falha ao iniciar servidor:", error);
+        process.exit(1);
     }
+}
+
+// Graceful Shutdown (Fecha conexões com banco antes de desligar)
+process.on('SIGTERM', async () => {
+    console.log('[SYSTEM] Sinal SIGTERM recebido. Encerrando processos...');
+    await prisma.$disconnect();
+    server.close(() => {
+        console.log('[SYSTEM] Servidor HTTP encerrado com segurança.');
+        process.exit(0);
+    });
 });
+
+bootstrap();
