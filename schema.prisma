@@ -7,16 +7,42 @@ datasource db {
   url      = "file:./dev.db"
 }
 
-// Configuração Global do Painel (Define se é Barbearia ou Clínica, e as regras da IA)
+// Configuração Global (Hub, IA, Automações e Integrações)
 model ConfigSistema {
   id                     Int      @id @default(1)
   modoAtivo              String   @default("BARBEARIA") // "BARBEARIA" ou "CLINICA"
+  
+  // Gestão IA
   nomeAssistente         String   @default("Assistente Virtual")
   tomDeVoz               String   @default("Amigável e profissional")
+  objetivos              String   @default("Agendar clientes e tirar dúvidas")
   regrasExtrasIA         String   @default("")
-  ignorarDiagnosticos    Boolean  @default(true) // Regra estrita para clínicas
+  faq                    String   @default("")
+  ignorarDiagnosticos    Boolean  @default(false)
+  regrasTransferencia    String   @default("Transferir se o cliente disser 'humano'")
+
+  // Automações
   notificarNovosLeads    Boolean  @default(true)
-  mensagemSaudacao       String   @default("Olá! Como posso ajudar hoje?")
+  autoFollowUp           Boolean  @default(true)
+  autoLembrete           Boolean  @default(true)
+  distribuicaoLeads      String   @default("MANUAL") // MANUAL ou ROTATIVO
+  
+  // Integrações
+  webhookUrl             String?
+  metaToken              String?
+  googleCalendarKey      String?
+}
+
+// Equipe
+model Usuario {
+  id           Int           @id @default(autoincrement())
+  nome         String
+  email        String        @unique
+  senha        String
+  funcao       String        @default("ATENDENTE") // ADMIN, ATENDENTE
+  status       String        @default("OFFLINE")   // ONLINE, OFFLINE
+  clientes     Cliente[]     // Leads vinculados a este usuário
+  notas        NotaInterna[]
 }
 
 model Cliente {
@@ -25,17 +51,34 @@ model Cliente {
   falarHumano      Boolean       @default(false)
   criadoEm         DateTime      @default(now())
   
-  // Novos campos para o CRM Avançado
-  leadStatus       String        @default("NOVO") // NOVO, QUALIFICADO, AGENDADO, PERDIDO
+  // CRM Avançado
+  leadStatus       String        @default("NOVO")
   origem           String        @default("WhatsApp")
-  interesse        String?       // Qual serviço/tratamento demonstrou interesse
+  interesse        String?       
   valorPotencial   Float         @default(0.0)
   observacoes      String?
-  tags             String?       // Ex: "urgente, paciente_recorrente"
+  tags             String?       // Tags separadas por vírgula
   ultimaInteracao  DateTime      @default(now())
+  
+  responsavelId    Int?
+  responsavel      Usuario?      @relation(fields: [responsavelId], references: [id])
   
   mensagensIA      MensagemIA[]
   agendamentos     Agendamento[]
+  notasInternas    NotaInterna[]
+}
+
+// Histórico de Notas Internas do Chat
+model NotaInterna {
+  id        Int      @id @default(autoincrement())
+  texto     String
+  criadoEm  DateTime @default(now())
+  
+  clienteId String
+  cliente   Cliente  @relation(fields: [clienteId], references: [id])
+  
+  usuarioId Int
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id])
 }
 
 model MensagemIA {
@@ -47,7 +90,6 @@ model MensagemIA {
   cliente   Cliente  @relation(fields: [clienteId], references: [id])
 }
 
-// --- DADOS DA BARBEARIA (Mantidos intactos) ---
 model Servico {
   id           Int           @id @default(autoincrement())
   nome         String
@@ -62,7 +104,6 @@ model Barbeiro {
   agendamentos Agendamento[]
 }
 
-// --- DADOS DA CLÍNICA (Novos) ---
 model Tratamento {
   id           Int           @id @default(autoincrement())
   nome         String
@@ -79,17 +120,15 @@ model ProfissionalSaude {
   agendamentos Agendamento[]
 }
 
-// --- AGENDAMENTO UNIFICADO ---
 model Agendamento {
   id                  Int       @id @default(autoincrement())
   dataHora            DateTime
-  status              String    @default("AGENDADO") // AGENDADO, CONCLUIDO, CANCELADO, AVALIADO
+  status              String    @default("AGENDADO") // AGENDADO, CONCLUIDO, CANCELADO, REMARCADO, AVALIADO
   criadoEm            DateTime  @default(now())
   
   clienteId           String
   cliente             Cliente   @relation(fields: [clienteId], references: [id])
   
-  // Relações Opcionais (Depende do Modo Ativo)
   servicoId           Int?
   servico             Servico?  @relation(fields: [servicoId], references: [id])
   barbeiroId          Int?

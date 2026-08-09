@@ -17,7 +17,7 @@ const {
 const {
     handleClinicaMessage,
     STEPS_CLINICA
-} = require('./flowClinica'); // NOVO
+} = require('./flowClinica');
 const {
     sendDelayedText,
     sendInteractiveMenu,
@@ -35,10 +35,9 @@ const {
 } = require('./whatsappApi');
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
 
 const stateMachine = new Map();
-
-// Mantém os steps da Barbearia
 const STEPS = {
     MENU_PRINCIPAL: 'MENU_PRINCIPAL',
     PEDIR_NOME: 'PEDIR_NOME',
@@ -61,6 +60,42 @@ function getSettings() {
         horaFim: "19:00"
     };
     return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+}
+
+async function dispararWebhook(config, evento, dados) {
+    if (config && config.webhookUrl && config.webhookUrl.startsWith('http')) {
+        try {
+            await axios.post(config.webhookUrl, {
+                evento,
+                dados,
+                dataHora: new Date()
+            });
+        } catch (e) {}
+    }
+}
+
+async function atribuirLead(configDb, clienteId) {
+    if (configDb.distribuicaoLeads === 'ROTATIVO') {
+        const atendentes = await prisma.usuario.findMany({
+            where: {
+                status: 'ONLINE'
+            },
+            orderBy: {
+                id: 'asc'
+            }
+        });
+        if (atendentes.length > 0) {
+            const sorteado = atendentes[Math.floor(Math.random() * atendentes.length)];
+            await prisma.cliente.update({
+                where: {
+                    id: clienteId
+                },
+                data: {
+                    responsavelId: sorteado.id
+                }
+            });
+        }
+    }
 }
 
 async function sendMenu(sockIgnorado, jid) {
@@ -134,8 +169,6 @@ async function handleMessage(message, contact) {
             const caption = message.image.caption || '';
             textMessage = caption || "(Imagem enviada)";
             displayMessage = `[MEDIA:image] /uploads/${fileName}` + (caption ? ` | Transcrição: ${caption}` : '');
-
-            // Se for modo Clínica, talvez seja um exame/documento
             await prisma.cliente.update({
                 where: {
                     id: senderNumber
@@ -163,10 +196,7 @@ async function handleMessage(message, contact) {
         if (!configLocal.botAtivo) return;
 
         let cliente = await getOrCreateCliente(senderNumber);
-
-        // Verifica o modo do sistema (CRM Central)
-        let configDb = await prisma.configSistema.findFirst();
-        if (!configDb) configDb = {
+        let configDb = await prisma.configSistema.findFirst() || {
             modoAtivo: 'BARBEARIA'
         };
         const MODO_ATIVO = configDb.modoAtivo;
@@ -185,7 +215,6 @@ async function handleMessage(message, contact) {
             }
             await sendDelayedText(null, jid, 'Atendimento automático restaurado.');
             if (MODO_ATIVO === 'BARBEARIA') await sendMenu(null, jid);
-            // Se for clínica, o menu da clínica será enviado no flowClinica
             return;
         }
 
@@ -214,7 +243,6 @@ async function handleMessage(message, contact) {
             hour: "numeric"
         }), 10);
         let periodoDia = maputoHour >= 5 && maputoHour < 12 ? 'Bom dia' : (maputoHour >= 12 && maputoHour < 18 ? 'Boa tarde' : 'Boa noite');
-
         const horaMin = new Intl.DateTimeFormat('pt-PT', {
             timeZone: 'Africa/Maputo',
             hour: '2-digit',
@@ -232,14 +260,11 @@ async function handleMessage(message, contact) {
         userState.lastActive = Date.now();
         userState.notified = false;
 
-        // --- ROTEAMENTO INTELIGENTE (BARBEARIA VS CLÍNICA) ---
         if (MODO_ATIVO === 'CLINICA') {
-            // Entrega o controle totalmente para o Flow da Clínica
             await handleClinicaMessage(jid, textMessage, displayMessage, senderNumber, cliente, stateMachine, configDb, periodoDia, foraDoExpediente);
             return;
         }
 
-        // --- FLUXO ORIGINAL DA BARBEARIA (MANTIDO INTACTO) ---
         if ((!cliente.nome || cliente.nome === 'Sem Nome') && userState.step === STEPS.MENU_PRINCIPAL) {
             const historicoCru = await prisma.mensagemIA.count({
                 where: {
@@ -249,7 +274,11 @@ async function handleMessage(message, contact) {
             if (historicoCru === 0) {
                 userState.step = STEPS.PEDIR_NOME;
                 stateMachine.set(senderNumber, userState);
-                const msgSaudacao = `${periodoDia}! Sou o assistente da Portal da Barbearia.\nPara que o nosso atendimento seja mais amigável, como posso te chamar?`;
+                if (configDb.notificarNovosLeads) await dispararWebhook(configDb, 'NOVO_LEAD', {
+                    id: senderNumber
+                });
+
+                const msgSaudacao = `${periodoDia}! Sou o assistente virtual.\nComo posso te chamar?`;
                 await prisma.mensagemIA.create({
                     data: {
                         role: 'assistant',
@@ -257,19 +286,7 @@ async function handleMessage(message, contact) {
                         clienteId: senderNumber
                     }
                 });
-                await sendInteractiveMenu(null, jid, msgSaudacao, [{
-                        id: 'cmd_menu',
-                        title: 'Menu Principal'
-                    },
-                    {
-                        id: 'cmd_precos',
-                        title: 'Serviços e preços'
-                    },
-                    {
-                        id: 'cmd_humano',
-                        title: 'Falar com atendente'
-                    }
-                ]);
+                await sendDelayedText(null, jid, msgSaudacao);
                 return;
             }
         }
@@ -279,54 +296,40 @@ async function handleMessage(message, contact) {
             userState.step = STEPS.MENU_PRINCIPAL;
             userState.data = {};
             stateMachine.set(senderNumber, userState);
-            await handleEstrategiaLLMSalvos(null, jid, textMessage, displayMessage, senderNumber, cliente.nome, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente);
+            await handleEstrategiaLLMSalvos(null, jid, textMessage, displayMessage, senderNumber, cliente.nome, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente, configDb);
             return;
         }
 
         if (userState.step === STEPS.PEDIR_NOME) {
             const nomeExtraido = await extrairNomeComGroq(textMessage);
-            if (nomeExtraido.toUpperCase() === 'IGNORAR') {
-                userState.step = STEPS.MENU_PRINCIPAL;
-                stateMachine.set(senderNumber, userState);
-                await prisma.mensagemIA.create({
-                    data: {
-                        role: 'user',
-                        content: displayMessage,
-                        clienteId: senderNumber
-                    }
-                });
-            } else {
-                const nomeFinal = nomeExtraido.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-                await prisma.cliente.update({
-                    where: {
-                        id: senderNumber
-                    },
-                    data: {
-                        nome: nomeFinal
-                    }
-                });
-                cliente.nome = nomeFinal;
-                userState.step = STEPS.MENU_PRINCIPAL;
-                stateMachine.set(senderNumber, userState);
-                await prisma.mensagemIA.create({
-                    data: {
-                        role: 'user',
-                        content: displayMessage,
-                        clienteId: senderNumber
-                    }
-                });
+            const nomeFinal = (nomeExtraido.toUpperCase() !== 'IGNORAR') ? nomeExtraido.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ') : textMessage.split(' ')[0];
 
-                const txtBoasVindas = `Muito prazer, ${nomeFinal}! Selecione uma das opções abaixo para prosseguir:`;
-                await sendMenu(null, jid);
-                return;
-            }
+            await prisma.cliente.update({
+                where: {
+                    id: senderNumber
+                },
+                data: {
+                    nome: nomeFinal
+                }
+            });
+            cliente.nome = nomeFinal;
+            userState.step = STEPS.MENU_PRINCIPAL;
+            stateMachine.set(senderNumber, userState);
+            await prisma.mensagemIA.create({
+                data: {
+                    role: 'user',
+                    content: displayMessage,
+                    clienteId: senderNumber
+                }
+            });
+            await sendDelayedText(null, jid, `Muito prazer, ${nomeFinal}!`);
+            await sendMenu(null, jid);
+            return;
         }
 
         stateMachine.set(senderNumber, userState);
         const msgLower = textMessage.trim().toLowerCase();
-        const cmdsIntuitosUI = ['menu', 'início', 'inicio', 'voltar', 'cancelar tudo', '0'];
-
-        if (cmdsIntuitosUI.includes(msgLower)) {
+        if (['menu', 'início', 'inicio', 'voltar', 'cancelar tudo', '0'].includes(msgLower)) {
             userState.step = STEPS.MENU_PRINCIPAL;
             userState.data = {};
             await prisma.mensagemIA.create({
@@ -337,18 +340,7 @@ async function handleMessage(message, contact) {
                 }
             });
             await sendMenu(null, jid);
-        } else if (textMessage.startsWith('srv_')) {
-            userState.step = STEPS.AGENDAMENTO_SERVICO;
-            stateMachine.set(senderNumber, userState);
-            await prisma.mensagemIA.create({
-                data: {
-                    role: 'user',
-                    content: displayMessage,
-                    clienteId: senderNumber
-                }
-            });
-            await handleAgendamento(null, jid, textMessage, senderNumber, stateMachine, STEPS);
-        } else if (userState.step.startsWith('AGENDAMENTO_')) {
+        } else if (textMessage.startsWith('srv_') || userState.step.startsWith('AGENDAMENTO_')) {
             await prisma.mensagemIA.create({
                 data: {
                     role: 'user',
@@ -360,7 +352,7 @@ async function handleMessage(message, contact) {
         } else {
             switch (userState.step) {
                 case STEPS.MENU_PRINCIPAL:
-                    await handleEstrategiaLLMSalvos(null, jid, textMessage, displayMessage, senderNumber, cliente.nome, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente);
+                    await handleEstrategiaLLMSalvos(null, jid, textMessage, displayMessage, senderNumber, cliente.nome, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente, configDb);
                     break;
                 case STEPS.CANCELAR_AGENDAMENTO:
                     await prisma.mensagemIA.create({
@@ -383,7 +375,7 @@ async function handleMessage(message, contact) {
     }
 }
 
-async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, displayMessage, senderNumber, nomeCliente, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente) {
+async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, displayMessage, senderNumber, nomeCliente, horaMaputoStr, maputoHour, periodoDia, foraDoExpediente, configDb) {
     const novaMensagem = await prisma.mensagemIA.create({
         data: {
             role: 'user',
@@ -393,96 +385,99 @@ async function handleEstrategiaLLMSalvos(sockIgnorado, jid, textMessage, display
     });
     const option = textMessage.trim();
 
-    switch (option) {
-        case 'cmd_agendar':
-            await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);
-            break;
-        case 'cmd_precos':
-        case 'btn_servicos':
-            await verPrecosEServicos(null, jid);
-            break;
-        case 'cmd_agenda':
-            await verMeusAgendamentos(null, jid, senderNumber);
-            break;
-        case 'cmd_cancelar':
-            await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS);
-            break;
-        case 'cmd_menu':
-            await sendMenu(null, jid);
-            break;
-        case 'cmd_local':
-            await sendDelayedText(null, jid, "Ficamos na Av. 24 de Julho, Maputo. Segue o mapa abaixo:");
-            await sendDelayedLocation(jid, -25.9744, 32.5885, "Portal Da Barbearia", "Av. 24 de Julho, Maputo");
-            break;
-        case 'cmd_humano':
-        case 'btn_equipe':
-            await prisma.cliente.update({
-                where: {
-                    id: senderNumber
-                },
+    if (option === 'cmd_agendar') return await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);
+    if (['cmd_precos', 'btn_servicos'].includes(option)) return await verPrecosEServicos(null, jid);
+    if (option === 'cmd_agenda') return await verMeusAgendamentos(null, jid, senderNumber);
+    if (option === 'cmd_cancelar') return await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS);
+    if (option === 'cmd_menu') return await sendMenu(null, jid);
+    if (option === 'cmd_local') {
+        await sendDelayedText(null, jid, "Ficamos na Av. 24 de Julho, Maputo.");
+        return await sendDelayedLocation(jid, -25.9744, 32.5885, "Portal Da Barbearia", "Av. 24 de Julho, Maputo");
+    }
+    if (['cmd_humano', 'btn_equipe'].includes(option)) {
+        await prisma.cliente.update({
+            where: {
+                id: senderNumber
+            },
+            data: {
+                falarHumano: true,
+                leadStatus: 'QUALIFICADO'
+            }
+        });
+        await atribuirLead(configDb, senderNumber);
+        await dispararWebhook(configDb, 'ATENDIMENTO_HUMANO', {
+            id: senderNumber
+        });
+        await sendDelayedText(null, jid, 'Transferido para o nosso atendente. Aguarde!\n(Para voltar ao bot, digite *#sair*)');
+        if (global.io) global.io.emit('atualizar_fila');
+        return;
+    }
+
+    const historicoCru = await prisma.mensagemIA.findMany({
+        where: {
+            clienteId: senderNumber
+        },
+        orderBy: {
+            criadoEm: 'desc'
+        },
+        take: 5
+    });
+    const historicoAnterior = historicoCru.filter(msg => msg.id !== novaMensagem.id).reverse();
+
+    // CONSTRUÇÃO DO CÉREBRO DA IA (Prompt Dinâmico via Painel)
+    const promptPersonalizado = `És o ${configDb.nomeAssistente}. Tom: ${configDb.tomDeVoz}. Objetivos: ${configDb.objetivos}.
+[Base de Conhecimento Extras]: ${configDb.regrasExtrasIA}
+[FAQ Frequente]: ${configDb.faq}
+[Transferência para Humano]: ${configDb.regrasTransferencia}
+
+Contexto do Cliente: Nome: ${nomeCliente}. Horário: ${horaMaputoStr} (${periodoDia}). A barbearia está ${foraDoExpediente ? 'FECHADA' : 'ABERTA'}.
+REGRA DE OURO: Para ações diretas devolva APENAS as tags:
+Quero agendar 👉 /AGENDAR
+Falar com humano/atendente 👉 /HUMANO
+Cancelar 👉 /CANCELAR
+Preços 👉 /PRECOS
+Minha agenda 👉 /AGENDA
+Onde fica 👉 /LOCAL
+Menu 👉 /MENU`;
+
+    const textIArid = await responderComGroq(textMessage, 0, historicoAnterior, promptPersonalizado, nomeCliente);
+    const intentCheck = textIArid.trim().toUpperCase().replace(/\s+/g, '');
+
+    if (intentCheck.includes('/AGENDAR')) await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);
+    else if (intentCheck.includes('/CANCELAR')) await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS);
+    else if (intentCheck.includes('/PRECOS')) await verPrecosEServicos(null, jid);
+    else if (intentCheck.includes('/AGENDA')) await verMeusAgendamentos(null, jid, senderNumber);
+    else if (intentCheck.includes('/LOCAL')) {
+        await sendDelayedText(null, jid, "Ficamos na Av. 24 de Julho, Maputo.");
+    } else if (intentCheck.includes('/HUMANO')) {
+        await prisma.cliente.update({
+            where: {
+                id: senderNumber
+            },
+            data: {
+                falarHumano: true,
+                leadStatus: 'QUALIFICADO'
+            }
+        });
+        await atribuirLead(configDb, senderNumber);
+        await dispararWebhook(configDb, 'ATENDIMENTO_HUMANO_IA', {
+            id: senderNumber
+        });
+        await sendDelayedText(null, jid, 'A transferir para um atendente humano. Aguarde um pouco.\n(Para voltar, digite *#sair*)');
+        if (global.io) global.io.emit('atualizar_fila');
+    } else if (intentCheck.includes('/MENU')) await sendMenu(null, jid);
+    else {
+        if (textIArid.trim().startsWith('/')) await sendMenu(null, jid);
+        else {
+            await prisma.mensagemIA.create({
                 data: {
-                    falarHumano: true
-                }
-            });
-            await sendDelayedText(null, jid, 'Transferido para o nosso atendente. Aguarda só um instante!\n(Para voltar ao bot, digita *#sair*)');
-            if (global.io) global.io.emit('atualizar_fila');
-            break;
-        default:
-            const historicoCru = await prisma.mensagemIA.findMany({
-                where: {
+                    role: 'assistant',
+                    content: textIArid,
                     clienteId: senderNumber
-                },
-                orderBy: {
-                    criadoEm: 'desc'
-                },
-                take: 5
-            });
-            const historicoAnterior = historicoCru.filter(msg => msg.id !== novaMensagem.id).reverse();
-            let tempoPassado = "O cliente acabou de iniciar a conversa.";
-            if (historicoAnterior.length > 0) {
-                const diffMins = Math.floor((Date.now() - new Date(historicoAnterior[historicoAnterior.length - 1].criadoEm).getTime()) / 60000);
-                if (diffMins > 1440) tempoPassado = `Saudação "${periodoDia}" OBRIGATÓRIA.`;
-                else if (diffMins > 120) tempoPassado = `Dê a saudação "${periodoDia}".`;
-                else tempoPassado = `Conversa ATIVA. PROIBIDO dizer "Bom dia/tarde". Responda direto.`;
-            }
-
-            const infoTemporal = `Horário: ${horaMaputoStr} (${periodoDia}). ${tempoPassado} ${foraDoExpediente ? 'FECHADA agora.' : 'ABERTA.'}`;
-            const textIArid = await responderComGroq(textMessage, 0, historicoAnterior, infoTemporal, nomeCliente);
-            const intentCheck = textIArid.trim().toUpperCase().replace(/\s+/g, '');
-
-            if (intentCheck.includes('/AGENDAR')) await iniciarAgendamento(null, jid, senderNumber, stateMachine, STEPS);
-            else if (intentCheck.includes('/CANCELAR')) await iniciarCancelamento(null, jid, senderNumber, stateMachine, STEPS);
-            else if (intentCheck.includes('/PRECOS')) await verPrecosEServicos(null, jid);
-            else if (intentCheck.includes('/AGENDA')) await verMeusAgendamentos(null, jid, senderNumber);
-            else if (intentCheck.includes('/LOCAL')) {
-                await sendDelayedText(null, jid, "Ficamos na Av. 24 de Julho, Maputo. Segue o mapa:");
-                await sendDelayedLocation(jid, -25.9744, 32.5885, "Portal Da Barbearia", "Av. 24 de Julho, Maputo");
-            } else if (intentCheck.includes('/HUMANO')) {
-                await prisma.cliente.update({
-                    where: {
-                        id: senderNumber
-                    },
-                    data: {
-                        falarHumano: true
-                    }
-                });
-                await sendDelayedText(null, jid, 'A transferir para um atendente humano. Aguarda um pouco.\n(Para voltar, digita *#sair*)');
-                if (global.io) global.io.emit('atualizar_fila');
-            } else if (intentCheck.includes('/MENU')) await sendMenu(null, jid);
-            else {
-                if (textIArid.trim().startsWith('/')) await sendMenu(null, jid);
-                else {
-                    await prisma.mensagemIA.create({
-                        data: {
-                            role: 'assistant',
-                            content: textIArid,
-                            clienteId: senderNumber
-                        }
-                    });
-                    await sendDelayedText(null, jid, textIArid);
                 }
-            }
-            break;
+            });
+            await sendDelayedText(null, jid, textIArid);
+        }
     }
 }
 module.exports = {
