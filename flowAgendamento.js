@@ -1,45 +1,65 @@
-const {
-    prisma
-} = require('./db');
-const {
-    getProximosDiasUteis,
-    getHorariosDisponiveis
-} = require('./dateUtils');
-const {
-    parse
-} = require('date-fns');
-const {
-    sendInteractiveMenu,
-    sendDelayedText
-} = require('./botUtils');
-const {
-    sendProductList
-} = require('./whatsappApi');
+const { prisma } = require('./db');
+const { getProximosDiasUteis, getHorariosDisponiveis } = require('./dateUtils');
+const { parse } = require('date-fns');
+const whatsappService = require('./whatsappService');
 
-async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, stateMachine, STEPS) {
+async function iniciarAgendamento(jid, senderNumber, stateMachine, STEPS) {
+    // Validação real: Limitar a 2 agendamentos futuros para evitar spam na agenda
+    const agendamentos = await prisma.agendamento.count({
+        where: {
+            clienteId: senderNumber,
+            status: 'AGENDADO',
+            dataHora: { gte: new Date() }
+        }
+    });
+
+    if (agendamentos >= 2) {
+        await whatsappService.sendText(jid, '⚠️ Já possui 2 agendamentos futuros marcados. Por favor, cancele um deles primeiro se precisar remarcar.');
+        return;
+    }
+
+    stateMachine.set(senderNumber, { step: STEPS.AGENDAMENTO_SERVICO, data: {} });
+    
+    // Busca os serviços reais do banco de dados
+    const servicos = await prisma.servico.findMany();
+    if (servicos.length === 0) {
+        await whatsappService.sendText(jid, 'Neste momento não temos serviços cadastrados no sistema. Tente novamente mais tarde.');
+        stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
+        return;
+    }
+
+    const txtCat = "Vamos agendar! Escolha o serviço abaixo:";
+    let optServicos = servicos.map(s => ({
+        id: `srv_${s.id}`,
+        title: s.nome,
+        description: `${s.preco} MT`
+    }));
+    optServicos.push({ id: '0', title: 'Cancelar' });
+
+    await whatsappService.sendInteractiveMenu(jid, txtCat, optServicos);
+}
+
+async function handleAgendamento(jid, textMessage, senderNumber, stateMachine, STEPS) {
     const userState = stateMachine.get(senderNumber);
     const step = userState.step;
     let msg = textMessage.trim();
 
     if (msg === '0') {
-        stateMachine.set(senderNumber, {
-            step: STEPS.MENU_PRINCIPAL,
-            data: {}
-        });
-        await sendDelayedText(null, jid, 'Operação cancelada. A voltar ao menu...');
+        stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
+        await whatsappService.sendText(jid, 'Operação cancelada. Voltamos ao menu principal.');
         return;
     }
 
     switch (step) {
         case STEPS.AGENDAMENTO_SERVICO: {
-            if (msg.startsWith('srv_')) msg = msg.replace('srv_', '');
-
-            const servicos = await prisma.servico.findMany();
-            const servicoEscolhido = servicos.find(s => s.id.toString() === msg);
+            const servicoId = msg.replace('srv_', '');
+            const servicoEscolhido = await prisma.servico.findUnique({ where: { id: parseInt(servicoId) } });
+            
             if (!servicoEscolhido) {
-                await sendDelayedText(null, jid, '⚠️ Escolha inválida. Por favor, seleciona pelo catálogo ou digita 0 para cancelar.');
+                await whatsappService.sendText(jid, '⚠️ Escolha inválida. Por favor, selecione uma opção válida nos botões ou digite 0 para cancelar.');
                 return;
             }
+            
             userState.data.servico = servicoEscolhido;
             userState.step = STEPS.AGENDAMENTO_BARBEIRO;
 
@@ -48,94 +68,71 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
                 id: `barb_${b.id}`,
                 title: b.nome
             }));
-            optBarbeiros.push({
-                id: 'barb_qualquer',
-                title: 'Qualquer um'
-            }, {
-                id: '0',
-                title: 'Cancelar'
-            });
+            optBarbeiros.push({ id: 'barb_qualquer', title: 'Qualquer um' });
+            optBarbeiros.push({ id: '0', title: 'Cancelar' });
 
-            const txtBarbeiro = "Boa escolha! Preferes ser atendido por qual barbeiro?";
-            await sendInteractiveMenu(null, jid, txtBarbeiro, optBarbeiros);
+            await whatsappService.sendInteractiveMenu(jid, "Boa escolha! Prefere ser atendido por qual profissional?", optBarbeiros);
             break;
         }
 
         case STEPS.AGENDAMENTO_BARBEIRO: {
-            if (msg.startsWith('barb_')) msg = msg.replace('barb_', '');
-
-            const barbs = await prisma.barbeiro.findMany();
             let barbeiroSelecionado = null;
-            if (msg !== 'qualquer') {
-                barbeiroSelecionado = barbs.find(b => b.id.toString() === msg);
+            
+            if (msg !== 'barb_qualquer' && msg !== 'qualquer') {
+                const barbId = msg.replace('barb_', '');
+                barbeiroSelecionado = await prisma.barbeiro.findUnique({ where: { id: parseInt(barbId) } });
+                
                 if (!barbeiroSelecionado && msg !== '0') {
-                    await sendDelayedText(null, jid, '⚠️ Escolha inválida. Usa os botões ou digita 0 para cancelar.');
+                    await whatsappService.sendText(jid, '⚠️ Profissional inválido. Use os botões ou digite 0 para cancelar.');
                     return;
                 }
             }
+            
             userState.data.barbeiro = barbeiroSelecionado;
             userState.step = STEPS.AGENDAMENTO_DATA;
 
             const dias = getProximosDiasUteis(5);
             userState.data.diasDisponiveis = dias;
-            let optDias = dias.map(d => ({
-                id: d,
-                title: d
-            }));
-            optDias.push({
-                id: '0',
-                title: 'Cancelar'
-            });
+            
+            let optDias = dias.map(d => ({ id: d, title: d }));
+            optDias.push({ id: '0', title: 'Cancelar' });
 
-            const txtData = "Perfeito! Escolhe a data nos botões abaixo:";
-            await sendInteractiveMenu(null, jid, txtData, optDias);
+            await whatsappService.sendInteractiveMenu(jid, "Perfeito! Escolha a data nos botões abaixo:", optDias);
             break;
         }
 
         case STEPS.AGENDAMENTO_DATA: {
             const diasDisp = userState.data.diasDisponiveis;
             if (!diasDisp.includes(msg)) {
-                await sendDelayedText(null, jid, '⚠️ Data inválida. Escolhe nos botões ou digita 0 para cancelar.');
+                await whatsappService.sendText(jid, '⚠️ Data inválida. Escolha nos botões ou digite 0 para cancelar.');
                 return;
             }
 
             userState.data.dataString = msg;
             userState.step = STEPS.AGENDAMENTO_HORA;
-            const horasLivres = await getHorariosDisponiveis(prisma, msg, userState.data.servico.duracaoMin, userState.data.barbeiro?.id);
+            
+            const horasLivres = await getHorariosDisponiveis(msg, userState.data.servico.duracaoMin, userState.data.barbeiro?.id);
 
             if (horasLivres.length === 0) {
-                userState.step = STEPS.AGENDAMENTO_DATA;
-                const semH = "Infelizmente, a agenda está cheia para esse dia. Podes escolher outra data?";
-                let optDiasRetry = diasDisp.map(d => ({
-                    id: d,
-                    title: d
-                }));
-                optDiasRetry.push({
-                    id: '0',
-                    title: 'Cancelar'
-                });
-                await sendInteractiveMenu(null, jid, semH, optDiasRetry);
+                userState.step = STEPS.AGENDAMENTO_DATA; // Volta um passo
+                let optDiasRetry = diasDisp.map(d => ({ id: d, title: d }));
+                optDiasRetry.push({ id: '0', title: 'Cancelar' });
+                
+                await whatsappService.sendInteractiveMenu(jid, "Infelizmente, a agenda está cheia para esse dia. Pode escolher outra data?", optDiasRetry);
                 return;
             }
 
             userState.data.horasLivres = horasLivres;
-            let optHoras = horasLivres.map(h => ({
-                id: h,
-                title: h
-            }));
-            optHoras.push({
-                id: '0',
-                title: 'Cancelar'
-            });
+            let optHoras = horasLivres.map(h => ({ id: h, title: h }));
+            optHoras.push({ id: '0', title: 'Cancelar' });
 
-            const txtHora = `Certo! Para o dia ${msg}, seleciona o horário pretendido:`;
-            await sendInteractiveMenu(null, jid, txtHora, optHoras);
+            await whatsappService.sendInteractiveMenu(jid, `Certo! Para o dia ${msg}, selecione o horário pretendido:`, optHoras);
             break;
         }
 
         case STEPS.AGENDAMENTO_HORA: {
             if (!userState.data.horasLivres.includes(msg)) {
-                await sendDelayedText(null, jid, '⚠️ Horário selecionado já passou ou é inválido. Tenta novamente ou digita 0.');
+                await whatsappService.sendText(jid, '⚠️ Horário selecionado já passou ou é inválido. Tente novamente ou digite 0.');
                 return;
             }
 
@@ -144,99 +141,43 @@ async function handleAgendamento(sockIgnorado, jid, textMessage, senderNumber, s
 
             const srv = userState.data.servico;
             const brb = userState.data.barbeiro ? userState.data.barbeiro.nome : 'Qualquer um';
-            const txtIntro = "Estamos quase lá! Por favor, confirma se está tudo certinho:";
-            const resumo = `${txtIntro}\n\n✂️ Serviço: ${srv.nome}\n💈 Barbeiro: ${brb}\n📅 Data: ${userState.data.dataString}\n🕑 Hora: ${msg}`;
+            const resumo = `*Estamos quase lá!*\nPor favor, confirme se está tudo correto:\n\n✂️ Serviço: ${srv.nome}\n💈 Profissional: ${brb}\n📅 Data: ${userState.data.dataString}\n🕑 Hora: ${msg}`;
 
-            await sendInteractiveMenu(null, jid, resumo, [{
-                id: '1',
-                title: 'Confirmar'
-            }, {
-                id: '0',
-                title: 'Cancelar'
-            }]);
+            await whatsappService.sendInteractiveMenu(jid, resumo, [
+                { id: '1', title: 'Confirmar Agendamento' }, 
+                { id: '0', title: 'Cancelar Tudo' }
+            ]);
             break;
         }
 
         case STEPS.AGENDAMENTO_CONFIRMAR: {
-            if (msg === '1') {
+            if (msg === '1' || msg === 'Confirmar Agendamento') {
                 const dataHoraDb = parse(`${userState.data.dataString} ${userState.data.horaString}`, 'dd/MM/yyyy HH:mm', new Date());
+                
                 await prisma.agendamento.create({
                     data: {
                         dataHora: dataHoraDb,
                         clienteId: senderNumber,
                         servicoId: userState.data.servico.id,
-                        barbeiroId: userState.data.barbeiro?.id || null
+                        barbeiroId: userState.data.barbeiro?.id || null,
+                        status: 'AGENDADO'
                     }
                 });
 
-                const txtSucesso = "✅ Agendamento confirmado! Aguardamos a tua visita.\n(Para voltares, digita \"Menu\").";
-                await sendDelayedText(null, jid, txtSucesso);
-                stateMachine.set(senderNumber, {
-                    step: STEPS.MENU_PRINCIPAL,
-                    data: {}
+                // Atualiza o CRM (Qualifica o Lead como "AGENDADO")
+                await prisma.cliente.update({
+                    where: { id: senderNumber },
+                    data: { leadStatus: 'AGENDADO' }
                 });
-            } else if (msg === '0') {
-                stateMachine.set(senderNumber, {
-                    step: STEPS.MENU_PRINCIPAL,
-                    data: {}
-                });
-                await sendDelayedText(null, jid, 'Agendamento cancelado com sucesso.');
+
+                await whatsappService.sendText(jid, "✅ Agendamento confirmado com sucesso! Lhe enviaremos um lembrete antes do horário. Aguardamos sua visita.");
+                stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
+            } else {
+                stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
+                await whatsappService.sendText(jid, 'Agendamento cancelado.');
             }
             break;
         }
-    }
-}
-
-async function iniciarAgendamento(sockIgnorado, jid, senderNumber, stateMachine, STEPS) {
-    const agendamentos = await prisma.agendamento.count({
-        where: {
-            clienteId: senderNumber,
-            status: 'AGENDADO',
-            dataHora: {
-                gte: new Date()
-            }
-        }
-    });
-
-    if (agendamentos >= 2) {
-        await sendDelayedText(null, jid, '⚠️ Já tens 2 agendamentos futuros marcados. Podes cancelar um primeiro se precisares de remarcar.');
-        return;
-    }
-
-    stateMachine.set(senderNumber, {
-        step: STEPS.AGENDAMENTO_SERVICO,
-        data: {}
-    });
-    const txtCat = "Vamos agendar! Escolhe o serviço abaixo que preferes:";
-
-    const sections = [{
-        title: "Cortes e Barboterapia",
-        product_items: [{
-                product_retailer_id: process.env.PRODUTO_1_ID || "h5fj6325da"
-            },
-            {
-                product_retailer_id: process.env.PRODUTO_2_ID || "8pdji0vdor"
-            },
-            {
-                product_retailer_id: process.env.PRODUTO_3_ID || "af2o2iuwey"
-            }
-        ]
-    }];
-
-    try {
-        await sendProductList(jid, process.env.CATALOG_ID, "Tabela de Serviços ✂️", txtCat, sections);
-    } catch (error) {
-        const servicos = await prisma.servico.findMany();
-        let optServicos = servicos.map(s => ({
-            id: `srv_${s.id}`,
-            title: s.nome,
-            description: `${s.preco} MT`
-        }));
-        optServicos.push({
-            id: '0',
-            title: 'Cancelar'
-        });
-        await sendInteractiveMenu(null, jid, txtCat, optServicos);
     }
 }
 

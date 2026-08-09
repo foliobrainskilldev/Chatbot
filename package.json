@@ -1,12 +1,12 @@
 {
-  "name": "bot-barbearia-mz-oficial",
-  "version": "4.3.0",
-  "description": "Bot de WhatsApp (Meta API) com IA Inteligente (Groq), Memória, CRM API, WebSockets e Multimedia (Áudio/Imagem/Vídeo)",
+  "name": "crm-whatsapp-meta-oficial",
+  "version": "5.0.0",
+  "description": "SaaS CRM WhatsApp via API Oficial da Meta com IA Inteligente (Groq)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "build": "npm install && npx prisma generate && npx prisma db push --accept-data-loss",
-    "db:push": "npx prisma db push --accept-data-loss"
+    "db:push": "npx prisma db push"
   },
   "dependencies": {
     "@prisma/client": "^5.10.0",
@@ -24,6 +24,6 @@
   "devDependencies": {
     "prisma": "^5.10.0"
   },
-  "author": "Desenvolvedor",
+  "author": "Equipe de Desenvolvimento",
   "license": "ISC"
 }

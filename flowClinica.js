@@ -1,136 +1,176 @@
 const { prisma } = require('./db');
-const { sendDelayedText, sendInteractiveMenu, sendDelayedLocation } = require('./botUtils');
-const { responderComGroq, extrairNomeComGroq } = require('./groqApi');
+const { getProximosDiasUteis, getHorariosDisponiveis } = require('./dateUtils');
+const { parse } = require('date-fns');
+const whatsappService = require('./whatsappService');
 
 const STEPS_CLINICA = {
-    MENU_PRINCIPAL: 'MENU_CLINICA',
-    PEDIR_NOME: 'PEDIR_NOME_CLINICA',
-    MARCAR_CONSULTA_TRATAMENTO: 'CLINICA_TRATAMENTO',
-    MARCAR_CONSULTA_MEDICO: 'CLINICA_MEDICO',
-    // ... os passos de data e hora reaproveitaremos futuramente os utilitários
+    AGENDAMENTO_TRATAMENTO: 'CLINICA_AG_TRATAMENTO',
+    AGENDAMENTO_MEDICO: 'CLINICA_AG_MEDICO',
+    AGENDAMENTO_DATA: 'CLINICA_AG_DATA',
+    AGENDAMENTO_HORA: 'CLINICA_AG_HORA',
+    AGENDAMENTO_CONFIRMAR: 'CLINICA_AG_CONFIRMAR'
 };
 
-async function enviarMenuClinica(jid) {
-    const textoMenu = `Como podemos cuidar da sua saúde hoje? Selecione uma opção:`;
-    await sendInteractiveMenu(null, jid, textoMenu, [
-        { id: 'clinica_agendar', title: 'Agendar Consulta', description: 'Ver horários e especialidades' },
-        { id: 'clinica_tratamentos', title: 'Tratamentos e Valores', description: 'Lista de procedimentos' },
-        { id: 'clinica_duvidas', title: 'Tirar Dúvidas (FAQ)', description: 'Convênios, preparos, etc.' },
-        { id: 'clinica_local', title: 'Endereço e Horários', description: 'Onde estamos localizados' },
-        { id: 'clinica_humano', title: 'Falar com Atendente', description: 'Urgências e Secretaria' }
-    ]);
-}
-
-async function handleClinicaMessage(jid, textMessage, displayMessage, senderNumber, cliente, stateMachine, configDb, periodoDia, foraDoExpediente) {
-    let userState = stateMachine.get(senderNumber) || { step: STEPS_CLINICA.MENU_PRINCIPAL, data: {} };
-    userState.lastActive = Date.now();
-    const msgLower = textMessage.trim().toLowerCase();
-
-    // Guardamos tudo no CRM
-    const novaMensagem = await prisma.mensagemIA.create({
-        data: { role: 'user', content: displayMessage, clienteId: senderNumber }
+async function iniciarAgendamentoClinica(jid, senderNumber, stateMachine, menuPrincipalStep) {
+    const agendamentos = await prisma.agendamento.count({
+        where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } }
     });
 
-    // Qualificação do Lead CRM (Sempre que falar algo, garantimos que não está mais como "NOVO" cego)
-    if (cliente.leadStatus === 'NOVO') {
-        await prisma.cliente.update({ where: { id: senderNumber }, data: { leadStatus: 'EM_CONVERSA' } });
-    }
-
-    if (['menu', 'início', 'voltar', '0'].includes(msgLower)) {
-        userState.step = STEPS_CLINICA.MENU_PRINCIPAL;
-        stateMachine.set(senderNumber, userState);
-        await enviarMenuClinica(jid);
+    if (agendamentos >= 2) {
+        await whatsappService.sendText(jid, '⚠️ O limite de agendamentos pendentes por paciente foi atingido. Por favor, cancele ou aguarde sua próxima consulta.');
         return;
     }
 
-    if (!cliente.nome || cliente.nome === 'Sem Nome') {
-        if (userState.step !== STEPS_CLINICA.PEDIR_NOME) {
-            userState.step = STEPS_CLINICA.PEDIR_NOME;
-            stateMachine.set(senderNumber, userState);
-            const msgSaudacao = `${periodoDia}! Bem-vindo à nossa Clínica. Sou o assistente virtual.\nPor favor, digite o seu *Primeiro Nome* para começarmos:`;
-            await prisma.mensagemIA.create({ data: { role: 'assistant', content: msgSaudacao, clienteId: senderNumber } });
-            await sendDelayedText(null, jid, msgSaudacao);
-            return;
-        } else {
-            const nomeExtraido = await extrairNomeComGroq(textMessage);
-            const nomeFinal = nomeExtraido !== 'IGNORAR' ? nomeExtraido : textMessage.split(' ')[0];
-            await prisma.cliente.update({ where: { id: senderNumber }, data: { nome: nomeFinal } });
-            cliente.nome = nomeFinal;
-            userState.step = STEPS_CLINICA.MENU_PRINCIPAL;
-            stateMachine.set(senderNumber, userState);
-            
-            await sendDelayedText(null, jid, `Obrigado, ${nomeFinal}!`);
-            await enviarMenuClinica(jid);
-            return;
-        }
-    }
-
-    // Botões globais da Clínica
-    const isGlobalBtn = textMessage.startsWith('clinica_');
-    if (isGlobalBtn) {
-        userState.step = STEPS_CLINICA.MENU_PRINCIPAL;
-        stateMachine.set(senderNumber, userState);
-
-        if (textMessage === 'clinica_agendar') {
-            await prisma.cliente.update({ where: { id: senderNumber }, data: { interesse: 'Agendamento' } });
-            // Aqui integraremos a função de agendamento (similar à barbearia, mas com médicos)
-            await sendDelayedText(null, jid, "A iniciar agendamento médico... (Flow em construção)");
-        } else if (textMessage === 'clinica_tratamentos') {
-            const tratamentos = await prisma.tratamento.findMany();
-            let txt = "*Nossos Tratamentos e Valores Básicos:*\n\n";
-            tratamentos.forEach(t => txt += `- *${t.nome}*: ${t.preco} MT\n  _${t.descricao}_\n\n`);
-            txt += "Digite 'Agendar' para marcar uma consulta, ou 'Menu' para voltar.";
-            await sendDelayedText(null, jid, txt);
-        } else if (textMessage === 'clinica_local') {
-            await sendDelayedText(null, jid, "📍 Nossa clínica fica na Av. Principal, Maputo.\nAtendemos das 08h às 18h.");
-            await sendDelayedLocation(jid, -25.9744, 32.5885, "Clínica Saúde", "Av. Principal, Maputo");
-        } else if (textMessage === 'clinica_humano') {
-            await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'QUALIFICADO' } });
-            await sendDelayedText(null, jid, 'A transferir para a recepção da clínica. Aguarde, por favor.\n(Digite *#sair* para cancelar)');
-            if (global.io) global.io.emit('atualizar_fila');
-        } else if (textMessage === 'clinica_duvidas') {
-            await sendDelayedText(null, jid, "Pode fazer a sua pergunta! (Ex: 'Aceitam plano X?', 'Preciso fazer jejum para exame?')");
-        }
-        return;
-    }
-
-    // IA Conversacional restrita para a clínica (Regra rígida contra Diagnósticos)
-    const historicoCru = await prisma.mensagemIA.findMany({ where: { clienteId: senderNumber }, orderBy: { criadoEm: 'desc' }, take: 5 });
-    const historicoAnterior = historicoCru.filter(msg => msg.id !== novaMensagem.id).reverse();
+    stateMachine.set(senderNumber, { step: STEPS_CLINICA.AGENDAMENTO_TRATAMENTO, data: {} });
     
-    // Configura o prompt da clínica dinamicamente
-    const promptClinica = `
-        És o assistente da Clínica. Nome: ${cliente.nome}.
-        ${configDb.ignorarDiagnosticos ? 'REGRA MÉDICA ABSOLUTA: NUNCA, SOB HIPÓTESE ALGUMA, dê diagnósticos, sugira remédios ou avalie sintomas. Se o paciente disser que tem dor ou relatar sintomas, responda APENAS: "Por questões de segurança e ética médica, não posso avaliar sintomas por aqui. Por favor, digite /HUMANO para falar com a enfermagem ou /AGENDAR para marcar uma consulta."' : ''}
-        
-        Se o cliente pedir para marcar, devolva: /AGENDAR
-        Falar com recepção: /HUMANO
-        Onde fica/Horário: /LOCAL
-        Preços: /TRATAMENTOS
-        
-        Responda dúvidas de forma curta e simpática. Sem formatação complexa.
-    `;
+    const tratamentos = await prisma.tratamento.findMany();
+    if (tratamentos.length === 0) {
+        await whatsappService.sendText(jid, 'Sem especialidades médicas disponíveis no sistema no momento.');
+        stateMachine.set(senderNumber, { step: menuPrincipalStep, data: {} });
+        return;
+    }
 
-    // Aqui usamos o Groq (O GroqApi precisará de uma leve atualização no próximo lote para receber o Prompt Dinâmico, por enquanto passamos no parâmetro infoTemporal)
-    const respostaIA = await responderComGroq(textMessage, 0, historicoAnterior, promptClinica, cliente.nome);
-    const intent = respostaIA.trim().toUpperCase();
+    let optTratamentos = tratamentos.map(t => ({
+        id: `trat_${t.id}`,
+        title: t.nome,
+        description: `Duração: ${t.duracaoMin} min`
+    }));
+    optTratamentos.push({ id: '0', title: 'Cancelar' });
+    
+    await whatsappService.sendInteractiveMenu(jid, "Qual consulta, especialidade ou tratamento deseja agendar?", optTratamentos);
+}
 
-    if (intent.includes('/AGENDAR')) {
-        await sendDelayedText(null, jid, "A iniciar agendamento... (Em construção)");
-    } else if (intent.includes('/HUMANO')) {
-        await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, tags: 'triagem_necessaria' } });
-        await sendDelayedText(null, jid, 'A transferir para a recepção da clínica. Aguarde.');
-        if (global.io) global.io.emit('atualizar_fila');
-    } else if (intent.includes('/LOCAL')) {
-        await sendDelayedText(null, jid, "📍 Nossa clínica fica na Av. Principal, Maputo.");
-    } else if (intent.includes('/TRATAMENTOS')) {
-        await sendDelayedText(null, jid, "Selecione 'Tratamentos' no Menu para ver a lista.");
-    } else if (intent.includes('/MENU')) {
-        await enviarMenuClinica(jid);
-    } else {
-        await prisma.mensagemIA.create({ data: { role: 'assistant', content: respostaIA, clienteId: senderNumber } });
-        await sendDelayedText(null, jid, respostaIA);
+async function handleAgendamentoClinica(jid, textMessage, senderNumber, stateMachine, menuPrincipalStep) {
+    const userState = stateMachine.get(senderNumber);
+    const step = userState.step;
+    let msg = textMessage.trim();
+
+    if (msg === '0') {
+        stateMachine.set(senderNumber, { step: menuPrincipalStep, data: {} });
+        await whatsappService.sendText(jid, 'Operação cancelada. Voltamos ao menu principal da clínica.');
+        return;
+    }
+
+    switch (step) {
+        case STEPS_CLINICA.AGENDAMENTO_TRATAMENTO: {
+            const idTrat = msg.replace('trat_', '');
+            const tratamentoDb = await prisma.tratamento.findUnique({ where: { id: parseInt(idTrat) } });
+            
+            if (!tratamentoDb) {
+                await whatsappService.sendText(jid, '⚠️ Escolha inválida. Tente novamente ou digite 0 para cancelar.');
+                return;
+            }
+            
+            userState.data.tratamento = tratamentoDb;
+            userState.step = STEPS_CLINICA.AGENDAMENTO_MEDICO;
+            
+            const medicos = await prisma.profissionalSaude.findMany();
+            let optMedicos = medicos.map(m => ({
+                id: `med_${m.id}`, title: m.nome, description: m.especialidade
+            }));
+            optMedicos.push({ id: 'med_qualquer', title: 'Sem Preferência' }, { id: '0', title: 'Cancelar' });
+            
+            await whatsappService.sendInteractiveMenu(jid, "Tem preferência por algum médico(a)/profissional?", optMedicos);
+            break;
+        }
+
+        case STEPS_CLINICA.AGENDAMENTO_MEDICO: {
+            if (msg !== 'med_qualquer') {
+                const idMed = msg.replace('med_', '');
+                const medicoDb = await prisma.profissionalSaude.findUnique({ where: { id: parseInt(idMed) } });
+                if (!medicoDb && msg !== '0') {
+                    await whatsappService.sendText(jid, '⚠️ Profissional inválido.');
+                    return;
+                }
+                userState.data.medico = medicoDb;
+            }
+            
+            userState.step = STEPS_CLINICA.AGENDAMENTO_DATA;
+            const dias = getProximosDiasUteis(7);
+            userState.data.diasDisponiveis = dias;
+            
+            let optDias = dias.map(d => ({ id: d, title: d }));
+            optDias.push({ id: '0', title: 'Cancelar' });
+            
+            await whatsappService.sendInteractiveMenu(jid, "Para quando gostaria de agendar sua consulta?", optDias);
+            break;
+        }
+
+        case STEPS_CLINICA.AGENDAMENTO_DATA: {
+            if (!userState.data.diasDisponiveis.includes(msg)) {
+                await whatsappService.sendText(jid, '⚠️ Data inválida. Digite 0 para cancelar.');
+                return;
+            }
+            userState.data.dataString = msg;
+            userState.step = STEPS_CLINICA.AGENDAMENTO_HORA;
+            
+            // Note que aqui passamos `null` no barbeiro e `userState.data.medico?.id` no profissional de saúde
+            const horasLivres = await getHorariosDisponiveis(msg, userState.data.tratamento.duracaoMin, null, userState.data.medico?.id);
+            
+            if (horasLivres.length === 0) {
+                userState.step = STEPS_CLINICA.AGENDAMENTO_DATA;
+                let optDias = userState.data.diasDisponiveis.map(d => ({ id: d, title: d }));
+                optDias.push({ id: '0', title: 'Cancelar' });
+                await whatsappService.sendInteractiveMenu(jid, "A agenda está cheia neste dia. Por favor, escolha outra data:", optDias);
+                return;
+            }
+            
+            userState.data.horasLivres = horasLivres;
+            let optHoras = horasLivres.map(h => ({ id: h, title: h }));
+            optHoras.push({ id: '0', title: 'Cancelar' });
+            
+            await whatsappService.sendInteractiveMenu(jid, "Perfeito! Selecione o horário desejado:", optHoras);
+            break;
+        }
+
+        case STEPS_CLINICA.AGENDAMENTO_HORA: {
+            if (!userState.data.horasLivres.includes(msg)) {
+                await whatsappService.sendText(jid, '⚠️ Horário inválido.');
+                return;
+            }
+            
+            userState.data.horaString = msg;
+            userState.step = STEPS_CLINICA.AGENDAMENTO_CONFIRMAR;
+            
+            const tr = userState.data.tratamento;
+            const med = userState.data.medico ? userState.data.medico.nome : 'Médico de Plantão';
+            const resumo = `*Confirmação de Consulta Médica:*\n\n🩺 Consulta: ${tr.nome}\n👨‍⚕️ Especialista: ${med}\n📅 Data: ${userState.data.dataString}\n🕒 Hora: ${msg}`;
+            
+            await whatsappService.sendInteractiveMenu(jid, resumo, [
+                { id: '1', title: 'Confirmar Consulta' }, 
+                { id: '0', title: 'Cancelar Tudo' }
+            ]);
+            break;
+        }
+
+        case STEPS_CLINICA.AGENDAMENTO_CONFIRMAR: {
+            if (msg === '1' || msg === 'Confirmar Consulta') {
+                const dataHoraDb = parse(`${userState.data.dataString} ${userState.data.horaString}`, 'dd/MM/yyyy HH:mm', new Date());
+                
+                await prisma.agendamento.create({
+                    data: {
+                        dataHora: dataHoraDb,
+                        clienteId: senderNumber,
+                        tratamentoId: userState.data.tratamento.id,
+                        profissionalSaudeId: userState.data.medico?.id || null,
+                        status: 'AGENDADO'
+                    }
+                });
+                
+                await prisma.cliente.update({ where: { id: senderNumber }, data: { leadStatus: 'AGENDADO' } });
+                await whatsappService.sendText(jid, "✅ Consulta marcada com sucesso! Você receberá um lembrete antes do horário.");
+            } else {
+                await whatsappService.sendText(jid, "Procedimento abortado.");
+            }
+            
+            stateMachine.set(senderNumber, { step: menuPrincipalStep, data: {} });
+            break;
+        }
     }
 }
 
-module.exports = { handleClinicaMessage, STEPS_CLINICA };
+module.exports = {
+    iniciarAgendamentoClinica,
+    handleAgendamentoClinica,
+    STEPS_CLINICA
+};
