@@ -3,42 +3,43 @@ const { prisma } = require('./db');
 const whatsappService = require('./whatsappService');
 const aiService = require('./aiService');
 const { format, subDays, startOfDay, endOfDay } = require('date-fns');
-const { stateMachine } = require('./botEngine');
+
+// Importa os estados dos dois motores para verificar abandonos de funil
+const botBarbearia = require('./barbearia/botEngine');
+const botClinica = require('./clinica/botEngine');
 
 const lembretesEnviados = new Set(); 
 const avaliacoesEnviadas = new Set();
 
 function iniciarAutomaçoes() {
-    console.log('⏰ Robôs de Automação (Follow-Up / Lembretes) ativados.');
+    console.log('⏰ Robôs de Automação (Multi-Tenant) ativados.');
 
-    // 1. FOLLOW-UP AUTOMÁTICO (Roda a cada 5 minutos)
+    // 1. FOLLOW-UP AUTOMÁTICO (Verifica ambos os nichos)
     cron.schedule('*/5 * * * *', async () => {
         const config = await prisma.configSistema.findFirst();
         if (!config || !config.autoFollowUp) return;
 
         const agora = Date.now();
-        
-        for (let [numero, state] of stateMachine.entries()) {
-            // Verifica se o usuário parou no meio de um agendamento
-            if (state.step && state.step.includes('AGENDAMENTO_') && !state.step.includes('CONFIRMAR')) {
-                const tempoParado = agora - (state.lastActive || agora);
-                
-                // Se parado por mais de 15 minutos e ainda não notificado
-                if (tempoParado > 15 * 60 * 1000 && !state.notified) {
-                    state.notified = true; 
-                    const clienteDb = await prisma.cliente.findUnique({ where: { id: numero } });
-                    await prisma.cliente.update({ where: { id: numero }, data: { tags: 'abandonou_funil' } });
-
-                    const promptInstrucao = `O cliente ${clienteDb?.nome || 'Amigo'} parou no meio do agendamento há 15 minutos. Escreva uma mensagem muito curta perguntando se ele precisa de ajuda para finalizar. SEM EMOJIS.`;
-                    const txt = await aiService.gerarMensagemNotificacaoIA(promptInstrucao, "Notei que você não terminou de agendar. Posso ajudar em algo?");
-                    
-                    await whatsappService.sendText(numero, txt, false);
+        const verificarAbandono = async (stateMachine) => {
+            for (let [numero, state] of stateMachine.entries()) {
+                if (state.step && state.step.includes('AGENDAMENTO_') && !state.step.includes('CONFIRMAR')) {
+                    const tempoParado = agora - (state.lastActive || agora);
+                    if (tempoParado > 15 * 60 * 1000 && !state.notified) {
+                        state.notified = true; 
+                        const clienteDb = await prisma.cliente.findUnique({ where: { id: numero } });
+                        const prompt = `O cliente ${clienteDb?.nome || 'Amigo'} parou de agendar há 15min. Pergunte de forma curta se precisa de ajuda.`;
+                        const txt = await aiService.gerarMensagemNotificacaoIA(prompt, "Notei que você não terminou de agendar. Posso ajudar?");
+                        await whatsappService.sendText(numero, txt, false);
+                    }
                 }
             }
-        }
+        };
+
+        if (config.modoAtivo === 'BARBEARIA') await verificarAbandono(botBarbearia.stateMachine);
+        if (config.modoAtivo === 'CLINICA') await verificarAbandono(botClinica.stateMachine);
     });
 
-    // 2. LEMBRETE DE COMPROMISSO (Roda a cada 15 minutos)
+    // 2. LEMBRETE DE COMPROMISSO (Independente do Nicho)
     cron.schedule('*/15 * * * *', async () => {
         const config = await prisma.configSistema.findFirst();
         if (!config || !config.autoLembrete) return;
@@ -55,20 +56,19 @@ function iniciarAutomaçoes() {
             for (let ag of agendamentos) {
                 if (!lembretesEnviados.has(ag.id)) {
                     lembretesEnviados.add(ag.id);
-                    
+                    // Dinâmico: Verifica se é Clínica ou Barbearia
                     const nomeSrv = ag.servico ? ag.servico.nome : (ag.tratamento ? ag.tratamento.nome : 'compromisso');
-                    const promptInstrucao = `Gere uma notificação curta de lembrete de consulta. O cliente ${ag.cliente.nome || 'Amigo'} tem o serviço de ${nomeSrv} hoje às ${format(ag.dataHora, 'HH:mm')}. SEM EMOJIS.`;
+                    const tipo = ag.servico ? 'seu serviço de' : 'sua consulta de';
                     
-                    const txt = await aiService.gerarMensagemNotificacaoIA(promptInstrucao, `Passando para lembrar do seu horário hoje às ${format(ag.dataHora, 'HH:mm')}. Aguardamos você.`);
+                    const prompt = `Gere um lembrete curto. Cliente ${ag.cliente.nome || ''} tem ${tipo} ${nomeSrv} hoje às ${format(ag.dataHora, 'HH:mm')}.`;
+                    const txt = await aiService.gerarMensagemNotificacaoIA(prompt, `Lembrete: Seu horário para ${nomeSrv} é hoje às ${format(ag.dataHora, 'HH:mm')}.`);
                     await whatsappService.sendText(ag.clienteId, txt, false);
                 }
             }
-        } catch (erro) {
-            console.error("Erro interno no cron de lembretes:", erro);
-        }
+        } catch (erro) { }
     });
 
-    // 3. SOLICITAÇÃO DE FEEDBACK (Corre todos os dias às 10h da manhã - Horário de Maputo)
+    // 3. AVALIAÇÃO DE ATENDIMENTO
     cron.schedule('0 10 * * *', async () => {
         const ontem = subDays(new Date(), 1);
         try {
@@ -76,7 +76,6 @@ function iniciarAutomaçoes() {
                 where: { status: 'CONCLUIDO', dataHora: { gte: startOfDay(ontem), lte: endOfDay(ontem) } },
                 include: { cliente: true }
             });
-            
             for (let ag of agendamentosOntem) {
                 if (!avaliacoesEnviadas.has(ag.id)) {
                     avaliacoesEnviadas.add(ag.id);
@@ -84,9 +83,7 @@ function iniciarAutomaçoes() {
                     await whatsappService.sendText(ag.clienteId, `Olá ${ag.cliente.nome || ''}! Como você avalia a sua experiência conosco ontem? (De 1 a 5) ⭐`, false);
                 }
             }
-        } catch (erro) {
-            console.error("Erro interno no cron de avaliações:", erro);
-        }
+        } catch (erro) {}
     }, { timezone: "Africa/Maputo" });
 }
 

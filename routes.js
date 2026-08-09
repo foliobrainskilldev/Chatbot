@@ -1,60 +1,34 @@
 const express = require('express');
 const router = express.Router();
-const multer = require('multer');
-const path = require('path');
-const crmController = require('./crmController');
-const botEngine = require('./botEngine');
 
-// Configuração real de Upload para ambiente de produção
-const storage = multer.diskStorage({
-    destination: 'uploads/',
-    filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname) || (file.mimetype.startsWith('image/') ? '.jpg' : '.mp4');
-        cb(null, `crm_${Date.now()}${ext}`);
-    }
-});
-const upload = multer({ storage });
+// Controladores Centrais (Direcionadores)
+const botEngine = require('./botEngine');
+const hubController = require('./hubController');
+
+// Rotas Isoladas por Nicho
+const barbeariaRoutes = require('./barbearia/routes');
+const clinicaRoutes = require('./clinica/routes');
 
 // ==========================================
-// ROTAS DO WEBHOOK (WHATSAPP META API)
+// WEBHOOK (WHATSAPP META API) - Roteador Central
 // ==========================================
 router.get('/webhook', botEngine.verificarWebhook);
 router.post('/webhook', botEngine.processarWebhook);
 
 // ==========================================
-// ROTAS DO PAINEL CRM (API)
+// HUB NEUTRO (Painel Central de Seleção)
 // ==========================================
+router.get('/hub/config', hubController.getConfigSistema);
+router.post('/hub/config', hubController.saveConfigSistema);
+router.get('/hub/stats', hubController.getHubStats);
 
-// Configurações e Dashboard
-router.get('/settings', crmController.getSettings);
-router.post('/settings', crmController.saveSettings);
-router.get('/dashboard/stats', crmController.getDashboardStats);
-router.get('/config', crmController.getConfigSistema);
-router.post('/config', crmController.saveConfigSistema);
+// ==========================================
+// ENDPOINTS ISOLADOS (NUNCA SE MISTURAM)
+// ==========================================
+// Tudo que bater em /api/barbearia vai para a pasta de barbearia
+router.use('/api/barbearia', barbeariaRoutes);
 
-// Gestão de Equipe
-router.get('/equipe', crmController.getEquipe);
-router.post('/equipe', crmController.criarMembroEquipe);
-router.delete('/equipe/:id', crmController.deletarMembroEquipe);
-
-// Gestão de Leads e CRM
-router.get('/leads', crmController.getLeads);
-router.put('/leads/:id/status', crmController.atualizarStatusLead);
-
-// Conversas (Chat Central)
-router.get('/conversas/pendentes', crmController.getConversasPendentes);
-router.get('/conversas/:clienteId', crmController.getMensagensConversa);
-router.get('/conversas/:clienteId/notas', crmController.getNotasInternas);
-router.post('/conversas/:clienteId/notas', crmController.criarNotaInterna);
-router.post('/conversas/:clienteId/enviar', upload.single('arquivo'), crmController.enviarMensagemManual);
-router.post('/conversas/:clienteId/resolver', crmController.resolverAtendimentoHumano);
-
-// Agendamentos
-router.get('/agendamentos/todos', crmController.getAgendamentosTodos);
-router.get('/agendamentos/hoje', crmController.getAgendamentosHoje);
-router.put('/agendamentos/:id/status', crmController.atualizarStatusAgendamento);
-
-// Zona de Perigo
-router.post('/reset', crmController.formatarSistema);
+// Tudo que bater em /api/clinica vai para a pasta de clínica
+router.use('/api/clinica', clinicaRoutes);
 
 module.exports = router;
