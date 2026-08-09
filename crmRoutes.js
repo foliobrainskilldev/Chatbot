@@ -50,7 +50,30 @@ router.get('/dashboard/stats', async (req, res) => {
             const count = await prisma.cliente.count({ where: { criadoEm: { gte: startOfDay(dataBase), lte: endOfDay(dataBase) } } });
             leadsPorDia.push({ dia: format(dataBase, 'dd/MM'), count });
         }
-        res.status(200).json({ totalLeads, leadsHoje, agendamentosTotais, cancelamentosTotais, funil, origens, leadsPorDia });
+
+        // NOVO: Serviços Mais Procurados (Barbearia e Clínica)
+        const topServicosAg = await prisma.agendamento.groupBy({
+            by: ['servicoId'], _count: { servicoId: true }, where: { servicoId: { not: null } }, orderBy: { _count: { servicoId: 'desc' } }, take: 5
+        });
+        const topTratamentosAg = await prisma.agendamento.groupBy({
+            by: ['tratamentoId'], _count: { tratamentoId: true }, where: { tratamentoId: { not: null } }, orderBy: { _count: { tratamentoId: 'desc' } }, take: 5
+        });
+
+        let topServicos = [];
+        for (let s of topServicosAg) {
+            const servDb = await prisma.servico.findUnique({ where: { id: s.servicoId } });
+            if (servDb) topServicos.push({ nome: servDb.nome, count: s._count.servicoId });
+        }
+        for (let t of topTratamentosAg) {
+            const tratDb = await prisma.tratamento.findUnique({ where: { id: t.tratamentoId } });
+            if (tratDb) topServicos.push({ nome: tratDb.nome, count: t._count.tratamentoId });
+        }
+        
+        // Ordena tudo junto e pega os 5 melhores
+        topServicos.sort((a, b) => b.count - a.count);
+        topServicos = topServicos.slice(0, 5);
+
+        res.status(200).json({ totalLeads, leadsHoje, agendamentosTotais, cancelamentosTotais, funil, origens, leadsPorDia, topServicos });
     } catch (error) { res.status(500).json({ error: "Erro." }); }
 });
 
@@ -83,7 +106,6 @@ router.post('/config', async (req, res) => {
     } catch (e) { res.status(500).json({ error: "Erro" }); }
 });
 
-// --- EQUIPE (CRUD) ---
 router.get('/equipe', async (req, res) => {
     try { res.status(200).json(await prisma.usuario.findMany()); } catch (error) { res.status(500).json({ error: "Erro" }); }
 });
