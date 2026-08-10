@@ -1,9 +1,11 @@
+// --- START OF FILE botEngine.js ---
+
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
 const aiService = require('../aiService');
 const webhookService = require('../services/webhookService');
 const { iniciarAgendamentoClinica, handleAgendamentoClinica } = require('./flowAgendamento');
-const { iniciarCancelamentoClinica, processarCancelamentoClinica } = require('./flowCancelamento'); // Modificado para aceitar remarcação
+const { iniciarCancelamentoClinica, processarCancelamentoClinica } = require('./flowCancelamento');
 
 const stateMachine = new Map();
 const STEPS = { 
@@ -36,6 +38,7 @@ async function processarMensagemEntrante(message) {
     let pushName = message.profile?.name || null;
     let cliente = await getOrCreateCliente(senderNumber, pushName);
     
+    // Se o cliente já está em atendimento humano, a IA não processa, apenas salva o log
     if (cliente.falarHumano) {
         let textLog = message.text?.body || '[Mídia Recebida]';
         await prisma.mensagemIA.create({ data: { role: 'user', content: textLog, clienteId: senderNumber } });
@@ -46,6 +49,7 @@ async function processarMensagemEntrante(message) {
     let textoProcessado = "";
     let mediaCloudinaryUrl = null;
 
+    // Processamento de Tipos de Mensagens
     if (message.type === 'image' || message.type === 'document') {
         const mediaId = message[message.type].id;
         const mimeType = message[message.type].mime_type;
@@ -67,6 +71,7 @@ async function processarMensagemEntrante(message) {
 
     if (!textoProcessado && !mediaCloudinaryUrl) return;
 
+    // Salva a mensagem original do usuário no histórico
     const logConteudo = mediaCloudinaryUrl ? `[MEDIA:${message.type}] ${mediaCloudinaryUrl} | Texto: ${textoProcessado}` : textoProcessado;
     await prisma.mensagemIA.create({ data: { role: 'user', content: logConteudo, clienteId: senderNumber, midiaUrl: mediaCloudinaryUrl, tipoMidia: message.type } });
 
@@ -74,29 +79,37 @@ async function processarMensagemEntrante(message) {
 
     // Interceptadores Hardcoded (Ações no meio de um fluxo de botões)
     if (userState.step.startsWith('CLINICA_AG_')) {
-        await handleAgendamentoClinica(senderNumber, textoProcessado, senderNumber, stateMachine, STEPS);
+        await handleAgendamentoClinica(jid, textoProcessado, senderNumber, stateMachine, STEPS);
         return;
     }
     
     if (userState.step === STEPS.CANCELAR_CONSULTA || userState.step === STEPS.REMARCAR_CONSULTA) {
-        await processarCancelamentoClinica(senderNumber, textoProcessado, senderNumber, stateMachine, STEPS);
+        await processarCancelamentoClinica(jid, textoProcessado, senderNumber, stateMachine, STEPS);
         return;
     }
 
     // 1. NLP - Entender a Intenção do Paciente
     let intencao = await aiService.classificarIntencao(textoProcessado);
     
-    // Fallback manual para caso o LLaMA da Groq não pegue "remarcar" perfeitamente
+    // Fallback manual de segurança
     if (textoProcessado.toLowerCase().includes('remarcar')) {
         intencao = 'REMARCAR';
     }
 
+    // Buscamos a configuração do banco centralizada para usar as preferências configuradas no painel
+    const configDb = await prisma.configSistema.findFirst();
+
     // 2. Roteamento de Intenções
     if (intencao === 'HUMANO') {
         await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
-        const resp = "Sua conversa foi transferida para nossa recepção. Um momento, por favor.";
+        
+        // Agora usamos a mensagem dinâmica configurada no painel!
+        const resp = configDb.msgTransferencia || "Vou encaminhar você para nossa recepção. Um momento, por favor.";
+        
         await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
         await whatsappService.sendText(senderNumber, resp);
+        
+        // Notifica o painel via websocket para o atendente ver o alerta vermelho
         if (global.io) global.io.emit('atualizar_fila');
         return;
     }
@@ -114,13 +127,21 @@ async function processarMensagemEntrante(message) {
         return await iniciarCancelamentoClinica(senderNumber, senderNumber, stateMachine, STEPS, true);
     }
 
-    const configDb = await prisma.configSistema.findFirst();
+    // 3. IA Generativa com Contexto Completo
     const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' } });
-    const historico = await prisma.mensagemIA.findMany({ where: { clienteId: senderNumber }, take: 10, orderBy: { criadoEm: 'desc' } });
-    historico.reverse();
+    
+    // Pega as últimas 10 mensagens para dar memória conversacional à IA
+    const historico = await prisma.mensagemIA.findMany({ 
+        where: { clienteId: senderNumber }, 
+        take: 10, 
+        orderBy: { criadoEm: 'desc' } 
+    });
+    historico.reverse(); // Ordena cronologicamente para a IA entender a linha do tempo
 
+    // Processa a resposta usando LLaMA via Groq API
     const respostaIA = await aiService.responderComContextoIA(textoProcessado, historico, configDb, tratamentos);
     
+    // Salva a resposta da IA e envia ao usuário
     await prisma.mensagemIA.create({ data: { role: 'assistant', content: respostaIA, clienteId: senderNumber } });
     await whatsappService.sendText(senderNumber, respostaIA);
 }
