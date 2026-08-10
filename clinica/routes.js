@@ -22,6 +22,7 @@ router.get('/relatorios/exportar', relatoriosController.exportarRelatorioCSV);
 // CRM, PIPELINE E LEADS
 // ==========================================
 router.get('/leads', crmControllerClinica.getLeads);
+router.post('/leads', crmControllerClinica.criarLeadManual); // <--- NOVA ROTA: Adicionar Lead
 router.put('/leads/:id/status', crmControllerClinica.atualizarStatusLead);
 router.put('/leads/:id', crmControllerClinica.atualizarLeadCompleto);
 
