@@ -1,10 +1,8 @@
-// --- START OF FILE botEngine.js ---
-
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
 const aiService = require('../aiService');
 const webhookService = require('../services/webhookService');
-const automationEngine = require('../services/automationEngine'); // IMPORTAÇÃO DO MOTOR
+const automationEngine = require('../services/automationEngine');
 const { iniciarAgendamentoClinica, handleAgendamentoClinica } = require('./flowAgendamento');
 const { iniciarCancelamentoClinica, processarCancelamentoClinica } = require('./flowCancelamento');
 
@@ -27,9 +25,8 @@ async function getOrCreateCliente(numero, nomePushName = null) {
             data: { id: numero, nome: nomePushName, leadStatus: 'NOVO', origem: 'WhatsApp IA' } 
         });
         
-        await webhookService.dispararEvento('lead.created', cliente);
-        
         // GATILHO: Novo Lead entrou via bot
+        await webhookService.dispararEvento('lead.created', cliente);
         await automationEngine.dispararAutomacoes('NOVO_LEAD', cliente);
 
     } else {
@@ -49,7 +46,6 @@ async function processarMensagemEntrante(message) {
         let textLog = message.text?.body || '[Mídia Recebida]';
         await prisma.mensagemIA.create({ data: { role: 'user', content: textLog, clienteId: senderNumber } });
         
-        // GATILHO: Nova Mensagem recebida (útil para regras que retiram paciente da fila "Sem resposta")
         await automationEngine.dispararAutomacoes('NOVA_MENSAGEM', { clienteId: senderNumber, cliente, mensagem: textLog });
         return;
     }
@@ -82,7 +78,6 @@ async function processarMensagemEntrante(message) {
     const logConteudo = mediaCloudinaryUrl ? `[MEDIA:${message.type}] ${mediaCloudinaryUrl} | Texto: ${textoProcessado}` : textoProcessado;
     await prisma.mensagemIA.create({ data: { role: 'user', content: logConteudo, clienteId: senderNumber, midiaUrl: mediaCloudinaryUrl, tipoMidia: message.type } });
 
-    // GATILHO: Nova Mensagem Recebida (A IA vai responder, mas a automação paralela pode rodar tbm)
     await automationEngine.dispararAutomacoes('NOVA_MENSAGEM', { clienteId: senderNumber, cliente, mensagem: textoProcessado });
 
     let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {} };
@@ -108,9 +103,9 @@ async function processarMensagemEntrante(message) {
     if (intencao === 'HUMANO') {
         const leadTransferido = await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
         
-        // GATILHO: O paciente pediu pra falar com um atendente real
         await automationEngine.dispararAutomacoes('TRANSFERIDO_HUMANO', leadTransferido);
-        
+        await webhookService.dispararEvento('lead.updated', leadTransferido); // WEBHOOK: Avisa CRM externo que lead mudou status
+
         const resp = configDb.msgTransferencia || "Vou encaminhar você para nossa recepção. Um momento, por favor.";
         await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
         await whatsappService.sendText(senderNumber, resp);
