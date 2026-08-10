@@ -1,5 +1,3 @@
---- START OF FILE cronJobs.js ---
-
 const cron = require('node-cron');
 const { prisma } = require('./db');
 const whatsappService = require('./whatsappService');

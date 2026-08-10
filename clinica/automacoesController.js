@@ -1,5 +1,3 @@
---- START OF FILE automacoesController.js ---
-
 const { prisma } = require('../db');
 
 exports.getAutomacoes = async (req, res) => {
