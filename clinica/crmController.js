@@ -4,7 +4,7 @@ const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
 const cloudinaryService = require('../services/cloudinaryService');
 const automationEngine = require('../services/automationEngine');
-const aiService = require('../aiService');
+const webhookService = require('../services/webhookService');
 const { getHorariosDisponiveis } = require('../dateUtils'); 
 const { startOfDay, endOfDay, subDays, format, parse } = require('date-fns');
 
@@ -186,6 +186,9 @@ exports.criarLeadManual = async (req, res) => {
             data: { id: String(id), nome: nome || 'Lead Manual', origem: origem || 'Manual', leadStatus: 'NOVO' }
         });
 
+        // Dispara o Gatilho do Motor de Automação
+        await automationEngine.dispararAutomacoes('NOVO_LEAD', novoLead);
+        
         res.status(201).json(novoLead);
     } catch (error) {
         console.error("Erro ao criar lead manual:", error);
@@ -203,10 +206,20 @@ exports.atualizarStatusLead = async (req, res) => {
         if (valorPotencial !== undefined) updateData.valorPotencial = parseFloat(valorPotencial) || 0;
         if (responsavelId !== undefined) updateData.responsavelId = responsavelId ? parseInt(responsavelId) : null;
 
+        const leadAnterior = await prisma.cliente.findUnique({ where: { id: req.params.id } });
         const leadAlterado = await prisma.cliente.update({ where: { id: req.params.id }, data: updateData });
 
-        if (status === 'QUALIFICADO' || status === 'INTERESSADO') {
-            await automationEngine.dispararAutomacoes('LEAD_QUENTE', leadAlterado);
+        // VERIFICAÇÃO DE GATILHOS DE AUTOMAÇÃO
+        if (status && status !== leadAnterior.leadStatus) {
+            if (status === 'QUALIFICADO') {
+                await automationEngine.dispararAutomacoes('LEAD_QUALIFICADO', leadAlterado);
+            }
+            if (status === 'CLIENTE') {
+                await automationEngine.dispararAutomacoes('NOVO_PACIENTE', leadAlterado);
+            }
+        }
+        if (tags && tags !== leadAnterior.tags) {
+            await automationEngine.dispararAutomacoes('TAG_ADICIONADA', leadAlterado);
         }
         
         res.status(200).json(leadAlterado);
@@ -253,7 +266,12 @@ exports.criarNotaInterna = async (req, res) => {
 
 exports.assumirAtendimentoHumano = async (req, res) => {
     try {
-        await prisma.cliente.update({ where: { id: req.params.clienteId }, data: { falarHumano: true, leadStatus: 'EM_CONVERSA' } });
+        const clienteId = req.params.clienteId;
+        const lead = await prisma.cliente.update({ where: { id: clienteId }, data: { falarHumano: true, leadStatus: 'EM_CONVERSA' } });
+        
+        // Gatilho: Chat transferido para humano
+        await automationEngine.dispararAutomacoes('TRANSFERIDO_HUMANO', lead);
+        
         if (global.io) global.io.emit('atualizar_fila');
         res.status(200).json({ message: "Atendimento humano assumido." });
     } catch (error) { res.status(500).json({ error: "Erro ao assumir atendimento." }); }
@@ -261,7 +279,12 @@ exports.assumirAtendimentoHumano = async (req, res) => {
 
 exports.resolverAtendimentoHumano = async (req, res) => {
     try {
-        await prisma.cliente.update({ where: { id: req.params.clienteId }, data: { falarHumano: false } });
+        const clienteId = req.params.clienteId;
+        const lead = await prisma.cliente.update({ where: { id: clienteId }, data: { falarHumano: false } });
+        
+        // Gatilho: Chat encerrado pelo humano e devolvido
+        await automationEngine.dispararAutomacoes('ATENDIMENTO_ENCERRADO', lead);
+
         if (global.io) global.io.emit('atualizar_fila');
         res.status(200).json({ message: "Conversa devolvida para a IA." });
     } catch (error) { res.status(500).json({ error: "Erro ao devolver para IA." }); }
@@ -364,17 +387,12 @@ exports.excluirTratamento = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Erro ao excluir." }); }
 };
 
-// ==========================================
-// CONFIGURAÇÕES E CÉREBRO DA IA
-// ==========================================
 exports.getConfigIA = async (req, res) => {
     try {
         const config = await prisma.configSistema.findFirst();
         const logs = await prisma.logAlteracaoIA.findMany({ orderBy: { criadoEm: 'desc' }, take: 10 });
         res.status(200).json({ config, logs });
-    } catch (error) { 
-        res.status(500).json({ error: "Erro ao buscar config IA." }); 
-    }
+    } catch (error) { res.status(500).json({ error: "Erro ao buscar config IA." }); }
 };
 
 exports.atualizarConfigIA = async (req, res) => {
@@ -390,35 +408,20 @@ exports.atualizarConfigIA = async (req, res) => {
         const config = await prisma.configSistema.update({
             where: { id: 1 },
             data: { 
-                nomeClinica: p.nomeClinica,
-                nomeAssistente: p.nomeAssistente, 
-                idioma: p.idioma,
-                tomDeVoz: p.tomDeVoz, 
-                estiloComunicacao: p.estiloComunicacao,
-                formalidade: p.formalidade,
-                objetivos: p.objetivos,
-                permissoes: p.permissoes,
-                regrasExtrasIA: p.regrasExtrasIA, 
-                faq: p.faq, 
-                regrasTransferencia: p.regrasTransferencia,
-                msgTransferencia: p.msgTransferencia,
+                nomeClinica: p.nomeClinica, nomeAssistente: p.nomeAssistente, idioma: p.idioma,
+                tomDeVoz: p.tomDeVoz, estiloComunicacao: p.estiloComunicacao, formalidade: p.formalidade,
+                objetivos: p.objetivos, permissoes: p.permissoes, regrasExtrasIA: p.regrasExtrasIA, faq: p.faq, 
+                regrasTransferencia: p.regrasTransferencia, msgTransferencia: p.msgTransferencia,
                 avatarUrl: avatarNovaUrl !== 'null' ? avatarNovaUrl : null
             }
         });
 
-        // Registrar Log de Alteração
         await prisma.logAlteracaoIA.create({
-            data: {
-                autor: p.usuarioLogado || "Administrador",
-                descricao: `Configurações da Inteligência Artificial atualizadas.`
-            }
+            data: { autor: p.usuarioLogado || "Administrador", descricao: `Configurações da Inteligência Artificial atualizadas.` }
         });
 
         res.status(200).json(config);
-    } catch (error) { 
-        console.error("Erro Config IA:", error);
-        res.status(500).json({ error: "Erro ao atualizar IA." }); 
-    }
+    } catch (error) { res.status(500).json({ error: "Erro ao atualizar IA." }); }
 };
 
 exports.testarIA = async (req, res) => {
@@ -428,23 +431,16 @@ exports.testarIA = async (req, res) => {
 
         const configDb = await prisma.configSistema.findFirst();
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' } });
-
-        // Histórico Fake Simples
-        const historicoFake = [{ role: 'assistant', content: `Olá! Sou ${configDb.nomeAssistente} da ${configDb.nomeClinica}. Como posso ajudar?` }];
+        const historicoFake = [{ role: 'assistant', content: `Olá! Sou ${configDb.nomeAssistente}. Como posso ajudar?` }];
 
         const respostaIA = await aiService.responderComContextoIA(mensagem, historicoFake, configDb, tratamentos);
-
         res.status(200).json({ resposta: respostaIA });
-    } catch (error) {
-        console.error("Erro no Simulador:", error);
-        res.status(500).json({ error: "A IA falhou em responder a simulação." });
-    }
+    } catch (error) { res.status(500).json({ error: "A IA falhou em responder a simulação." }); }
 };
 
 exports.getAgendamentosTodos = async (req, res) => {
     try {
         const { data, status, profissionalId, tratamentoId, search } = req.query;
-        
         const where = { tratamentoId: { not: null } };
         
         if (status) where.status = status;
@@ -478,9 +474,7 @@ exports.getAgendamentosTodos = async (req, res) => {
         };
 
         res.status(200).json({ data: agendamentos, stats });
-    } catch (error) { 
-        res.status(500).json({ error: "Erro ao buscar agenda clínica." }); 
-    }
+    } catch (error) { res.status(500).json({ error: "Erro ao buscar agenda clínica." }); }
 };
 
 exports.criarAgendamentoManual = async (req, res) => {
@@ -501,9 +495,11 @@ exports.criarAgendamentoManual = async (req, res) => {
         
         const msg = `Sua consulta para *${novoAgendamento.tratamento.nome}* foi agendada para ${dataStr} às ${horaStr}. Qualquer dúvida, estamos à disposição!`;
         await whatsappService.sendText(clienteId, msg);
-        
         await prisma.mensagemIA.create({ data: { role: 'assistant', content: `[Sistema] ${msg}`, clienteId, atendenteHumano: false } });
         
+        // Gatilho Motor de Automações: Consulta Agendada Diretamente como Confirmada
+        await automationEngine.dispararAutomacoes('CONSULTA_CONFIRMADA', novoAgendamento);
+
         res.status(201).json(novoAgendamento);
     } catch (error) { res.status(500).json({ error: "Erro ao criar agendamento no sistema." }); }
 };
@@ -531,13 +527,18 @@ exports.atualizarStatusAgendamento = async (req, res) => {
             where: { id: parseInt(req.params.id) }, data: { status }, include: { cliente: true, tratamento: true }
         });
 
+        // REGRAS DE GATILHOS DE ACORDO COM O NOVO STATUS
         if (status === 'CONFIRMADA' || status === 'AGENDADO') { 
             await automationEngine.dispararAutomacoes('CONSULTA_CONFIRMADA', att); 
         } else if (status === 'REALIZADA' || status === 'CONCLUIDO') { 
             await automationEngine.dispararAutomacoes('CONSULTA_REALIZADA', att); 
         } else if (status === 'CANCELADA') {
             await whatsappService.sendText(att.clienteId, `Sua consulta para ${att.tratamento?.nome} foi cancelada. Caso tenha sido um engano, responda esta mensagem para remarcar.`);
+            await automationEngine.dispararAutomacoes('CONSULTA_CANCELADA', att); 
+        } else if (status === 'FALTA') {
+            await automationEngine.dispararAutomacoes('PACIENTE_FALTOU', att); 
         }
+
         res.status(200).json(att);
     } catch (error) { res.status(500).json({ error: "Erro atualizar consulta." }); }
 };

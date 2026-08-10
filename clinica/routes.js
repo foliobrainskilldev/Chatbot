@@ -1,4 +1,4 @@
-// --- START OF FILE routes.js ---
+--- START OF FILE routes.js ---
 
 const express = require('express');
 const router = express.Router();
@@ -58,21 +58,29 @@ router.delete('/tratamentos/:id', crmControllerClinica.excluirTratamento);
 // CONFIGURAÇÃO DO CÉREBRO DA IA
 // ==========================================
 router.get('/ia/config', crmControllerClinica.getConfigIA);
-router.put('/ia/config', upload.single('avatar'), crmControllerClinica.atualizarConfigIA); // Alterado para aceitar avatar
-router.post('/ia/testar', crmControllerClinica.testarIA); // Rota do Simulador
+router.put('/ia/config', upload.single('avatar'), crmControllerClinica.atualizarConfigIA); 
+router.post('/ia/testar', crmControllerClinica.testarIA); 
 
 // ==========================================
-// CONFIGURAÇÕES GERAIS E INTEGRAÇÕES
+// CONFIGURAÇÕES GERAIS, WEBHOOKS E EQUIPE
 // ==========================================
 router.get('/webhooks', webhookController.getWebhooks);
 router.post('/webhooks', webhookController.createWebhook);
 router.put('/webhooks/:id/toggle', webhookController.toggleWebhook);
 router.delete('/webhooks/:id', webhookController.deleteWebhook);
 
+// ==========================================
+// MOTOR DE AUTOMAÇÕES, FLUXOS E FOLLOW-UP
+// ==========================================
 router.get('/automacoes', automacoesController.getAutomacoes);
 router.post('/automacoes', automacoesController.criarAutomacao);
+router.put('/automacoes/:id/toggle', automacoesController.toggleAutomacao); // NOVA
 router.delete('/automacoes/:id', automacoesController.deletarAutomacao);
+router.get('/automacoes/historico', automacoesController.getHistoricoExecucao); // NOVA
 
+// ==========================================
+// EQUIPE
+// ==========================================
 router.get('/equipe', crmControllerClinica.getEquipe);
 router.post('/equipe', crmControllerClinica.criarMembroEquipe);
 router.delete('/equipe/:id', crmControllerClinica.deletarMembroEquipe);

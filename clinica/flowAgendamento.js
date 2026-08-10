@@ -5,6 +5,7 @@ const { getProximosDiasUteis, getHorariosDisponiveis } = require('../dateUtils')
 const { parse } = require('date-fns');
 const whatsappService = require('../whatsappService');
 const webhookService = require('../services/webhookService');
+const automationEngine = require('../services/automationEngine'); // IMPORT MOTOR DE AUTOMAÇÃO
 
 async function iniciarAgendamentoClinica(jid, senderNumber, stateMachine, STEPS) {
     const agendamentosPendentes = await prisma.agendamento.count({
@@ -19,7 +20,6 @@ async function iniciarAgendamentoClinica(jid, senderNumber, stateMachine, STEPS)
 
     stateMachine.set(senderNumber, { step: STEPS.AGENDAMENTO_TRATAMENTO, data: {} });
     
-    // A IA SÓ PERMITE AGENDAR O QUE TEM "podeAgendarIA = true"
     const tratamentos = await prisma.tratamento.findMany({ 
         where: { status: 'ATIVO', podeAgendarIA: true } 
     });
@@ -52,7 +52,6 @@ async function handleAgendamentoClinica(jid, textMessage, senderNumber, stateMac
         case STEPS.AGENDAMENTO_TRATAMENTO: {
             const idTrat = msg.replace('trat_', '');
             
-            // Inclui a lista de profissionais vinculada a este tratamento
             const tratamentoDb = await prisma.tratamento.findUnique({ 
                 where: { id: parseInt(idTrat) },
                 include: { profissionais: true }
@@ -67,7 +66,6 @@ async function handleAgendamentoClinica(jid, textMessage, senderNumber, stateMac
             
             let medicos = await prisma.profissionalSaude.findMany();
             
-            // Filtro Cruzado: Mostra apenas os médicos habilitados para ESTE tratamento (se houver restrição)
             if (tratamentoDb.profissionais && tratamentoDb.profissionais.length > 0) {
                 const profIdsHabilitados = tratamentoDb.profissionais.map(p => p.id);
                 medicos = medicos.filter(m => profIdsHabilitados.includes(m.id));
@@ -75,7 +73,6 @@ async function handleAgendamentoClinica(jid, textMessage, senderNumber, stateMac
 
             if (medicos.length === 0) {
                 userState.data.medico = null; 
-                // Avança direto se não tiver médico específico configurado
                 userState.step = STEPS.AGENDAMENTO_DATA;
                 return avancarParaData(jid, senderNumber, userState, STEPS);
             }
@@ -139,7 +136,8 @@ async function handleAgendamentoClinica(jid, textMessage, senderNumber, stateMac
                     data: {
                         dataHora: dataHoraDb, clienteId: senderNumber, status: 'AGENDADO',
                         tratamentoId: userState.data.tratamento.id, profissionalSaudeId: userState.data.medico?.id || null
-                    }
+                    },
+                    include: { cliente: true, tratamento: true }
                 });
                 
                 const leadAlterado = await prisma.cliente.update({ 
@@ -149,7 +147,9 @@ async function handleAgendamentoClinica(jid, textMessage, senderNumber, stateMac
 
                 await whatsappService.sendText(jid, "Consulta e horário reservados com sucesso! Você receberá nosso lembrete automático antes da consulta. Obrigado!");
                 
+                // GATILHOS EXECUTADOS
                 await webhookService.dispararEvento('appointment.created', { agendamento: novoAgendamento, lead: leadAlterado });
+                await automationEngine.dispararAutomacoes('CONSULTA_CRIADA', novoAgendamento);
             } else {
                 await whatsappService.sendText(jid, 'Processo cancelado.');
             }
@@ -159,7 +159,6 @@ async function handleAgendamentoClinica(jid, textMessage, senderNumber, stateMac
     }
 }
 
-// Função auxiliar extraída para evitar duplicação
 async function avancarParaData(jid, senderNumber, userState, STEPS) {
     userState.step = STEPS.AGENDAMENTO_DATA;
     const dias = await getProximosDiasUteis(7);

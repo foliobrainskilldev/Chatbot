@@ -64,26 +64,30 @@ model Usuario {
 }
 
 model Cliente {
-  id              String        @id // Número de telefone via Meta API
-  nome            String?
-  email           String?
-  fotoUrl         String?       @db.Text 
-  leadStatus      String        @default("NOVO") 
-  falarHumano     Boolean       @default(false)
-  tags            String?
-  valorPotencial  Float         @default(0.0)
-  origem          String        @default("WhatsApp Meta")
-  observacoes     String?       @db.Text
+  id                  String               @id // Número de telefone via Meta API
+  nome                String?
+  email               String?
+  fotoUrl             String?              @db.Text 
+  leadStatus          String               @default("NOVO") 
+  falarHumano         Boolean              @default(false)
+  tags                String?
+  valorPotencial      Float                @default(0.0)
+  origem              String               @default("WhatsApp Meta")
+  observacoes         String?              @db.Text
   
-  responsavelId   Int?
-  responsavel     Usuario?      @relation("ClienteResponsavel", fields: [responsavelId], references: [id])
+  responsavelId       Int?
+  responsavel         Usuario?             @relation("ClienteResponsavel", fields: [responsavelId], references: [id])
 
-  ultimaInteracao DateTime      @default(now())
-  criadoEm        DateTime      @default(now())
+  ultimaInteracao     DateTime             @default(now())
+  criadoEm            DateTime             @default(now())
   
-  mensagens       MensagemIA[]
-  agendamentos    Agendamento[]
-  notas           NotaInterna[]
+  mensagens           MensagemIA[]
+  agendamentos        Agendamento[]
+  notas               NotaInterna[]
+  
+  // Relacionamentos do Motor de Automação
+  filaAutomacoes      FilaAutomacao[]
+  historicoAutomacoes AutomacaoHistorico[]
 }
 
 model MensagemIA {
@@ -165,6 +169,7 @@ model Agendamento {
   barbeiroId          Int?
   barbeiro            Barbeiro?          @relation(fields: [barbeiroId], references: [id])
   
+  observacoes         String?            @db.Text
   criadoEm            DateTime           @default(now())
   atualizadoEm        DateTime           @updatedAt
 }
@@ -188,11 +193,46 @@ model WebhookEndpoint {
   criadoEm  DateTime @default(now())
 }
 
+// ----------------------------------------------------
+// MODELOS DO MOTOR DE AUTOMAÇÕES E FLOWS
+// ----------------------------------------------------
+
 model Automacao {
   id        Int      @id @default(autoincrement())
+  nome      String   @default("Nova Automação")
   gatilho   String
+  condicoes String?  @db.Text
   acao      String
   parametro String?  @db.Text
+  atraso    Int      @default(0) // Atraso em minutos (0 = Imediato)
+  execucoes Int      @default(0) // Contador de vezes que rodou com sucesso
   ativo     Boolean  @default(true)
   criadoEm  DateTime @default(now())
+
+  fila      FilaAutomacao[]
+  historico AutomacaoHistorico[]
+}
+
+model FilaAutomacao {
+  id           Int        @id @default(autoincrement())
+  automacaoId  Int
+  automacao    Automacao  @relation(fields: [automacaoId], references: [id], onDelete: Cascade)
+  clienteId    String
+  cliente      Cliente    @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  dadosPayload String?    @db.Text
+  dataAgendada DateTime   // Data exata em que o cron job deve executar a regra
+  status       String     @default("AGUARDANDO") // AGUARDANDO, PROCESSANDO, CONCLUIDO
+  criadoEm     DateTime   @default(now())
+  atualizadoEm DateTime   @updatedAt
+}
+
+model AutomacaoHistorico {
+  id           Int        @id @default(autoincrement())
+  automacaoId  Int
+  automacao    Automacao  @relation(fields: [automacaoId], references: [id], onDelete: Cascade)
+  clienteId    String
+  cliente      Cliente    @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  dataExecucao DateTime   @default(now())
+  resultado    String     // SUCESSO ou FALHA
+  detalhes     String?    @db.Text
 }
