@@ -1,6 +1,7 @@
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
 const cloudinaryService = require('../services/cloudinaryService');
+const automationEngine = require('../services/automationEngine');
 const { startOfDay, subDays } = require('date-fns');
 
 exports.getDashboardStats = async (req, res) => {
@@ -47,9 +48,48 @@ exports.getDashboardStats = async (req, res) => {
 
 exports.getLeads = async (req, res) => {
     try {
-        const leads = await prisma.cliente.findMany({ orderBy: { ultimaInteracao: 'desc' } });
-        res.status(200).json(leads);
-    } catch (error) { res.status(500).json({ error: "Erro ao buscar CRM." }); }
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 100;
+        const search = req.query.search || '';
+        const origem = req.query.origem || '';
+        const skip = (page - 1) * limit;
+
+        const where = {};
+        
+        if (search) {
+            where.OR = [
+                { nome: { contains: search, mode: 'insensitive' } },
+                { id: { contains: search } }
+            ];
+        }
+
+        if (origem) {
+            where.origem = origem;
+        }
+
+        const [leads, total] = await Promise.all([
+            prisma.cliente.findMany({ 
+                where, 
+                skip, 
+                take: limit,
+                orderBy: { ultimaInteracao: 'desc' } 
+            }),
+            prisma.cliente.count({ where })
+        ]);
+
+        res.status(200).json({
+            data: leads,
+            pagination: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit)
+            }
+        });
+    } catch (error) { 
+        console.error("Erro CRM Paginação:", error);
+        res.status(500).json({ error: "Erro ao buscar pipeline de CRM." }); 
+    }
 };
 
 exports.atualizarStatusLead = async (req, res) => {
@@ -59,13 +99,17 @@ exports.atualizarStatusLead = async (req, res) => {
             where: { id: req.params.id }, 
             data: { leadStatus: status, tags, valorPotencial: parseFloat(valorPotencial) || 0 } 
         });
+
+        if (status === 'QUALIFICADO' || status === 'INTERESSADO') {
+            await automationEngine.dispararAutomacoes('LEAD_QUENTE', lead);
+        }
+        
         res.status(200).json(lead);
-    } catch (error) { res.status(500).json({ error: "Erro ao atualizar pipeline." }); }
+    } catch (error) { 
+        res.status(500).json({ error: "Erro ao atualizar pipeline." }); 
+    }
 };
 
-// ==========================================
-// FUNÇÃO QUE ESTAVA FALTANDO / CAUSOU O ERRO
-// ==========================================
 exports.atualizarLeadCompleto = async (req, res) => {
     try {
         const { nome, email, observacoes } = req.body;
@@ -78,7 +122,6 @@ exports.atualizarLeadCompleto = async (req, res) => {
         res.status(500).json({ error: "Erro ao atualizar ficha do lead." }); 
     }
 };
-// ==========================================
 
 exports.getConversasPendentes = async (req, res) => {
     try {
@@ -87,28 +130,45 @@ exports.getConversasPendentes = async (req, res) => {
             take: 50
         });
         res.status(200).json(pendentes);
-    } catch (error) { res.status(500).json({ error: "Erro ao buscar caixa de entrada." }); }
+    } catch (error) { 
+        res.status(500).json({ error: "Erro ao buscar caixa de entrada." }); 
+    }
 };
 
 exports.getMensagensConversa = async (req, res) => {
     try {
-        const mensagens = await prisma.mensagemIA.findMany({ where: { clienteId: req.params.clienteId }, orderBy: { criadoEm: 'asc' } });
+        const mensagens = await prisma.mensagemIA.findMany({ 
+            where: { clienteId: req.params.clienteId }, 
+            orderBy: { criadoEm: 'asc' } 
+        });
         res.status(200).json(mensagens);
-    } catch (error) { res.status(500).json({ error: "Erro ao buscar mensagens." }); }
+    } catch (error) { 
+        res.status(500).json({ error: "Erro ao buscar mensagens." }); 
+    }
 };
 
 exports.assumirAtendimentoHumano = async (req, res) => {
     try {
-        await prisma.cliente.update({ where: { id: req.params.clienteId }, data: { falarHumano: true } });
+        await prisma.cliente.update({ 
+            where: { id: req.params.clienteId }, 
+            data: { falarHumano: true } 
+        });
         res.status(200).json({ message: "Atendimento humano assumido." });
-    } catch (error) { res.status(500).json({ error: "Erro ao assumir atendimento." }); }
+    } catch (error) { 
+        res.status(500).json({ error: "Erro ao assumir atendimento." }); 
+    }
 };
 
 exports.resolverAtendimentoHumano = async (req, res) => {
     try {
-        await prisma.cliente.update({ where: { id: req.params.clienteId }, data: { falarHumano: false } });
+        await prisma.cliente.update({ 
+            where: { id: req.params.clienteId }, 
+            data: { falarHumano: false } 
+        });
         res.status(200).json({ message: "Conversa devolvida para a IA." });
-    } catch (error) { res.status(500).json({ error: "Erro ao devolver para IA." }); }
+    } catch (error) { 
+        res.status(500).json({ error: "Erro ao devolver para IA." }); 
+    }
 };
 
 exports.enviarMensagemManual = async (req, res) => {
@@ -117,6 +177,7 @@ exports.enviarMensagemManual = async (req, res) => {
         const texto = req.body.texto || ""; 
         let msgDb = texto;
         let cloudinaryUrl = null;
+        let typeMsg = null;
 
         if (req.file) {
             const mimeType = req.file.mimetype;
@@ -125,7 +186,7 @@ exports.enviarMensagemManual = async (req, res) => {
             const cloudResult = await cloudinaryService.uploadStream(req.file.buffer, 'clinica/atendimento', resourceType);
             cloudinaryUrl = cloudResult.secure_url;
             
-            const typeMsg = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('audio/') ? 'audio' : 'document');
+            typeMsg = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('audio/') ? 'audio' : 'document');
             await whatsappService.sendMediaUrl(clienteId, typeMsg, cloudinaryUrl, texto);
             
             msgDb = `[MEDIA:${typeMsg}] ${cloudinaryUrl} | Texto: ${texto}`;
@@ -133,11 +194,21 @@ exports.enviarMensagemManual = async (req, res) => {
             await whatsappService.sendText(clienteId, texto); 
         }
         
-        const novaMsg = await prisma.mensagemIA.create({ data: { role: 'assistant', content: msgDb, clienteId, atendenteHumano: true } });
+        const novaMsg = await prisma.mensagemIA.create({ 
+            data: { 
+                role: 'assistant', 
+                content: msgDb, 
+                clienteId, 
+                midiaUrl: cloudinaryUrl,
+                tipoMidia: typeMsg,
+                atendenteHumano: true 
+            } 
+        });
+        
         if (global.io) global.io.emit('nova_mensagem', { clienteId, mensagem: novaMsg });
         res.status(200).json(novaMsg);
     } catch (error) { 
-        res.status(500).json({ error: "Erro ao enviar mensagem com mídia." }); 
+        res.status(500).json({ error: "Erro ao enviar mensagem manual." }); 
     }
 };
 
@@ -145,7 +216,9 @@ exports.getTratamentos = async (req, res) => {
     try {
         const tratamentos = await prisma.tratamento.findMany();
         res.status(200).json(tratamentos);
-    } catch (error) { res.status(500).json({ error: "Erro ao buscar tratamentos." }); }
+    } catch (error) { 
+        res.status(500).json({ error: "Erro ao buscar tratamentos." }); 
+    }
 };
 
 exports.salvarTratamento = async (req, res) => {
@@ -172,21 +245,27 @@ exports.salvarTratamento = async (req, res) => {
             const create = await prisma.tratamento.create({ data: dados });
             return res.status(201).json(create);
         }
-    } catch (error) { res.status(500).json({ error: "Erro ao salvar tratamento." }); }
+    } catch (error) { 
+        res.status(500).json({ error: "Erro ao salvar tratamento." }); 
+    }
 };
 
 exports.excluirTratamento = async (req, res) => {
     try {
         await prisma.tratamento.delete({ where: { id: parseInt(req.params.id) } });
         res.status(200).json({ message: "Tratamento removido." });
-    } catch (error) { res.status(500).json({ error: "Erro ao excluir." }); }
+    } catch (error) { 
+        res.status(500).json({ error: "Erro ao excluir." }); 
+    }
 };
 
 exports.getConfigIA = async (req, res) => {
     try {
         const config = await prisma.configSistema.findFirst();
         res.status(200).json(config);
-    } catch (error) { res.status(500).json({ error: "Erro ao buscar config IA." }); }
+    } catch (error) { 
+        res.status(500).json({ error: "Erro ao buscar config IA." }); 
+    }
 };
 
 exports.atualizarConfigIA = async (req, res) => {
@@ -203,7 +282,9 @@ exports.atualizarConfigIA = async (req, res) => {
             }
         });
         res.status(200).json(config);
-    } catch (error) { res.status(500).json({ error: "Erro ao atualizar IA." }); }
+    } catch (error) { 
+        res.status(500).json({ error: "Erro ao atualizar IA." }); 
+    }
 };
 
 exports.getAgendamentosTodos = async (req, res) => {
@@ -214,35 +295,65 @@ exports.getAgendamentosTodos = async (req, res) => {
             orderBy: { dataHora: 'asc' } 
         });
         res.status(200).json(agendamentos);
-    } catch (error) { res.status(500).json({ error: "Erro agenda clinica." }); }
+    } catch (error) { 
+        res.status(500).json({ error: "Erro agenda clinica." }); 
+    }
 };
 
 exports.atualizarStatusAgendamento = async (req, res) => {
     try {
-        const att = await prisma.agendamento.update({ where: { id: parseInt(req.params.id) }, data: { status: req.body.status } });
+        const { status } = req.body;
+        const att = await prisma.agendamento.update({ 
+            where: { id: parseInt(req.params.id) }, 
+            data: { status },
+            include: { cliente: true }
+        });
+
+        if (status === 'AGENDADO') {
+            await automationEngine.dispararAutomacoes('CONSULTA_CONFIRMADA', att);
+        } else if (status === 'CONCLUIDO') {
+            await automationEngine.dispararAutomacoes('CONSULTA_REALIZADA', att);
+        }
+
         res.status(200).json(att);
-    } catch (error) { res.status(500).json({ error: "Erro atualizar consulta." }); }
+    } catch (error) { 
+        res.status(500).json({ error: "Erro atualizar consulta." }); 
+    }
 };
 
 exports.getEquipe = async (req, res) => {
     try {
-        const usuarios = await prisma.usuario.findMany();
+        const usuarios = await prisma.usuario.findMany({
+            orderBy: { criadoEm: 'desc' }
+        });
         res.status(200).json(usuarios);
-    } catch (error) { res.status(500).json({ error: "Erro equipe." }); }
+    } catch (error) { 
+        res.status(500).json({ error: "Erro equipe." }); 
+    }
 };
 
 exports.criarMembroEquipe = async (req, res) => {
     try {
         const newUser = await prisma.usuario.create({
-            data: { nome: req.body.nome, email: req.body.email, senha: req.body.senha, funcao: req.body.funcao, status: 'ONLINE' }
+            data: { 
+                nome: req.body.nome, 
+                email: req.body.email, 
+                senha: req.body.senha, 
+                funcao: req.body.funcao, 
+                status: 'ONLINE' 
+            }
         });
         res.status(201).json(newUser);
-    } catch (error) { res.status(500).json({ error: "Erro ao criar membro." }); }
+    } catch (error) { 
+        res.status(500).json({ error: "Erro ao criar membro." }); 
+    }
 };
 
 exports.deletarMembroEquipe = async (req, res) => {
     try {
         await prisma.usuario.delete({ where: { id: parseInt(req.params.id) } });
         res.status(200).json({ message: "Membro deletado." });
-    } catch (error) { res.status(500).json({ error: "Erro ao deletar." }); }
+    } catch (error) { 
+        res.status(500).json({ error: "Erro ao deletar." }); 
+    }
 };

@@ -26,7 +26,7 @@ async function markAsReadAndTyping(messageId, to) {
             typing_indicator: { type: 'text' }
         });
     } catch (error) {
-        console.error("Falha ao marcar status:", error?.response?.data || error.message);
+        console.error("Falha ao marcar status lido/digitando Meta:", error?.response?.data || error.message);
     }
 }
 
@@ -52,7 +52,9 @@ async function sendMediaUrl(to, type, url, caption = "") {
             to: to,
             type: type
         };
+        
         payload[type] = { link: url };
+        
         if (caption && (type === 'image' || type === 'video' || type === 'document')) {
             payload[type].caption = caption;
         }
@@ -64,7 +66,9 @@ async function sendMediaUrl(to, type, url, caption = "") {
 }
 
 async function sendInteractiveMenu(to, text, options) {
-    if (!options || !Array.isArray(options) || options.length === 0) return await sendText(to, text);
+    if (!options || !Array.isArray(options) || options.length === 0) {
+        return await sendText(to, text);
+    }
 
     try {
         let interactiveObj = {
@@ -76,14 +80,14 @@ async function sendInteractiveMenu(to, text, options) {
         if (options.length <= 3) {
             interactiveObj.action.buttons = options.map(opt => ({
                 type: "reply",
-                reply: { id: String(opt.id), title: String(opt.title).substring(0, 20) }
+                reply: { id: String(opt.id).substring(0, 256), title: String(opt.title).substring(0, 20) }
             }));
         } else {
             interactiveObj.action.button = "Ver Opções";
             interactiveObj.action.sections = [{
-                title: "Selecione",
+                title: "Selecione uma opção",
                 rows: options.slice(0, 10).map(opt => ({
-                    id: String(opt.id),
+                    id: String(opt.id).substring(0, 200),
                     title: String(opt.title).substring(0, 24),
                     description: opt.description ? String(opt.description).substring(0, 72) : ""
                 }))
@@ -98,13 +102,10 @@ async function sendInteractiveMenu(to, text, options) {
             interactive: interactiveObj
         });
     } catch (error) {
-        console.error("Erro envio Menu Interativo:", error?.response?.data || error.message);
+        console.error("Erro envio Menu Interativo Meta:", error?.response?.data || error.message);
     }
 }
 
-/**
- * Faz download da mídia criptografada da Meta e envia diretamente para o Cloudinary
- */
 async function downloadMetaMediaToCloudinary(mediaId, mimeType) {
     try {
         const getUrlResponse = await axios.get(`https://graph.facebook.com/v18.0/${mediaId}`, {
@@ -117,12 +118,12 @@ async function downloadMetaMediaToCloudinary(mediaId, mimeType) {
         });
         
         const buffer = Buffer.from(downloadResponse.data, 'binary');
-        const resourceType = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('audio/') ? 'video' : 'raw'); // Cloudinary trata audio como video/raw as vezes
+        const resourceType = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('audio/') ? 'video' : 'raw');
         
         const cloudResult = await cloudinaryService.uploadStream(buffer, 'clinica/recebidos', resourceType);
         return cloudResult.secure_url;
     } catch (error) {
-        console.error("Erro download Mídia Meta -> Cloudinary:", error?.response?.data || error.message);
+        console.error("Erro download Mídia Meta para Cloudinary:", error?.response?.data || error.message);
         return null;
     }
 }

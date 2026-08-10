@@ -9,7 +9,7 @@ datasource db {
 
 model ConfigSistema {
   id                  Int     @id @default(1)
-  modoAtivo           String  @default("BARBEARIA") // BARBEARIA ou CLINICA
+  modoAtivo           String  @default("BARBEARIA")
   nomeAssistente      String  @default("Assistente")
   tomDeVoz            String  @default("Profissional")
   objetivos           String? @db.Text
@@ -25,22 +25,22 @@ model Usuario {
   nome        String
   email       String        @unique
   senha       String
-  funcao      String        @default("ATENDENTE") // ADMIN, GERENTE, ATENDENTE
+  funcao      String        @default("ATENDENTE") 
   status      String        @default("ONLINE")
   notas       NotaInterna[]
   criadoEm    DateTime      @default(now())
 }
 
 model Cliente {
-  id              String        @id // Número do WhatsApp
+  id              String        @id // Número de telefone via Meta API
   nome            String?
   email           String?
-  fotoUrl         String?       @db.Text // Cloudinary URL
-  leadStatus      String        @default("NOVO") // NOVO, INTERESSADO, QUALIFICADO, AGENDADO, CLIENTE, PERDIDO
+  fotoUrl         String?       @db.Text 
+  leadStatus      String        @default("NOVO") 
   falarHumano     Boolean       @default(false)
   tags            String?
   valorPotencial  Float         @default(0.0)
-  origem          String        @default("WhatsApp")
+  origem          String        @default("WhatsApp Meta")
   observacoes     String?       @db.Text
   ultimaInteracao DateTime      @default(now())
   criadoEm        DateTime      @default(now())
@@ -53,24 +53,24 @@ model MensagemIA {
   id              Int      @id @default(autoincrement())
   clienteId       String
   cliente         Cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
-  role            String   // 'user', 'assistant', 'system'
+  role            String   
   content         String   @db.Text
-  midiaUrl        String?  @db.Text // Cloudinary URL se houver arquivo
-  tipoMidia       String?  // image, audio, document
-  atendenteHumano Boolean  @default(false) // True se foi enviada pelo painel
+  midiaUrl        String?  @db.Text 
+  tipoMidia       String?  
+  atendenteHumano Boolean  @default(false) 
   criadoEm        DateTime @default(now())
 }
 
 model Tratamento {
-  id          Int           @id @default(autoincrement())
-  nome        String
-  descricao   String?       @db.Text
-  preco       Float
-  duracaoMin  Int           @default(30)
-  imagemUrl   String?       @db.Text // Cloudinary URL
-  faq         String?       @db.Text
-  status      String        @default("ATIVO")
-  criadoEm    DateTime      @default(now())
+  id           Int           @id @default(autoincrement())
+  nome         String
+  descricao    String?       @db.Text
+  preco        Float
+  duracaoMin   Int           @default(30)
+  imagemUrl    String?       @db.Text 
+  faq          String?       @db.Text
+  status       String        @default("ATIVO")
+  criadoEm     DateTime      @default(now())
   agendamentos Agendamento[]
 }
 
@@ -81,16 +81,37 @@ model ProfissionalSaude {
   agendamentos  Agendamento[]
 }
 
+model Servico {
+  id           Int           @id @default(autoincrement())
+  nome         String
+  preco        Float
+  duracaoMin   Int           @default(30)
+  agendamentos Agendamento[]
+}
+
+model Barbeiro {
+  id           Int           @id @default(autoincrement())
+  nome         String
+  agendamentos Agendamento[]
+}
+
 model Agendamento {
   id                  Int                @id @default(autoincrement())
   dataHora            DateTime
-  status              String             @default("AGENDADO") // AGENDADO, CONCLUIDO, CANCELADO, REMARCADO
+  status              String             @default("AGENDADO") 
   clienteId           String
   cliente             Cliente            @relation(fields: [clienteId], references: [id])
+  
   tratamentoId        Int?
   tratamento          Tratamento?        @relation(fields: [tratamentoId], references: [id])
   profissionalSaudeId Int?
   profissionalSaude   ProfissionalSaude? @relation(fields: [profissionalSaudeId], references: [id])
+  
+  servicoId           Int?
+  servico             Servico?           @relation(fields: [servicoId], references: [id])
+  barbeiroId          Int?
+  barbeiro            Barbeiro?          @relation(fields: [barbeiroId], references: [id])
+  
   criadoEm            DateTime           @default(now())
   atualizadoEm        DateTime           @updatedAt
 }
@@ -109,19 +130,17 @@ model WebhookEndpoint {
   id        Int      @id @default(autoincrement())
   url       String   @db.Text
   secret    String?
-  eventos   String   // Ex: lead.created, appointment.created
+  eventos   String   
   ativo     Boolean  @default(true)
   criadoEm  DateTime @default(now())
 }
 
-// Modelos mantidos para Barbearia (Retrocompatibilidade)
-model Servico {
-  id          Int           @id @default(autoincrement())
-  nome        String
-  preco       Float
-  duracaoMin  Int           @default(30)
-}
-model Barbeiro {
-  id          Int           @id @default(autoincrement())
-  nome        String
+// === TABELA DE AUTOMAÇÕES ===
+model Automacao {
+  id        Int      @id @default(autoincrement())
+  gatilho   String
+  acao      String
+  parametro String?  @db.Text
+  ativo     Boolean  @default(true)
+  criadoEm  DateTime @default(now())
 }
