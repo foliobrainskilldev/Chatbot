@@ -13,10 +13,10 @@ const upload = multer({ storage });
 // ==========================================
 // ROTAS DE DASHBOARD E RELATÓRIOS
 // ==========================================
-// Agora esta rota retorna um payload denso contemplando KPIs, gráficos, funil e alertas
 router.get('/dashboard/stats', crmControllerClinica.getDashboardStats);
 router.get('/relatorios/geral', relatoriosController.getRelatoriosGerais);
 router.get('/relatorios/atendimento', relatoriosController.getRelatoriosAtendimento);
+router.get('/relatorios/exportar', relatoriosController.exportarRelatorioCSV);
 
 // ==========================================
 // CRM, PIPELINE E LEADS
@@ -30,6 +30,8 @@ router.put('/leads/:id', crmControllerClinica.atualizarLeadCompleto);
 // ==========================================
 router.get('/conversas/pendentes', crmControllerClinica.getConversasPendentes);
 router.get('/conversas/:clienteId', crmControllerClinica.getMensagensConversa);
+router.get('/conversas/:clienteId/notas', crmControllerClinica.getNotasInternas);
+router.post('/conversas/:clienteId/notas', crmControllerClinica.criarNotaInterna);
 router.post('/conversas/:clienteId/enviar', upload.single('arquivo'), crmControllerClinica.enviarMensagemManual);
 router.post('/conversas/:clienteId/assumir', crmControllerClinica.assumirAtendimentoHumano);
 router.post('/conversas/:clienteId/resolver', crmControllerClinica.resolverAtendimentoHumano);

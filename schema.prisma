@@ -18,6 +18,11 @@ model ConfigSistema {
   metaToken           String? @db.Text
   webhookUrl          String?
   notificarNovosLeads Boolean @default(true)
+  ignorarDiagnosticos Boolean @default(true)
+  regrasTransferencia String? @db.Text
+  autoFollowUp        Boolean @default(false)
+  autoLembrete        Boolean @default(false)
+  distribuicaoLeads   String  @default("MANUAL")
 }
 
 model Usuario {
@@ -28,6 +33,7 @@ model Usuario {
   funcao      String        @default("ATENDENTE") 
   status      String        @default("ONLINE")
   notas       NotaInterna[]
+  clientes    Cliente[]     @relation("ClienteResponsavel")
   criadoEm    DateTime      @default(now())
 }
 
@@ -42,8 +48,13 @@ model Cliente {
   valorPotencial  Float         @default(0.0)
   origem          String        @default("WhatsApp Meta")
   observacoes     String?       @db.Text
+  
+  responsavelId   Int?
+  responsavel     Usuario?      @relation("ClienteResponsavel", fields: [responsavelId], references: [id])
+
   ultimaInteracao DateTime      @default(now())
   criadoEm        DateTime      @default(now())
+  
   mensagens       MensagemIA[]
   agendamentos    Agendamento[]
   notas           NotaInterna[]
@@ -75,10 +86,18 @@ model Tratamento {
 }
 
 model ProfissionalSaude {
-  id            Int           @id @default(autoincrement())
-  nome          String
-  especialidade String
-  agendamentos  Agendamento[]
+  id                 Int           @id @default(autoincrement())
+  nome               String
+  especialidade      String
+  horaInicioTrabalho Int           @default(8)
+  horaFimTrabalho    Int           @default(18)
+  agendamentos       Agendamento[]
+}
+
+model Feriado {
+  id        Int      @id @default(autoincrement())
+  data      DateTime
+  descricao String?
 }
 
 model Servico {
@@ -135,7 +154,6 @@ model WebhookEndpoint {
   criadoEm  DateTime @default(now())
 }
 
-// === TABELA DE AUTOMAÇÕES ===
 model Automacao {
   id        Int      @id @default(autoincrement())
   gatilho   String

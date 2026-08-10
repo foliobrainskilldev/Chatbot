@@ -4,9 +4,6 @@ const cloudinaryService = require('../services/cloudinaryService');
 const automationEngine = require('../services/automationEngine');
 const { startOfDay, endOfDay, subDays, format } = require('date-fns');
 
-// =========================================================================
-// SUPER CONTROLLER DO DASHBOARD: Agregação densa de dados para a UI
-// =========================================================================
 exports.getDashboardStats = async (req, res) => {
     try {
         const dias = parseInt(req.query.dias) || 30;
@@ -14,7 +11,6 @@ exports.getDashboardStats = async (req, res) => {
         const inicioHoje = startOfDay(new Date());
         const fimHoje = endOfDay(new Date());
 
-        // 1. KPIs BÁSICOS
         const conversasTotais = await prisma.mensagemIA.groupBy({ by: ['clienteId'] });
         const novosLeads = await prisma.cliente.count({ where: { leadStatus: 'NOVO', criadoEm: { gte: dataCorte } } });
         const leadsQualificados = await prisma.cliente.count({ where: { leadStatus: 'QUALIFICADO', criadoEm: { gte: dataCorte } } });
@@ -26,21 +22,18 @@ exports.getDashboardStats = async (req, res) => {
         const consultasHoje = await prisma.agendamento.count({ where: { tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } } });
         const pendentesHoje = await prisma.agendamento.count({ where: { status: 'AGENDADO', tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } } });
 
-        // 2. AGENDAMENTOS DO DIA (Tabela Operacional)
         const agendamentosHojeList = await prisma.agendamento.findMany({
             where: { tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } },
             include: { cliente: true, tratamento: true, profissionalSaude: true },
             orderBy: { dataHora: 'asc' }
         });
 
-        // 3. LEADS RECENTES
         const leadsRecentes = await prisma.cliente.findMany({
             take: 5,
             orderBy: { ultimaInteracao: 'desc' },
             select: { id: true, nome: true, leadStatus: true, origem: true, tags: true }
         });
 
-        // 4. ATENÇÃO NECESSÁRIA (Alertas Inteligentes)
         const atencaoNecessaria = [];
         const leadsEsperandoHumano = await prisma.cliente.findMany({
             where: { falarHumano: true },
@@ -58,7 +51,6 @@ exports.getDashboardStats = async (req, res) => {
             atencaoNecessaria.push({ clienteId: ag.cliente.id, clienteNome: ag.cliente.nome, motivo: 'Consulta Atrasada no Sistema' });
         });
 
-        // 5. DESEMPENHO DA IA
         const totalMensagens = await prisma.mensagemIA.count({ where: { role: 'assistant', criadoEm: { gte: dataCorte } } });
         const msgsHumano = await prisma.mensagemIA.count({ where: { role: 'assistant', atendenteHumano: true, criadoEm: { gte: dataCorte } } });
         const msgsIA = totalMensagens - msgsHumano;
@@ -72,9 +64,6 @@ exports.getDashboardStats = async (req, res) => {
             taxaResolucao: txRes
         };
 
-        // 6. GRÁFICOS E AGREGADOS (Para D3.js)
-        
-        // A. Funil
         const contagemFunil = await prisma.cliente.groupBy({ by: ['leadStatus'], _count: { leadStatus: true } });
         const getCount = (status) => { const f = contagemFunil.find(c => c.leadStatus === status); return f ? f._count.leadStatus : 0; };
         
@@ -86,7 +75,6 @@ exports.getDashboardStats = async (req, res) => {
             { etapa: 'Clientes', valor: getCount('CLIENTE') }
         ];
 
-        // B. Top Serviços
         const topTratamentosDb = await prisma.agendamento.groupBy({
             by: ['tratamentoId'], _count: { tratamentoId: true },
             where: { tratamentoId: { not: null }, status: 'AGENDADO' },
@@ -99,11 +87,9 @@ exports.getDashboardStats = async (req, res) => {
             if (trat) topServicos.push({ nome: trat.nome, count: t._count.tratamentoId });
         }
 
-        // C. Origem
         const origensAgrupadas = await prisma.cliente.groupBy({ by: ['origem'], _count: { origem: true } });
         const origensFormatadas = origensAgrupadas.map(o => ({ origem: o.origem || 'Outros', count: o._count.origem }));
 
-        // D. Evolução 
         const evolucao = [];
         for (let i = dias - 1; i >= 0; i--) {
             const diaAlvo = subDays(new Date(), i);
@@ -139,9 +125,6 @@ exports.getDashboardStats = async (req, res) => {
     }
 };
 
-// =========================================================================
-// CRM E LEADS
-// =========================================================================
 exports.getLeads = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
@@ -168,7 +151,10 @@ exports.getLeads = async (req, res) => {
                 where, 
                 skip, 
                 take: limit,
-                orderBy: { ultimaInteracao: 'desc' } 
+                orderBy: { ultimaInteracao: 'desc' },
+                include: { 
+                    agendamentos: { where: { status: 'AGENDADO' }, take: 1 }
+                }
             }),
             prisma.cliente.count({ where })
         ]);
@@ -190,17 +176,22 @@ exports.getLeads = async (req, res) => {
 
 exports.atualizarStatusLead = async (req, res) => {
     try {
-        const { status, tags, valorPotencial } = req.body;
-        const lead = await prisma.cliente.update({ 
+        const { status, tags, valorPotencial, responsavelId } = req.body;
+        const updateData = { leadStatus: status, tags };
+        
+        if (valorPotencial !== undefined) updateData.valorPotencial = parseFloat(valorPotencial) || 0;
+        if (responsavelId) updateData.responsavelId = parseInt(responsavelId);
+
+        const leadAlterado = await prisma.cliente.update({ 
             where: { id: req.params.id }, 
-            data: { leadStatus: status, tags, valorPotencial: parseFloat(valorPotencial) || 0 } 
+            data: updateData 
         });
 
         if (status === 'QUALIFICADO' || status === 'INTERESSADO') {
-            await automationEngine.dispararAutomacoes('LEAD_QUENTE', lead);
+            await automationEngine.dispararAutomacoes('LEAD_QUENTE', leadAlterado);
         }
         
-        res.status(200).json(lead);
+        res.status(200).json(leadAlterado);
     } catch (error) { 
         res.status(500).json({ error: "Erro ao atualizar pipeline." }); 
     }
@@ -219,9 +210,6 @@ exports.atualizarLeadCompleto = async (req, res) => {
     }
 };
 
-// =========================================================================
-// CHAT E CAIXA DE ENTRADA
-// =========================================================================
 exports.getConversasPendentes = async (req, res) => {
     try {
         const pendentes = await prisma.cliente.findMany({ 
@@ -246,12 +234,41 @@ exports.getMensagensConversa = async (req, res) => {
     }
 };
 
+exports.getNotasInternas = async (req, res) => {
+    try {
+        const notas = await prisma.notaInterna.findMany({ 
+            where: { clienteId: req.params.clienteId }, 
+            include: { usuario: true }, 
+            orderBy: { criadoEm: 'asc' } 
+        });
+        res.status(200).json(notas);
+    } catch (error) { 
+        res.status(500).json({ error: "Erro notas." }); 
+    }
+};
+
+exports.criarNotaInterna = async (req, res) => {
+    try {
+        const nota = await prisma.notaInterna.create({ 
+            data: { 
+                texto: req.body.texto, 
+                clienteId: req.params.clienteId, 
+                usuarioId: req.body.usuarioId || 1 
+            } 
+        });
+        res.status(200).json(nota);
+    } catch (error) { 
+        res.status(500).json({ error: "Erro criar nota." }); 
+    }
+};
+
 exports.assumirAtendimentoHumano = async (req, res) => {
     try {
         await prisma.cliente.update({ 
             where: { id: req.params.clienteId }, 
-            data: { falarHumano: true } 
+            data: { falarHumano: true, leadStatus: 'EM_CONVERSA' } 
         });
+        if (global.io) global.io.emit('atualizar_fila');
         res.status(200).json({ message: "Atendimento humano assumido." });
     } catch (error) { 
         res.status(500).json({ error: "Erro ao assumir atendimento." }); 
@@ -264,6 +281,7 @@ exports.resolverAtendimentoHumano = async (req, res) => {
             where: { id: req.params.clienteId }, 
             data: { falarHumano: false } 
         });
+        if (global.io) global.io.emit('atualizar_fila');
         res.status(200).json({ message: "Conversa devolvida para a IA." });
     } catch (error) { 
         res.status(500).json({ error: "Erro ao devolver para IA." }); 
@@ -280,14 +298,14 @@ exports.enviarMensagemManual = async (req, res) => {
 
         if (req.file) {
             const mimeType = req.file.mimetype;
-            const resourceType = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('video/') ? 'video' : 'raw');
+            const resourceType = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('audio/') || mimeType.startsWith('video/') ? 'video' : 'raw');
             
             const cloudResult = await cloudinaryService.uploadStream(req.file.buffer, 'clinica/atendimento', resourceType);
             cloudinaryUrl = cloudResult.secure_url;
             
-            typeMsg = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('audio/') ? 'audio' : 'document');
-            await whatsappService.sendMediaUrl(clienteId, typeMsg, cloudinaryUrl, texto);
+            typeMsg = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('audio/') || mimeType.endsWith('webm') ? 'audio' : 'document');
             
+            await whatsappService.sendMediaUrl(clienteId, typeMsg, cloudinaryUrl, texto);
             msgDb = `[MEDIA:${typeMsg}] ${cloudinaryUrl} | Texto: ${texto}`;
         } else if (texto) { 
             await whatsappService.sendText(clienteId, texto); 
@@ -307,13 +325,11 @@ exports.enviarMensagemManual = async (req, res) => {
         if (global.io) global.io.emit('nova_mensagem', { clienteId, mensagem: novaMsg });
         res.status(200).json(novaMsg);
     } catch (error) { 
+        console.error(error);
         res.status(500).json({ error: "Erro ao enviar mensagem manual." }); 
     }
 };
 
-// =========================================================================
-// TRATAMENTOS (BASE DE CONHECIMENTO)
-// =========================================================================
 exports.getTratamentos = async (req, res) => {
     try {
         const tratamentos = await prisma.tratamento.findMany();
@@ -361,9 +377,6 @@ exports.excluirTratamento = async (req, res) => {
     }
 };
 
-// =========================================================================
-// CONFIGURAÇÕES DA IA
-// =========================================================================
 exports.getConfigIA = async (req, res) => {
     try {
         const config = await prisma.configSistema.findFirst();
@@ -392,9 +405,6 @@ exports.atualizarConfigIA = async (req, res) => {
     }
 };
 
-// =========================================================================
-// AGENDAMENTOS E CALENDÁRIO
-// =========================================================================
 exports.getAgendamentosTodos = async (req, res) => {
     try {
         const agendamentos = await prisma.agendamento.findMany({ 
@@ -429,9 +439,6 @@ exports.atualizarStatusAgendamento = async (req, res) => {
     }
 };
 
-// =========================================================================
-// EQUIPE E PERMISSÕES
-// =========================================================================
 exports.getEquipe = async (req, res) => {
     try {
         const usuarios = await prisma.usuario.findMany({
