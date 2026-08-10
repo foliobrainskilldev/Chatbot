@@ -1,11 +1,13 @@
+// --- START OF FILE crmController.js ---
+
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
 const cloudinaryService = require('../services/cloudinaryService');
 const automationEngine = require('../services/automationEngine');
-const { startOfDay, endOfDay, subDays, format } = require('date-fns');
+const { getHorariosDisponiveis } = require('../dateUtils'); 
+const { startOfDay, endOfDay, subDays, format, parse } = require('date-fns');
 
 exports.getDashboardStats = async (req, res) => {
-    // ... [Função mantida exatamente como o original no seu código atual, focado no Dashboard]
     try {
         const dias = parseInt(req.query.dias) || 30;
         const dataCorte = subDays(new Date(), dias);
@@ -113,10 +115,12 @@ exports.getDashboardStats = async (req, res) => {
 exports.getLeads = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 200; // Limite aumentado para ver o CRM
+        const limit = parseInt(req.query.limit) || 200;
         const search = req.query.search || '';
         const origem = req.query.origem || '';
         const responsavelId = req.query.responsavelId || '';
+        const tags = req.query.tags || '';
+        const servicoId = req.query.servicoId || '';
         const dias = parseInt(req.query.dias) || 0;
 
         const skip = (page - 1) * limit;
@@ -131,6 +135,14 @@ exports.getLeads = async (req, res) => {
 
         if (origem) where.origem = origem;
         if (responsavelId) where.responsavelId = parseInt(responsavelId);
+        
+        if (tags) {
+            where.tags = { contains: tags, mode: 'insensitive' };
+        }
+
+        if (servicoId) {
+            where.agendamentos = { some: { tratamentoId: parseInt(servicoId) } };
+        }
         
         if (dias > 0) {
             const dataCorte = subDays(new Date(), dias);
@@ -153,12 +165,7 @@ exports.getLeads = async (req, res) => {
 
         res.status(200).json({
             data: leads,
-            pagination: {
-                total,
-                page,
-                limit,
-                totalPages: Math.ceil(total / limit)
-            }
+            pagination: { total, page, limit, totalPages: Math.ceil(total / limit) }
         });
     } catch (error) { 
         console.error("Erro CRM Paginação:", error);
@@ -175,12 +182,7 @@ exports.criarLeadManual = async (req, res) => {
         if(leadExistente) return res.status(409).json({ error: "Lead já existe com este número." });
 
         const novoLead = await prisma.cliente.create({
-            data: {
-                id: String(id),
-                nome: nome || 'Lead Manual',
-                origem: origem || 'Manual',
-                leadStatus: 'NOVO'
-            }
+            data: { id: String(id), nome: nome || 'Lead Manual', origem: origem || 'Manual', leadStatus: 'NOVO' }
         });
 
         res.status(201).json(novoLead);
@@ -200,67 +202,50 @@ exports.atualizarStatusLead = async (req, res) => {
         if (valorPotencial !== undefined) updateData.valorPotencial = parseFloat(valorPotencial) || 0;
         if (responsavelId !== undefined) updateData.responsavelId = responsavelId ? parseInt(responsavelId) : null;
 
-        const leadAlterado = await prisma.cliente.update({ 
-            where: { id: req.params.id }, 
-            data: updateData 
-        });
+        const leadAlterado = await prisma.cliente.update({ where: { id: req.params.id }, data: updateData });
 
         if (status === 'QUALIFICADO' || status === 'INTERESSADO') {
             await automationEngine.dispararAutomacoes('LEAD_QUENTE', leadAlterado);
         }
         
         res.status(200).json(leadAlterado);
-    } catch (error) { 
-        res.status(500).json({ error: "Erro ao atualizar pipeline." }); 
-    }
+    } catch (error) { res.status(500).json({ error: "Erro ao atualizar pipeline." }); }
 };
 
 exports.atualizarLeadCompleto = async (req, res) => {
     try {
         const { nome, email, observacoes } = req.body;
         const lead = await prisma.cliente.update({
-            where: { id: req.params.id },
-            data: { nome, email, observacoes }
+            where: { id: req.params.id }, data: { nome, email, observacoes }
         });
         res.status(200).json(lead);
-    } catch (error) { 
-        res.status(500).json({ error: "Erro ao atualizar ficha do lead." }); 
-    }
+    } catch (error) { res.status(500).json({ error: "Erro ao atualizar ficha do lead." }); }
 };
 
-// ... Resto das funções (getConversasPendentes, notas, etc) mantido 100% igual ao arquivo anterior.
 exports.getConversasPendentes = async (req, res) => {
     try {
-        const pendentes = await prisma.cliente.findMany({ 
-            orderBy: { ultimaInteracao: 'desc' }, take: 50
-        });
+        const pendentes = await prisma.cliente.findMany({ orderBy: { ultimaInteracao: 'desc' }, take: 50 });
         res.status(200).json(pendentes);
     } catch (error) { res.status(500).json({ error: "Erro ao buscar caixa de entrada." }); }
 };
 
 exports.getMensagensConversa = async (req, res) => {
     try {
-        const mensagens = await prisma.mensagemIA.findMany({ 
-            where: { clienteId: req.params.clienteId }, orderBy: { criadoEm: 'asc' } 
-        });
+        const mensagens = await prisma.mensagemIA.findMany({ where: { clienteId: req.params.clienteId }, orderBy: { criadoEm: 'asc' } });
         res.status(200).json(mensagens);
     } catch (error) { res.status(500).json({ error: "Erro ao buscar mensagens." }); }
 };
 
 exports.getNotasInternas = async (req, res) => {
     try {
-        const notas = await prisma.notaInterna.findMany({ 
-            where: { clienteId: req.params.clienteId }, include: { usuario: true }, orderBy: { criadoEm: 'asc' } 
-        });
+        const notas = await prisma.notaInterna.findMany({ where: { clienteId: req.params.clienteId }, include: { usuario: true }, orderBy: { criadoEm: 'asc' } });
         res.status(200).json(notas);
     } catch (error) { res.status(500).json({ error: "Erro notas." }); }
 };
 
 exports.criarNotaInterna = async (req, res) => {
     try {
-        const nota = await prisma.notaInterna.create({ 
-            data: { texto: req.body.texto, clienteId: req.params.clienteId, usuarioId: req.body.usuarioId || 1 } 
-        });
+        const nota = await prisma.notaInterna.create({ data: { texto: req.body.texto, clienteId: req.params.clienteId, usuarioId: req.body.usuarioId || 1 } });
         res.status(200).json(nota);
     } catch (error) { res.status(500).json({ error: "Erro criar nota." }); }
 };
@@ -312,9 +297,15 @@ exports.enviarMensagemManual = async (req, res) => {
 
 exports.getTratamentos = async (req, res) => {
     try {
-        const tratamentos = await prisma.tratamento.findMany();
+        const tratamentos = await prisma.tratamento.findMany({
+            include: { profissionais: true }, 
+            orderBy: { nome: 'asc' }
+        });
         res.status(200).json(tratamentos);
-    } catch (error) { res.status(500).json({ error: "Erro ao buscar tratamentos." }); }
+    } catch (error) { 
+        console.error("Erro ao buscar tratamentos:", error);
+        res.status(500).json({ error: "Erro ao buscar tratamentos do catálogo." }); 
+    }
 };
 
 exports.salvarTratamento = async (req, res) => {
@@ -325,26 +316,62 @@ exports.salvarTratamento = async (req, res) => {
             imageUrl = cloudResult.secure_url;
         }
 
-        const dados = {
-            nome: req.body.nome, descricao: req.body.descricao, preco: parseFloat(req.body.preco),
-            duracaoMin: parseInt(req.body.duracaoMin), imagemUrl: imageUrl, status: req.body.status || 'ATIVO'
+        let profIds = [];
+        if (req.body.profissionais) {
+            try {
+                profIds = JSON.parse(req.body.profissionais).map(id => ({ id: parseInt(id) }));
+            } catch (e) { console.error("Falha ao parsear profissionais", e); }
+        }
+
+        const dadosBase = {
+            nome: req.body.nome,
+            categoria: req.body.categoria || 'Outros',
+            tipoPreco: req.body.tipoPreco || 'FIXO',
+            preco: req.body.preco ? parseFloat(req.body.preco) : null,
+            duracaoMin: parseInt(req.body.duracaoMin) || 30,
+            descricaoCurta: req.body.descricaoCurta || '',
+            descricaoCompleta: req.body.descricaoCompleta || '',
+            informacoesIA: req.body.informacoesIA || '',
+            faq: req.body.faq || '',
+            regrasIA: req.body.regrasIA || '',
+            podeAgendarIA: req.body.podeAgendarIA === 'true',
+            status: req.body.status || 'ATIVO',
+            imagemUrl: imageUrl
         };
 
-        if (req.body.id) {
-            const update = await prisma.tratamento.update({ where: { id: parseInt(req.body.id) }, data: dados });
+        if (req.body.id && req.body.id !== 'undefined' && req.body.id !== '') {
+            const update = await prisma.tratamento.update({ 
+                where: { id: parseInt(req.body.id) }, 
+                data: {
+                    ...dadosBase,
+                    profissionais: { set: profIds }
+                },
+                include: { profissionais: true }
+            });
             return res.status(200).json(update);
         } else {
-            const create = await prisma.tratamento.create({ data: dados });
+            const create = await prisma.tratamento.create({ 
+                data: {
+                    ...dadosBase,
+                    profissionais: { connect: profIds } 
+                },
+                include: { profissionais: true }
+            });
             return res.status(201).json(create);
         }
-    } catch (error) { res.status(500).json({ error: "Erro ao salvar tratamento." }); }
+    } catch (error) { 
+        console.error("Erro ao salvar tratamento detalhado:", error);
+        res.status(500).json({ error: "Erro ao salvar tratamento no catálogo." }); 
+    }
 };
 
 exports.excluirTratamento = async (req, res) => {
     try {
         await prisma.tratamento.delete({ where: { id: parseInt(req.params.id) } });
-        res.status(200).json({ message: "Tratamento removido." });
-    } catch (error) { res.status(500).json({ error: "Erro ao excluir." }); }
+        res.status(200).json({ message: "Tratamento removido permanentemente do conhecimento da IA." });
+    } catch (error) { 
+        res.status(500).json({ error: "Erro ao excluir serviço." }); 
+    }
 };
 
 exports.getConfigIA = async (req, res) => {
@@ -367,21 +394,124 @@ exports.atualizarConfigIA = async (req, res) => {
 
 exports.getAgendamentosTodos = async (req, res) => {
     try {
+        const { data, status, profissionalId, tratamentoId, search } = req.query;
+        
+        const where = { tratamentoId: { not: null } };
+        
+        if (status) where.status = status;
+        if (profissionalId) where.profissionalSaudeId = parseInt(profissionalId);
+        if (tratamentoId) where.tratamentoId = parseInt(tratamentoId);
+        
+        if (data) {
+            const dataFiltro = new Date(data);
+            where.dataHora = {
+                gte: startOfDay(dataFiltro),
+                lte: endOfDay(dataFiltro)
+            };
+        }
+
+        if (search) {
+            where.cliente = {
+                OR: [
+                    { nome: { contains: search, mode: 'insensitive' } },
+                    { id: { contains: search } }
+                ]
+            };
+        }
+
         const agendamentos = await prisma.agendamento.findMany({ 
-            where: { tratamentoId: { not: null } }, include: { cliente: true, tratamento: true, profissionalSaude: true }, orderBy: { dataHora: 'asc' } 
+            where, 
+            include: { cliente: true, tratamento: true, profissionalSaude: true }, 
+            orderBy: { dataHora: 'asc' } 
         });
-        res.status(200).json(agendamentos);
-    } catch (error) { res.status(500).json({ error: "Erro agenda clinica." }); }
+
+        const statsBase = await prisma.agendamento.findMany({ where: { tratamentoId: { not: null } }, select: { status: true, dataHora: true } });
+        const inicioHoje = startOfDay(new Date());
+        const fimHoje = endOfDay(new Date());
+
+        const stats = {
+            hoje: statsBase.filter(a => a.dataHora >= inicioHoje && a.dataHora <= fimHoje).length,
+            confirmadas: statsBase.filter(a => a.status === 'CONFIRMADA').length,
+            pendentes: statsBase.filter(a => a.status === 'PENDENTE' || a.status === 'AGENDADO').length, 
+            canceladas: statsBase.filter(a => a.status === 'CANCELADA').length,
+            realizadas: statsBase.filter(a => a.status === 'REALIZADA' || a.status === 'CONCLUIDO').length,
+            faltas: statsBase.filter(a => a.status === 'FALTA').length
+        };
+
+        res.status(200).json({ data: agendamentos, stats });
+    } catch (error) { 
+        console.error("Erro calendário:", error);
+        res.status(500).json({ error: "Erro ao buscar agenda clínica." }); 
+    }
+};
+
+exports.criarAgendamentoManual = async (req, res) => {
+    try {
+        const { clienteId, tratamentoId, profissionalSaudeId, dataHora, observacoes } = req.body;
+        
+        const dataOriginal = new Date(dataHora);
+        const novoAgendamento = await prisma.agendamento.create({
+            data: {
+                dataHora: dataOriginal,
+                clienteId,
+                status: 'CONFIRMADA', 
+                tratamentoId: parseInt(tratamentoId),
+                profissionalSaudeId: profissionalSaudeId ? parseInt(profissionalSaudeId) : null,
+                observacoes: observacoes || ""
+            },
+            include: { cliente: true, tratamento: true }
+        });
+
+        const dataStr = dataOriginal.toLocaleDateString('pt-BR');
+        const horaStr = dataOriginal.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        
+        const msg = `Sua consulta para *${novoAgendamento.tratamento.nome}* foi agendada para ${dataStr} às ${horaStr}. Qualquer dúvida, estamos à disposição!`;
+        await whatsappService.sendText(clienteId, msg);
+        
+        await prisma.mensagemIA.create({ data: { role: 'assistant', content: `[Sistema] ${msg}`, clienteId, atendenteHumano: false } });
+        
+        res.status(201).json(novoAgendamento);
+    } catch (error) {
+        console.error("Erro criar consulta manual:", error);
+        res.status(500).json({ error: "Erro ao criar agendamento no sistema." });
+    }
+};
+
+exports.getHorariosLivresApi = async (req, res) => {
+    try {
+        const { data, tratamentoId, profissionalId } = req.query; 
+        if (!data || !tratamentoId) return res.status(400).json({ error: "Faltam parâmetros" });
+
+        const tratamentoDb = await prisma.tratamento.findUnique({ where: { id: parseInt(tratamentoId) } });
+        if(!tratamentoDb) return res.status(404).json({ error: "Tratamento inválido" });
+
+        const duracao = tratamentoDb.duracaoMin || 30;
+        const profId = profissionalId ? parseInt(profissionalId) : null;
+
+        const horarios = await getHorariosDisponiveis(data, duracao, profId);
+        
+        res.status(200).json(horarios);
+    } catch (error) {
+        console.error("Erro ao buscar horários da API:", error);
+        res.status(500).json({ error: "Falha na leitura da agenda." });
+    }
 };
 
 exports.atualizarStatusAgendamento = async (req, res) => {
     try {
         const { status } = req.body;
         const att = await prisma.agendamento.update({ 
-            where: { id: parseInt(req.params.id) }, data: { status }, include: { cliente: true }
+            where: { id: parseInt(req.params.id) }, data: { status }, include: { cliente: true, tratamento: true }
         });
-        if (status === 'AGENDADO') { await automationEngine.dispararAutomacoes('CONSULTA_CONFIRMADA', att); } 
-        else if (status === 'CONCLUIDO') { await automationEngine.dispararAutomacoes('CONSULTA_REALIZADA', att); }
+
+        if (status === 'CONFIRMADA' || status === 'AGENDADO') { 
+            await automationEngine.dispararAutomacoes('CONSULTA_CONFIRMADA', att); 
+        } else if (status === 'REALIZADA' || status === 'CONCLUIDO') { 
+            await automationEngine.dispararAutomacoes('CONSULTA_REALIZADA', att); 
+        } else if (status === 'CANCELADA') {
+            await whatsappService.sendText(att.clienteId, `Sua consulta para ${att.tratamento?.nome} foi cancelada. Caso tenha sido um engano, responda esta mensagem para remarcar.`);
+        }
+
         res.status(200).json(att);
     } catch (error) { res.status(500).json({ error: "Erro atualizar consulta." }); }
 };

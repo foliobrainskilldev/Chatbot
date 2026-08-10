@@ -1,3 +1,5 @@
+// --- START OF FILE routes.js ---
+
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -22,7 +24,7 @@ router.get('/relatorios/exportar', relatoriosController.exportarRelatorioCSV);
 // CRM, PIPELINE E LEADS
 // ==========================================
 router.get('/leads', crmControllerClinica.getLeads);
-router.post('/leads', crmControllerClinica.criarLeadManual); // <--- NOVA ROTA: Adicionar Lead
+router.post('/leads', crmControllerClinica.criarLeadManual); 
 router.put('/leads/:id/status', crmControllerClinica.atualizarStatusLead);
 router.put('/leads/:id', crmControllerClinica.atualizarLeadCompleto);
 
@@ -41,6 +43,8 @@ router.post('/conversas/:clienteId/resolver', crmControllerClinica.resolverAtend
 // AGENDAMENTOS E CALENDÁRIO
 // ==========================================
 router.get('/agendamentos/todos', crmControllerClinica.getAgendamentosTodos);
+router.get('/agendamentos/disponiveis', crmControllerClinica.getHorariosLivresApi); 
+router.post('/agendamentos', crmControllerClinica.criarAgendamentoManual);         
 router.put('/agendamentos/:id/status', crmControllerClinica.atualizarStatusAgendamento);
 
 // ==========================================

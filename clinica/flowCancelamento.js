@@ -1,21 +1,22 @@
 const { prisma } = require('../db');
 const { format } = require('date-fns');
 const whatsappService = require('../whatsappService');
+const { iniciarAgendamentoClinica } = require('./flowAgendamento'); // Importação circular segura
 
-async function iniciarCancelamentoClinica(jid, senderNumber, stateMachine, STEPS) {
+async function iniciarCancelamentoClinica(jid, senderNumber, stateMachine, STEPS, isRemarcacao = false) {
     const agendamentos = await prisma.agendamento.findMany({
         where: { 
             clienteId: senderNumber, 
-            status: 'AGENDADO', 
+            status: { in: ['AGENDADO', 'CONFIRMADA'] }, 
             dataHora: { gte: new Date() },
-            tratamentoId: { not: null } // ISOLAMENTO: Apenas Clínica
+            tratamentoId: { not: null }
         },
         include: { tratamento: true },
         orderBy: { dataHora: 'asc' }
     });
 
     if (agendamentos.length === 0) {
-        await whatsappService.sendText(jid, "Você não possui consultas médicas pendentes no sistema.");
+        await whatsappService.sendText(jid, "Você não possui consultas futuras para desmarcar ou remarcar.");
         stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
         return;
     }
@@ -27,11 +28,19 @@ async function iniciarCancelamentoClinica(jid, senderNumber, stateMachine, STEPS
     }));
     opcoes.push({ id: '0', title: 'Voltar ao Menu' });
 
-    stateMachine.set(senderNumber, { step: STEPS.CANCELAR_CONSULTA, data: { agendamentos } });
-    await whatsappService.sendInteractiveMenu(jid, "Qual destas consultas deseja cancelar?", opcoes);
+    const passo = isRemarcacao ? STEPS.REMARCAR_CONSULTA : STEPS.CANCELAR_CONSULTA;
+    stateMachine.set(senderNumber, { step: passo, data: { agendamentos } });
+    
+    const texto = isRemarcacao 
+        ? "Para remarcar, primeiro preciso saber qual destas consultas você deseja alterar:"
+        : "Qual destas consultas deseja cancelar?";
+        
+    await whatsappService.sendInteractiveMenu(jid, texto, opcoes);
 }
 
 async function processarCancelamentoClinica(jid, textMessage, senderNumber, stateMachine, STEPS) {
+    const userState = stateMachine.get(senderNumber);
+    const isRemarcacao = userState.step === STEPS.REMARCAR_CONSULTA;
     const escolha = textMessage.trim();
 
     if (escolha === '0') {
@@ -47,12 +56,19 @@ async function processarCancelamentoClinica(jid, textMessage, senderNumber, stat
     try {
         await prisma.agendamento.update({ 
             where: { id: agendamentoId }, 
-            data: { status: 'CANCELADO' } 
+            data: { status: isRemarcacao ? 'REMARCADA' : 'CANCELADA' } 
         });
-        await whatsappService.sendText(jid, "✅ Sua consulta foi desmarcada com sucesso. Agradecemos por avisar.");
+        
+        if (isRemarcacao) {
+            await whatsappService.sendText(jid, "Consulta suspensa. Vamos escolher o novo horário agora.");
+            // Inicia o fluxo de agendamento imediatamente
+            return await iniciarAgendamentoClinica(jid, senderNumber, stateMachine, STEPS);
+        } else {
+            await whatsappService.sendText(jid, "✅ Sua consulta foi desmarcada com sucesso. Agradecemos por avisar.");
+            stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
+        }
     } catch (error) {
-        await whatsappService.sendText(jid, "Erro ao desmarcar consulta. Tente novamente.");
-    } finally {
+        await whatsappService.sendText(jid, "Erro ao processar sua consulta. Tente novamente.");
         stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
     }
 }

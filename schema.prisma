@@ -1,3 +1,5 @@
+// --- START OF FILE schema.prisma ---
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -73,16 +75,23 @@ model MensagemIA {
 }
 
 model Tratamento {
-  id           Int           @id @default(autoincrement())
-  nome         String
-  descricao    String?       @db.Text
-  preco        Float
-  duracaoMin   Int           @default(30)
-  imagemUrl    String?       @db.Text 
-  faq          String?       @db.Text
-  status       String        @default("ATIVO")
-  criadoEm     DateTime      @default(now())
-  agendamentos Agendamento[]
+  id                Int                 @id @default(autoincrement())
+  nome              String
+  categoria         String?             @default("Outros")
+  tipoPreco         String              @default("FIXO")
+  preco             Float?
+  duracaoMin        Int                 @default(30)
+  descricaoCurta    String?             @db.Text
+  descricaoCompleta String?             @db.Text
+  informacoesIA     String?             @db.Text
+  regrasIA          String?             @db.Text
+  faq               String?             @db.Text
+  podeAgendarIA     Boolean             @default(true)
+  imagemUrl         String?             @db.Text 
+  status            String              @default("ATIVO")
+  criadoEm          DateTime            @default(now())
+  agendamentos      Agendamento[]
+  profissionais     ProfissionalSaude[] 
 }
 
 model ProfissionalSaude {
@@ -92,6 +101,7 @@ model ProfissionalSaude {
   horaInicioTrabalho Int           @default(8)
   horaFimTrabalho    Int           @default(18)
   agendamentos       Agendamento[]
+  tratamentos        Tratamento[]  
 }
 
 model Feriado {

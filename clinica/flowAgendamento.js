@@ -1,3 +1,5 @@
+// --- START OF FILE flowAgendamento.js ---
+
 const { prisma } = require('../db');
 const { getProximosDiasUteis, getHorariosDisponiveis } = require('../dateUtils');
 const { parse } = require('date-fns');
@@ -10,25 +12,29 @@ async function iniciarAgendamentoClinica(jid, senderNumber, stateMachine, STEPS)
     });
 
     if (agendamentosPendentes >= 2) {
-        await whatsappService.sendText(jid, 'Você já possui agendamentos pendentes. Por favor, aguarde suas consultas atuais ou contate a recepção para reagendar.');
+        await whatsappService.sendText(jid, 'Você já possui limite de agendamentos pendentes. Por favor, aguarde suas consultas atuais ou contate a recepção para suporte.');
         stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
         return;
     }
 
     stateMachine.set(senderNumber, { step: STEPS.AGENDAMENTO_TRATAMENTO, data: {} });
     
-    const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' } });
+    // A IA SÓ PERMITE AGENDAR O QUE TEM "podeAgendarIA = true"
+    const tratamentos = await prisma.tratamento.findMany({ 
+        where: { status: 'ATIVO', podeAgendarIA: true } 
+    });
+
     if (tratamentos.length === 0) {
-        await whatsappService.sendText(jid, 'No momento, nossos tratamentos não estão disponíveis para agendamento online. Vou transferir para a recepção.');
+        await whatsappService.sendText(jid, 'Nossas especialidades no momento requerem avaliação ou contato humano prévio para agendamento. Estou lhe transferindo para a recepção.');
         await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
         stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
         return;
     }
 
-    let optTratamentos = tratamentos.map(t => ({ id: `trat_${t.id}`, title: t.nome }));
-    optTratamentos.push({ id: '0', title: 'Cancelar Agendamento' });
+    let optTratamentos = tratamentos.slice(0, 9).map(t => ({ id: `trat_${t.id}`, title: t.nome.substring(0, 24) }));
+    optTratamentos.push({ id: '0', title: 'Cancelar' });
     
-    await whatsappService.sendInteractiveMenu(jid, "Ótimo! Qual especialidade ou tratamento você deseja agendar?", optTratamentos);
+    await whatsappService.sendInteractiveMenu(jid, "Maravilha! Qual especialidade ou tratamento deseja agendar? (Selecione na lista)", optTratamentos);
 }
 
 async function handleAgendamentoClinica(jid, textMessage, senderNumber, stateMachine, STEPS) {
@@ -38,25 +44,46 @@ async function handleAgendamentoClinica(jid, textMessage, senderNumber, stateMac
 
     if (msg === '0') {
         stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
-        await whatsappService.sendText(jid, 'Processo de agendamento cancelado. Se precisar de algo, basta avisar.');
+        await whatsappService.sendText(jid, 'Agendamento cancelado com sucesso. Se precisar de algo, estarei aqui.');
         return;
     }
 
     switch (step) {
         case STEPS.AGENDAMENTO_TRATAMENTO: {
             const idTrat = msg.replace('trat_', '');
-            const tratamentoDb = await prisma.tratamento.findUnique({ where: { id: parseInt(idTrat) } });
             
-            if (!tratamentoDb) return await whatsappService.sendText(jid, 'Opção inválida. Digite 0 para cancelar.');
+            // Inclui a lista de profissionais vinculada a este tratamento
+            const tratamentoDb = await prisma.tratamento.findUnique({ 
+                where: { id: parseInt(idTrat) },
+                include: { profissionais: true }
+            });
+            
+            if (!tratamentoDb || tratamentoDb.status !== 'ATIVO') {
+                return await whatsappService.sendText(jid, 'Opção inválida ou serviço indisponível. Digite 0 para cancelar.');
+            }
             
             userState.data.tratamento = tratamentoDb;
             userState.step = STEPS.AGENDAMENTO_MEDICO;
             
-            const medicos = await prisma.profissionalSaude.findMany();
-            let optMedicos = medicos.map(m => ({ id: `med_${m.id}`, title: m.nome, description: m.especialidade }));
+            let medicos = await prisma.profissionalSaude.findMany();
+            
+            // Filtro Cruzado: Mostra apenas os médicos habilitados para ESTE tratamento (se houver restrição)
+            if (tratamentoDb.profissionais && tratamentoDb.profissionais.length > 0) {
+                const profIdsHabilitados = tratamentoDb.profissionais.map(p => p.id);
+                medicos = medicos.filter(m => profIdsHabilitados.includes(m.id));
+            }
+
+            if (medicos.length === 0) {
+                userState.data.medico = null; 
+                // Avança direto se não tiver médico específico configurado
+                userState.step = STEPS.AGENDAMENTO_DATA;
+                return avancarParaData(jid, senderNumber, userState, STEPS);
+            }
+
+            let optMedicos = medicos.slice(0, 8).map(m => ({ id: `med_${m.id}`, title: m.nome.substring(0, 24), description: m.especialidade }));
             optMedicos.push({ id: 'med_qualquer', title: 'Sem Preferência' }, { id: '0', title: 'Cancelar' });
             
-            await whatsappService.sendInteractiveMenu(jid, "Você tem preferência por algum médico(a) ou especialista?", optMedicos);
+            await whatsappService.sendInteractiveMenu(jid, "Você tem preferência por algum especialista?", optMedicos);
             break;
         }
         case STEPS.AGENDAMENTO_MEDICO: {
@@ -66,14 +93,7 @@ async function handleAgendamentoClinica(jid, textMessage, senderNumber, stateMac
                 if (medicoDb) userState.data.medico = medicoDb;
             }
             
-            userState.step = STEPS.AGENDAMENTO_DATA;
-            const dias = getProximosDiasUteis(7);
-            userState.data.diasDisponiveis = dias;
-            
-            let optDias = dias.map(d => ({ id: d, title: d }));
-            optDias.push({ id: '0', title: 'Cancelar' });
-            
-            await whatsappService.sendInteractiveMenu(jid, "Para qual data você gostaria de agendar?", optDias);
+            await avancarParaData(jid, senderNumber, userState, STEPS);
             break;
         }
         case STEPS.AGENDAMENTO_DATA: {
@@ -88,23 +108,26 @@ async function handleAgendamentoClinica(jid, textMessage, senderNumber, stateMac
                 userState.step = STEPS.AGENDAMENTO_DATA;
                 let optDias = userState.data.diasDisponiveis.map(d => ({ id: d, title: d }));
                 optDias.push({ id: '0', title: 'Cancelar' });
-                return await whatsappService.sendInteractiveMenu(jid, "Nossa agenda está cheia nesta data para esta especialidade. Por favor, escolha outro dia:", optDias);
+                return await whatsappService.sendInteractiveMenu(jid, "Nossa agenda está cheia nesta data. Por favor, escolha outro dia:", optDias);
             }
             
             userState.data.horasLivres = horasLivres;
-            let optHoras = horasLivres.map(h => ({ id: h, title: h }));
+            let optHoras = horasLivres.slice(0, 9).map(h => ({ id: h, title: h }));
             optHoras.push({ id: '0', title: 'Cancelar' });
             
             await whatsappService.sendInteractiveMenu(jid, "Selecione o horário disponível de sua preferência:", optHoras);
             break;
         }
         case STEPS.AGENDAMENTO_HORA: {
-            if (!userState.data.horasLivres.includes(msg)) return await whatsappService.sendText(jid, 'Horário inválido.');
+            if (!userState.data.horasLivres.includes(msg)) return await whatsappService.sendText(jid, 'Horário indisponível.');
             
             userState.data.horaString = msg;
             userState.step = STEPS.AGENDAMENTO_CONFIRMAR;
             
-            const resumo = `Resumo da Consulta:\n\n🩺 Especialidade: ${userState.data.tratamento.nome}\n👨‍⚕️ Profissional: ${userState.data.medico?.nome || 'De Plantão'}\n📅 Data: ${userState.data.dataString} às ${msg}\n\nPodemos confirmar?`;
+            const precoExibicao = userState.data.tratamento.tipoPreco === 'SOB_AVALIACAO' ? 'Sob Avaliação Clínica' : (userState.data.tratamento.preco ? `R$ ${userState.data.tratamento.preco}` : 'Variável');
+            
+            const resumo = `Resumo da Consulta:\n\n🩺 Tratamento: ${userState.data.tratamento.nome}\n💰 Preço Base: ${precoExibicao}\n👨‍⚕️ Especialista: ${userState.data.medico?.nome || 'De Plantão'}\n📅 Data: ${userState.data.dataString} às ${msg}\n\nPodemos confirmar?`;
+            
             await whatsappService.sendInteractiveMenu(jid, resumo, [{ id: '1', title: 'Confirmar' }, { id: '0', title: 'Cancelar' }]);
             break;
         }
@@ -124,9 +147,8 @@ async function handleAgendamentoClinica(jid, textMessage, senderNumber, stateMac
                     data: { leadStatus: 'AGENDADO' } 
                 });
 
-                await whatsappService.sendText(jid, "Consulta confirmada com sucesso! Você receberá um lembrete antes do horário.");
+                await whatsappService.sendText(jid, "Consulta e horário reservados com sucesso! Você receberá nosso lembrete automático antes da consulta. Obrigado!");
                 
-                // Automação: Dispara Webhook Externo (Ex: para o RD Station da Clínica)
                 await webhookService.dispararEvento('appointment.created', { agendamento: novoAgendamento, lead: leadAlterado });
             } else {
                 await whatsappService.sendText(jid, 'Processo cancelado.');
@@ -135,6 +157,18 @@ async function handleAgendamentoClinica(jid, textMessage, senderNumber, stateMac
             break;
         }
     }
+}
+
+// Função auxiliar extraída para evitar duplicação
+async function avancarParaData(jid, senderNumber, userState, STEPS) {
+    userState.step = STEPS.AGENDAMENTO_DATA;
+    const dias = await getProximosDiasUteis(7);
+    userState.data.diasDisponiveis = dias;
+    
+    let optDias = dias.slice(0, 9).map(d => ({ id: d, title: d }));
+    optDias.push({ id: '0', title: 'Cancelar' });
+    
+    await whatsappService.sendInteractiveMenu(jid, "Para qual data você gostaria de agendar?", optDias);
 }
 
 module.exports = { iniciarAgendamentoClinica, handleAgendamentoClinica };

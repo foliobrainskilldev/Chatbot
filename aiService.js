@@ -1,3 +1,5 @@
+// --- START OF FILE aiService.js ---
+
 const { OpenAI } = require('openai');
 const fs = require('fs');
 const path = require('path');
@@ -37,9 +39,6 @@ async function transcreverAudioPorUrl(audioUrl) {
     }
 }
 
-/**
- * Função vital: Descobre o que o cliente quer através de NLP e classifica em tags
- */
 async function classificarIntencao(textoCliente) {
     if (!process.env.GROQ_API_KEY) return "DUVIDA";
     const prompt = `Analise a mensagem do paciente e classifique a intenção em APENAS UMA das TAGS abaixo. 
@@ -68,21 +67,42 @@ async function classificarIntencao(textoCliente) {
 async function responderComContextoIA(mensagemCliente, historicoAnterior, configSistema, tratamentos) {
     if (!process.env.GROQ_API_KEY) throw new Error("IA Desconectada");
 
-    let listaTratamentos = tratamentos.map(t => `- ${t.nome}: ${t.preco ? 'R$ ' + t.preco : 'Preço sob avaliação'}. Detalhes: ${t.descricao}`).join("\n");
+    // Construção rica da base de conhecimento
+    let listaTratamentos = tratamentos.filter(t => t.status === 'ATIVO').map(t => {
+        let precoStr = "Preço sob avaliação clínica";
+        if (t.tipoPreco === 'FIXO') precoStr = `R$ ${t.preco}`;
+        else if (t.tipoPreco === 'A_PARTIR') precoStr = `A partir de R$ ${t.preco}`;
+        else if (t.tipoPreco === 'FAIXA') precoStr = `Preço Variável. Requer avaliação.`;
+
+        return `[TRATAMENTO]: ${t.nome} (Categoria: ${t.categoria})
+- Preço: ${precoStr}
+- Duração Estimada: ${t.duracaoMin} minutos
+- Resumo para paciente: ${t.descricaoCurta || 'N/A'}
+- Como você (IA) deve explicar: ${t.informacoesIA || 'N/A'}
+- Perguntas Frequentes do Tratamento (FAQ): ${t.faq || 'N/A'}
+- Regras/Limitações: ${t.regrasIA || 'N/A'}
+- Pode ser agendado pela IA? ${t.podeAgendarIA ? 'Sim' : 'Não'}`;
+    }).join("\n\n");
 
     const systemInstrucoes = `
-Você é ${configSistema.nomeAssistente}, um assistente virtual altamente profissional de uma Clínica.
+Você é ${configSistema.nomeAssistente}, um assistente virtual altamente profissional e treinado de uma Clínica.
 Tom de voz: ${configSistema.tomDeVoz}.
-Objetivo: ${configSistema.objetivos}.
-NUNCA USE EMOJIS NO DASHBOARD, MAS VOCÊ PODE USAR NO WHATSAPP COM O CLIENTE.
-REGRA DE PREÇOS: Nunca invente preços. Baseie-se APENAS na tabela. Se depender de avaliação, diga: "Esse procedimento possui valor definido após avaliação. Posso solicitar um agendamento para você."
-REGRA MÉDICA: Não dê diagnósticos, não prometa resultados.
-FAQ DA CLÍNICA: ${configSistema.faq || 'Nenhuma FAQ cadastrada.'}
-REGRAS EXTRAS: ${configSistema.regrasExtrasIA || 'Nenhuma regra extra.'}
-TRATAMENTOS DISPONÍVEIS:
+Missão: ${configSistema.objetivos}.
+NUNCA USE EMOJIS NO DASHBOARD, MAS VOCÊ PODE USAR NO WHATSAPP COM O PACIENTE PARA SER ACOLHEDOR.
+
+REGRA DE PREÇOS (CRÍTICA): Leia rigorosamente o "Tipo de Preço" na base. Se for "Sob avaliação" ou "A_PARTIR", não confirme valores finais. Nunca invente ou deduz valores.
+REGRA MÉDICA: Você é um assistente virtual. Nunca dê diagnósticos médicos, não prescreva medicamentos e não prometa resultados.
+FAQ GERAL DA CLÍNICA: ${configSistema.faq || 'Nenhuma FAQ geral cadastrada.'}
+REGRAS EXTRAS DE COMPORTAMENTO: ${configSistema.regrasExtrasIA || 'Nenhuma regra extra.'}
+
+BASE DE CONHECIMENTO DE TRATAMENTOS E SERVIÇOS:
 ${listaTratamentos}
 
-Você deve ajudar o cliente. Se ele quiser agendar, responda pedindo qual especialidade e passe a bola para a intenção.
+DIRETRIZES DE ATENDIMENTO:
+1. Responda de forma clara, natural e humana.
+2. Utilize os detalhes (Info para IA, FAQ e Regras) de cada tratamento para sanar as dúvidas do paciente.
+3. Se o paciente perguntar sobre algo não cadastrado, diga que a clínica não possui informações no momento e sugira falar com um atendente.
+4. Caso a intenção do usuário seja agendar, confirme qual especialidade/tratamento ele deseja e direcione suavemente a intenção.
 `;
 
     try {
@@ -97,12 +117,12 @@ Você deve ajudar o cliente. Se ele quiser agendar, responda pedindo qual especi
         msgs.push({ role: "user", content: mensagemCliente });
 
         const resposta = await groq.chat.completions.create({
-            model: "llama-3.1-70b-versatile", messages: msgs, temperature: 0.2, max_tokens: 400 
+            model: "llama-3.1-70b-versatile", messages: msgs, temperature: 0.2, max_tokens: 500 
         });
         
         return resposta.choices[0]?.message?.content || "Desculpe, não consegui processar sua solicitação agora.";
     } catch (erro) {
-        return "Desculpe, nossos sistemas de IA estão reiniciando. Aguarde um momento."; 
+        return "Desculpe, nossos sistemas de IA estão reiniciando ou indisponíveis no momento. Aguarde um instante."; 
     }
 }
 

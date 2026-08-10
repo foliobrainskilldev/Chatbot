@@ -1,17 +1,16 @@
 const { prisma } = require('../db');
-const whatsappService = require('../whatsappService'); // Seu serviço de envio WA
+const whatsappService = require('../whatsappService'); 
 
-/**
- * Função global para processar automações cadastradas no banco
- * @param {String} tipoGatilho - Ex: 'NOVO_LEAD', 'LEAD_QUENTE', 'CONSULTA_CONFIRMADA'
- * @param {Object} dados - Instância do Cliente ou Agendamento afetado
- */
 async function dispararAutomacoes(tipoGatilho, dados) {
     try {
-        // Busca regras ativas para o gatilho disparado
         const automacoes = await prisma.automacao.findMany({
             where: { gatilho: tipoGatilho, ativo: true }
         });
+
+        // Automação nativa e obrigatória (Baseada no seu pedido)
+        if (tipoGatilho === 'CONSULTA_CONFIRMADA') {
+            await dispararMensagemConfirmacaoNativa(dados);
+        }
 
         if (automacoes.length === 0) return;
 
@@ -23,14 +22,37 @@ async function dispararAutomacoes(tipoGatilho, dados) {
     }
 }
 
+// Disparo nativo do sistema formatando a mensagem perfeitamente
+async function dispararMensagemConfirmacaoNativa(agendamento) {
+    if (!agendamento || !agendamento.clienteId || !agendamento.dataHora) return;
+    
+    try {
+        const dataObj = new Date(agendamento.dataHora);
+        const meses = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+        
+        const dia = dataObj.getDate();
+        const mesStr = meses[dataObj.getMonth()];
+        const horaStr = dataObj.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        
+        const msg = `Sua consulta foi agendada para ${dia} de ${mesStr} às ${horaStr}.`;
+        
+        await whatsappService.sendText(agendamento.clienteId, msg);
+        
+        await prisma.mensagemIA.create({ 
+            data: { role: 'assistant', content: `[Automação do Sistema] ${msg}`, clienteId: agendamento.clienteId, atendenteHumano: false } 
+        });
+    } catch (error) {
+        console.error("Falha ao enviar mensagem de confirmação nativa:", error);
+    }
+}
+
 async function executarAcao(tipoAcao, parametro, dados) {
-    const clienteId = dados.clienteId || dados.id; // Funciona para Agendamento ou Cliente
+    const clienteId = dados.clienteId || dados.id; 
     const numeroCliente = clienteId; 
 
     switch (tipoAcao) {
         case 'ADD_TAG':
             if (parametro && dados.id) {
-                // Atualiza o Cliente concatenando a nova Tag
                 let tagsAtuais = dados.tags ? dados.tags.split(',').map(t => t.trim()) : [];
                 if (!tagsAtuais.includes(parametro)) {
                     tagsAtuais.push(parametro);
@@ -43,7 +65,6 @@ async function executarAcao(tipoAcao, parametro, dados) {
             break;
 
         case 'NOTIFICAR_ATENDENTE':
-            // Dispara WebSockets para avisar o Front-end
             if (global.io) {
                 global.io.emit('notificacao_urgente', { 
                     mensagem: parametro || `Atenção necessária para o Lead: ${dados.nome || numeroCliente}` 
@@ -55,7 +76,6 @@ async function executarAcao(tipoAcao, parametro, dados) {
             if (parametro && numeroCliente) {
                 const textoFinal = parametro.replace('{{nome}}', dados.nome || 'paciente');
                 await whatsappService.sendText(numeroCliente, textoFinal);
-                // Salva a mensagem no histórico do Inbox
                 await prisma.mensagemIA.create({ 
                     data: { role: 'assistant', content: `[Automação Follow-up]: ${textoFinal}`, clienteId: numeroCliente, atendenteHumano: false } 
                 });
@@ -63,10 +83,9 @@ async function executarAcao(tipoAcao, parametro, dados) {
             break;
 
         case 'ENVIAR_LEMBRETE':
-            // Exclusivo para quando `dados` é um Agendamento
             if (numeroCliente && dados.dataHora) {
                 const dataFormatada = new Date(dados.dataHora).toLocaleString('pt-BR');
-                const textoLembrete = parametro || `Lembrete: Sua consulta está confirmada para ${dataFormatada}.`;
+                const textoLembrete = parametro || `Lembrete: sua consulta está marcada para amanhã às ${new Date(dados.dataHora).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}.`;
                 await whatsappService.sendText(numeroCliente, textoLembrete);
                 await prisma.mensagemIA.create({ 
                     data: { role: 'assistant', content: `[Automação Lembrete]: ${textoLembrete}`, clienteId: numeroCliente, atendenteHumano: false } 
