@@ -58,7 +58,8 @@ router.delete('/tratamentos/:id', crmControllerClinica.excluirTratamento);
 // CONFIGURAÇÃO DO CÉREBRO DA IA
 // ==========================================
 router.get('/ia/config', crmControllerClinica.getConfigIA);
-router.put('/ia/config', crmControllerClinica.atualizarConfigIA);
+router.put('/ia/config', upload.single('avatar'), crmControllerClinica.atualizarConfigIA); // Alterado para aceitar avatar
+router.post('/ia/testar', crmControllerClinica.testarIA); // Rota do Simulador
 
 // ==========================================
 // CONFIGURAÇÕES GERAIS E INTEGRAÇÕES

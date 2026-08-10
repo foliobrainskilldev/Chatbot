@@ -4,6 +4,7 @@ const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
 const cloudinaryService = require('../services/cloudinaryService');
 const automationEngine = require('../services/automationEngine');
+const aiService = require('../aiService');
 const { getHorariosDisponiveis } = require('../dateUtils'); 
 const { startOfDay, endOfDay, subDays, format, parse } = require('date-fns');
 
@@ -303,8 +304,7 @@ exports.getTratamentos = async (req, res) => {
         });
         res.status(200).json(tratamentos);
     } catch (error) { 
-        console.error("Erro ao buscar tratamentos:", error);
-        res.status(500).json({ error: "Erro ao buscar tratamentos do catálogo." }); 
+        res.status(500).json({ error: "Erro ao buscar tratamentos." }); 
     }
 };
 
@@ -318,9 +318,8 @@ exports.salvarTratamento = async (req, res) => {
 
         let profIds = [];
         if (req.body.profissionais) {
-            try {
-                profIds = JSON.parse(req.body.profissionais).map(id => ({ id: parseInt(id) }));
-            } catch (e) { console.error("Falha ao parsear profissionais", e); }
+            try { profIds = JSON.parse(req.body.profissionais).map(id => ({ id: parseInt(id) })); } 
+            catch (e) { console.error(e); }
         }
 
         const dadosBase = {
@@ -342,25 +341,18 @@ exports.salvarTratamento = async (req, res) => {
         if (req.body.id && req.body.id !== 'undefined' && req.body.id !== '') {
             const update = await prisma.tratamento.update({ 
                 where: { id: parseInt(req.body.id) }, 
-                data: {
-                    ...dadosBase,
-                    profissionais: { set: profIds }
-                },
+                data: { ...dadosBase, profissionais: { set: profIds } },
                 include: { profissionais: true }
             });
             return res.status(200).json(update);
         } else {
             const create = await prisma.tratamento.create({ 
-                data: {
-                    ...dadosBase,
-                    profissionais: { connect: profIds } 
-                },
+                data: { ...dadosBase, profissionais: { connect: profIds } },
                 include: { profissionais: true }
             });
             return res.status(201).json(create);
         }
     } catch (error) { 
-        console.error("Erro ao salvar tratamento detalhado:", error);
         res.status(500).json({ error: "Erro ao salvar tratamento no catálogo." }); 
     }
 };
@@ -368,28 +360,85 @@ exports.salvarTratamento = async (req, res) => {
 exports.excluirTratamento = async (req, res) => {
     try {
         await prisma.tratamento.delete({ where: { id: parseInt(req.params.id) } });
-        res.status(200).json({ message: "Tratamento removido permanentemente do conhecimento da IA." });
-    } catch (error) { 
-        res.status(500).json({ error: "Erro ao excluir serviço." }); 
-    }
+        res.status(200).json({ message: "Tratamento removido." });
+    } catch (error) { res.status(500).json({ error: "Erro ao excluir." }); }
 };
 
+// ==========================================
+// CONFIGURAÇÕES E CÉREBRO DA IA
+// ==========================================
 exports.getConfigIA = async (req, res) => {
     try {
         const config = await prisma.configSistema.findFirst();
-        res.status(200).json(config);
-    } catch (error) { res.status(500).json({ error: "Erro ao buscar config IA." }); }
+        const logs = await prisma.logAlteracaoIA.findMany({ orderBy: { criadoEm: 'desc' }, take: 10 });
+        res.status(200).json({ config, logs });
+    } catch (error) { 
+        res.status(500).json({ error: "Erro ao buscar config IA." }); 
+    }
 };
 
 exports.atualizarConfigIA = async (req, res) => {
     try {
-        const payload = req.body;
+        const p = req.body;
+        let avatarNovaUrl = p.avatarUrl || null;
+
+        if (req.file) {
+            const cloudResult = await cloudinaryService.uploadStream(req.file.buffer, 'clinica/ia', 'image');
+            avatarNovaUrl = cloudResult.secure_url;
+        }
+
         const config = await prisma.configSistema.update({
             where: { id: 1 },
-            data: { nomeAssistente: payload.nomeAssistente, tomDeVoz: payload.tomDeVoz, regrasExtrasIA: payload.regrasExtrasIA, faq: payload.faq, objetivos: payload.objetivos }
+            data: { 
+                nomeClinica: p.nomeClinica,
+                nomeAssistente: p.nomeAssistente, 
+                idioma: p.idioma,
+                tomDeVoz: p.tomDeVoz, 
+                estiloComunicacao: p.estiloComunicacao,
+                formalidade: p.formalidade,
+                objetivos: p.objetivos,
+                permissoes: p.permissoes,
+                regrasExtrasIA: p.regrasExtrasIA, 
+                faq: p.faq, 
+                regrasTransferencia: p.regrasTransferencia,
+                msgTransferencia: p.msgTransferencia,
+                avatarUrl: avatarNovaUrl !== 'null' ? avatarNovaUrl : null
+            }
         });
+
+        // Registrar Log de Alteração
+        await prisma.logAlteracaoIA.create({
+            data: {
+                autor: p.usuarioLogado || "Administrador",
+                descricao: `Configurações da Inteligência Artificial atualizadas.`
+            }
+        });
+
         res.status(200).json(config);
-    } catch (error) { res.status(500).json({ error: "Erro ao atualizar IA." }); }
+    } catch (error) { 
+        console.error("Erro Config IA:", error);
+        res.status(500).json({ error: "Erro ao atualizar IA." }); 
+    }
+};
+
+exports.testarIA = async (req, res) => {
+    try {
+        const { mensagem } = req.body;
+        if (!mensagem) return res.status(400).json({ error: "Mensagem vazia." });
+
+        const configDb = await prisma.configSistema.findFirst();
+        const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' } });
+
+        // Histórico Fake Simples
+        const historicoFake = [{ role: 'assistant', content: `Olá! Sou ${configDb.nomeAssistente} da ${configDb.nomeClinica}. Como posso ajudar?` }];
+
+        const respostaIA = await aiService.responderComContextoIA(mensagem, historicoFake, configDb, tratamentos);
+
+        res.status(200).json({ resposta: respostaIA });
+    } catch (error) {
+        console.error("Erro no Simulador:", error);
+        res.status(500).json({ error: "A IA falhou em responder a simulação." });
+    }
 };
 
 exports.getAgendamentosTodos = async (req, res) => {
@@ -404,25 +453,15 @@ exports.getAgendamentosTodos = async (req, res) => {
         
         if (data) {
             const dataFiltro = new Date(data);
-            where.dataHora = {
-                gte: startOfDay(dataFiltro),
-                lte: endOfDay(dataFiltro)
-            };
+            where.dataHora = { gte: startOfDay(dataFiltro), lte: endOfDay(dataFiltro) };
         }
 
         if (search) {
-            where.cliente = {
-                OR: [
-                    { nome: { contains: search, mode: 'insensitive' } },
-                    { id: { contains: search } }
-                ]
-            };
+            where.cliente = { OR: [{ nome: { contains: search, mode: 'insensitive' } }, { id: { contains: search } }] };
         }
 
         const agendamentos = await prisma.agendamento.findMany({ 
-            where, 
-            include: { cliente: true, tratamento: true, profissionalSaude: true }, 
-            orderBy: { dataHora: 'asc' } 
+            where, include: { cliente: true, tratamento: true, profissionalSaude: true }, orderBy: { dataHora: 'asc' } 
         });
 
         const statsBase = await prisma.agendamento.findMany({ where: { tratamentoId: { not: null } }, select: { status: true, dataHora: true } });
@@ -440,7 +479,6 @@ exports.getAgendamentosTodos = async (req, res) => {
 
         res.status(200).json({ data: agendamentos, stats });
     } catch (error) { 
-        console.error("Erro calendário:", error);
         res.status(500).json({ error: "Erro ao buscar agenda clínica." }); 
     }
 };
@@ -452,12 +490,8 @@ exports.criarAgendamentoManual = async (req, res) => {
         const dataOriginal = new Date(dataHora);
         const novoAgendamento = await prisma.agendamento.create({
             data: {
-                dataHora: dataOriginal,
-                clienteId,
-                status: 'CONFIRMADA', 
-                tratamentoId: parseInt(tratamentoId),
-                profissionalSaudeId: profissionalSaudeId ? parseInt(profissionalSaudeId) : null,
-                observacoes: observacoes || ""
+                dataHora: dataOriginal, clienteId, status: 'CONFIRMADA', 
+                tratamentoId: parseInt(tratamentoId), profissionalSaudeId: profissionalSaudeId ? parseInt(profissionalSaudeId) : null, observacoes: observacoes || ""
             },
             include: { cliente: true, tratamento: true }
         });
@@ -471,10 +505,7 @@ exports.criarAgendamentoManual = async (req, res) => {
         await prisma.mensagemIA.create({ data: { role: 'assistant', content: `[Sistema] ${msg}`, clienteId, atendenteHumano: false } });
         
         res.status(201).json(novoAgendamento);
-    } catch (error) {
-        console.error("Erro criar consulta manual:", error);
-        res.status(500).json({ error: "Erro ao criar agendamento no sistema." });
-    }
+    } catch (error) { res.status(500).json({ error: "Erro ao criar agendamento no sistema." }); }
 };
 
 exports.getHorariosLivresApi = async (req, res) => {
@@ -489,12 +520,8 @@ exports.getHorariosLivresApi = async (req, res) => {
         const profId = profissionalId ? parseInt(profissionalId) : null;
 
         const horarios = await getHorariosDisponiveis(data, duracao, profId);
-        
         res.status(200).json(horarios);
-    } catch (error) {
-        console.error("Erro ao buscar horários da API:", error);
-        res.status(500).json({ error: "Falha na leitura da agenda." });
-    }
+    } catch (error) { res.status(500).json({ error: "Falha na leitura da agenda." }); }
 };
 
 exports.atualizarStatusAgendamento = async (req, res) => {
@@ -511,7 +538,6 @@ exports.atualizarStatusAgendamento = async (req, res) => {
         } else if (status === 'CANCELADA') {
             await whatsappService.sendText(att.clienteId, `Sua consulta para ${att.tratamento?.nome} foi cancelada. Caso tenha sido um engano, responda esta mensagem para remarcar.`);
         }
-
         res.status(200).json(att);
     } catch (error) { res.status(500).json({ error: "Erro atualizar consulta." }); }
 };

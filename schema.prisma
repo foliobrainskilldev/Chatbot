@@ -12,19 +12,43 @@ datasource db {
 model ConfigSistema {
   id                  Int     @id @default(1)
   modoAtivo           String  @default("BARBEARIA")
-  nomeAssistente      String  @default("Assistente")
-  tomDeVoz            String  @default("Profissional")
+  
+  // Identidade
+  nomeClinica         String  @default("Clínica Saúde Mais")
+  nomeAssistente      String  @default("Assistente Ana")
+  avatarUrl           String? @db.Text
+  idioma              String  @default("Português (Brasil)")
+  
+  // Personalidade e Comunicação
+  tomDeVoz            String  @default("Profissional e acolhedor")
+  estiloComunicacao   String  @default("Respostas curtas e diretas")
+  formalidade         String  @default("Tratar o paciente por Você")
+  
+  // Conhecimento e Limites
   objetivos           String? @db.Text
+  permissoes          String? @db.Text
   regrasExtrasIA      String? @db.Text
   faq                 String? @db.Text
+  
+  // Transferência
+  regrasTransferencia String? @db.Text
+  msgTransferencia    String  @default("Vou encaminhar você para um de nossos atendentes. Aguarde um momento.")
+  
+  // Outros Setups Globais
   metaToken           String? @db.Text
   webhookUrl          String?
   notificarNovosLeads Boolean @default(true)
   ignorarDiagnosticos Boolean @default(true)
-  regrasTransferencia String? @db.Text
   autoFollowUp        Boolean @default(false)
   autoLembrete        Boolean @default(false)
   distribuicaoLeads   String  @default("MANUAL")
+}
+
+model LogAlteracaoIA {
+  id        Int      @id @default(autoincrement())
+  autor     String   @default("Administrador")
+  descricao String   @db.Text
+  criadoEm  DateTime @default(now())
 }
 
 model Usuario {

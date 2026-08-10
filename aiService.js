@@ -46,7 +46,7 @@ async function classificarIntencao(textoCliente) {
     TAGS DISPONÍVEIS:
     AGENDAR (quer marcar consulta, agendar horário, fazer avaliação)
     PRECOS (quer saber valores, custos)
-    HUMANO (quer falar com atendente, pessoa real, doutor)
+    HUMANO (quer falar com atendente, pessoa real, doutor, reclamação)
     CANCELAR (quer desmarcar consulta, remarcar, cancelar)
     DUVIDA (informações de localização, horário, tratamentos gerais, faq)
     
@@ -67,7 +67,6 @@ async function classificarIntencao(textoCliente) {
 async function responderComContextoIA(mensagemCliente, historicoAnterior, configSistema, tratamentos) {
     if (!process.env.GROQ_API_KEY) throw new Error("IA Desconectada");
 
-    // Construção rica da base de conhecimento
     let listaTratamentos = tratamentos.filter(t => t.status === 'ATIVO').map(t => {
         let precoStr = "Preço sob avaliação clínica";
         if (t.tipoPreco === 'FIXO') precoStr = `R$ ${t.preco}`;
@@ -77,32 +76,34 @@ async function responderComContextoIA(mensagemCliente, historicoAnterior, config
         return `[TRATAMENTO]: ${t.nome} (Categoria: ${t.categoria})
 - Preço: ${precoStr}
 - Duração Estimada: ${t.duracaoMin} minutos
-- Resumo para paciente: ${t.descricaoCurta || 'N/A'}
-- Como você (IA) deve explicar: ${t.informacoesIA || 'N/A'}
-- Perguntas Frequentes do Tratamento (FAQ): ${t.faq || 'N/A'}
-- Regras/Limitações: ${t.regrasIA || 'N/A'}
-- Pode ser agendado pela IA? ${t.podeAgendarIA ? 'Sim' : 'Não'}`;
+- Info para IA: ${t.informacoesIA || 'N/A'}
+- Regras/Limitações: ${t.regrasIA || 'N/A'}`;
     }).join("\n\n");
 
     const systemInstrucoes = `
-Você é ${configSistema.nomeAssistente}, um assistente virtual altamente profissional e treinado de uma Clínica.
+Você é ${configSistema.nomeAssistente}, o assistente virtual oficial da ${configSistema.nomeClinica || 'Clínica'}.
+Idioma base: ${configSistema.idioma || 'Português (Brasil)'}.
 Tom de voz: ${configSistema.tomDeVoz}.
-Missão: ${configSistema.objetivos}.
-NUNCA USE EMOJIS NO DASHBOARD, MAS VOCÊ PODE USAR NO WHATSAPP COM O PACIENTE PARA SER ACOLHEDOR.
+Estilo de Comunicação: ${configSistema.estiloComunicacao || 'Equilibrado'}.
+Nível de Formalidade: ${configSistema.formalidade || 'Profissional'}.
 
-REGRA DE PREÇOS (CRÍTICA): Leia rigorosamente o "Tipo de Preço" na base. Se for "Sob avaliação" ou "A_PARTIR", não confirme valores finais. Nunca invente ou deduz valores.
-REGRA MÉDICA: Você é um assistente virtual. Nunca dê diagnósticos médicos, não prescreva medicamentos e não prometa resultados.
-FAQ GERAL DA CLÍNICA: ${configSistema.faq || 'Nenhuma FAQ geral cadastrada.'}
-REGRAS EXTRAS DE COMPORTAMENTO: ${configSistema.regrasExtrasIA || 'Nenhuma regra extra.'}
+OBJETIVOS PRINCIPAIS: ${configSistema.objetivos || 'Atender pacientes e agendar consultas'}.
+PERMISSÕES DA IA: ${configSistema.permissoes || 'Responder dúvidas'}.
 
-BASE DE CONHECIMENTO DE TRATAMENTOS E SERVIÇOS:
+REGRA DE PREÇOS (CRÍTICA): Se o preço for "Sob avaliação" ou "A_PARTIR", não confirme valores finais.
+REGRAS EXTRAS PERSONALIZADAS: ${configSistema.regrasExtrasIA || 'Nenhuma regra extra.'}
+FAQ GERAL DA CLÍNICA: ${configSistema.faq || 'Nenhuma FAQ cadastrada.'}
+
+PROTEÇÕES INVIOLÁVEIS DO SISTEMA:
+1. NUNCA invente informações, horários ou preços que não estejam no seu contexto.
+2. NUNCA faça diagnóstico médico, não prescreva medicamentos nem prometa resultados clínicos.
+3. Se a pergunta for complexa ou médica, oriente a consultar com um especialista.
+4. Se o usuário demonstrar extrema insatisfação, disser um palavrão ou solicitar falar com um humano e você tiver a regra de transferência ativada, use a diretriz correta.
+
+CATÁLOGO DE TRATAMENTOS:
 ${listaTratamentos}
 
-DIRETRIZES DE ATENDIMENTO:
-1. Responda de forma clara, natural e humana.
-2. Utilize os detalhes (Info para IA, FAQ e Regras) de cada tratamento para sanar as dúvidas do paciente.
-3. Se o paciente perguntar sobre algo não cadastrado, diga que a clínica não possui informações no momento e sugira falar com um atendente.
-4. Caso a intenção do usuário seja agendar, confirme qual especialidade/tratamento ele deseja e direcione suavemente a intenção.
+Lembre-se: aja como um humano prestativo, usando os dados fornecidos.
 `;
 
     try {
