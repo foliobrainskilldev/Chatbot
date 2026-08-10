@@ -52,15 +52,29 @@ model LogAlteracaoIA {
 }
 
 model Usuario {
-  id          Int           @id @default(autoincrement())
+  id          Int               @id @default(autoincrement())
   nome        String
-  email       String        @unique
-  senha       String
-  funcao      String        @default("ATENDENTE") 
-  status      String        @default("ONLINE")
+  email       String            @unique
+  senha       String?           // Opcional para o fluxo de convite
+  funcao      String            @default("ATENDENTE") 
+  status      String            @default("PENDENTE") // ONLINE, PENDENTE, SUSPENSO
+  permissoes  String?           @db.Text // JSON de permissões granulares
+  ultimoAcesso DateTime?
+  
   notas       NotaInterna[]
-  clientes    Cliente[]     @relation("ClienteResponsavel")
-  criadoEm    DateTime      @default(now())
+  clientes    Cliente[]         @relation("ClienteResponsavel")
+  atividades  AtividadeEquipe[]
+  criadoEm    DateTime          @default(now())
+}
+
+model AtividadeEquipe {
+  id        Int      @id @default(autoincrement())
+  usuarioId Int
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  acao      String
+  recurso   String
+  detalhes  String?  @db.Text
+  criadoEm  DateTime @default(now())
 }
 
 model Cliente {
@@ -85,7 +99,6 @@ model Cliente {
   agendamentos        Agendamento[]
   notas               NotaInterna[]
   
-  // Relacionamentos do Motor de Automação
   filaAutomacoes      FilaAutomacao[]
   historicoAutomacoes AutomacaoHistorico[]
 }
@@ -193,10 +206,6 @@ model WebhookEndpoint {
   criadoEm  DateTime @default(now())
 }
 
-// ----------------------------------------------------
-// MODELOS DO MOTOR DE AUTOMAÇÕES E FLOWS
-// ----------------------------------------------------
-
 model Automacao {
   id        Int      @id @default(autoincrement())
   nome      String   @default("Nova Automação")
@@ -204,8 +213,8 @@ model Automacao {
   condicoes String?  @db.Text
   acao      String
   parametro String?  @db.Text
-  atraso    Int      @default(0) // Atraso em minutos (0 = Imediato)
-  execucoes Int      @default(0) // Contador de vezes que rodou com sucesso
+  atraso    Int      @default(0) 
+  execucoes Int      @default(0) 
   ativo     Boolean  @default(true)
   criadoEm  DateTime @default(now())
 
@@ -220,8 +229,8 @@ model FilaAutomacao {
   clienteId    String
   cliente      Cliente    @relation(fields: [clienteId], references: [id], onDelete: Cascade)
   dadosPayload String?    @db.Text
-  dataAgendada DateTime   // Data exata em que o cron job deve executar a regra
-  status       String     @default("AGUARDANDO") // AGUARDANDO, PROCESSANDO, CONCLUIDO
+  dataAgendada DateTime   
+  status       String     @default("AGUARDANDO") 
   criadoEm     DateTime   @default(now())
   atualizadoEm DateTime   @updatedAt
 }
@@ -233,6 +242,6 @@ model AutomacaoHistorico {
   clienteId    String
   cliente      Cliente    @relation(fields: [clienteId], references: [id], onDelete: Cascade)
   dataExecucao DateTime   @default(now())
-  resultado    String     // SUCESSO ou FALHA
+  resultado    String     
   detalhes     String?    @db.Text
 }

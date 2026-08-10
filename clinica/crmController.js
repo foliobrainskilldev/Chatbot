@@ -8,6 +8,16 @@ const webhookService = require('../services/webhookService');
 const { getHorariosDisponiveis } = require('../dateUtils'); 
 const { startOfDay, endOfDay, subDays, format, parse } = require('date-fns');
 
+// --- Helper Global de Auditoria de Equipe ---
+async function registrarAtividade(usuarioId, acao, recurso, detalhes = "") {
+    if(!usuarioId) return;
+    try {
+        await prisma.atividadeEquipe.create({
+            data: { usuarioId, acao, recurso, detalhes }
+        });
+    } catch(e) { console.error("Falha ao registrar log de equipe", e); }
+}
+
 exports.getDashboardStats = async (req, res) => {
     try {
         const dias = parseInt(req.query.dias) || 30;
@@ -107,10 +117,7 @@ exports.getDashboardStats = async (req, res) => {
             graficos: { funil: graficoFunil, servicos: topServicos, origens: origensFormatadas, evolucao: evolucao }
         });
 
-    } catch (error) { 
-        console.error("Erro Dashboard Principal:", error);
-        res.status(500).json({ error: "Erro interno ao mapear o Dashboard." }); 
-    }
+    } catch (error) { res.status(500).json({ error: "Erro interno ao mapear o Dashboard." }); }
 };
 
 exports.getLeads = async (req, res) => {
@@ -136,14 +143,8 @@ exports.getLeads = async (req, res) => {
 
         if (origem) where.origem = origem;
         if (responsavelId) where.responsavelId = parseInt(responsavelId);
-        
-        if (tags) {
-            where.tags = { contains: tags, mode: 'insensitive' };
-        }
-
-        if (servicoId) {
-            where.agendamentos = { some: { tratamentoId: parseInt(servicoId) } };
-        }
+        if (tags) where.tags = { contains: tags, mode: 'insensitive' };
+        if (servicoId) where.agendamentos = { some: { tratamentoId: parseInt(servicoId) } };
         
         if (dias > 0) {
             const dataCorte = subDays(new Date(), dias);
@@ -152,9 +153,7 @@ exports.getLeads = async (req, res) => {
 
         const [leads, total] = await Promise.all([
             prisma.cliente.findMany({ 
-                where, 
-                skip, 
-                take: limit,
+                where, skip, take: limit,
                 orderBy: { ultimaInteracao: 'desc' },
                 include: { 
                     responsavel: true,
@@ -168,10 +167,7 @@ exports.getLeads = async (req, res) => {
             data: leads,
             pagination: { total, page, limit, totalPages: Math.ceil(total / limit) }
         });
-    } catch (error) { 
-        console.error("Erro CRM Paginação:", error);
-        res.status(500).json({ error: "Erro ao buscar pipeline de CRM." }); 
-    }
+    } catch (error) { res.status(500).json({ error: "Erro ao buscar pipeline de CRM." }); }
 };
 
 exports.criarLeadManual = async (req, res) => {
@@ -186,14 +182,9 @@ exports.criarLeadManual = async (req, res) => {
             data: { id: String(id), nome: nome || 'Lead Manual', origem: origem || 'Manual', leadStatus: 'NOVO' }
         });
 
-        // Dispara o Gatilho do Motor de Automação
         await automationEngine.dispararAutomacoes('NOVO_LEAD', novoLead);
-        
         res.status(201).json(novoLead);
-    } catch (error) {
-        console.error("Erro ao criar lead manual:", error);
-        res.status(500).json({ error: "Erro interno ao cadastrar." });
-    }
+    } catch (error) { res.status(500).json({ error: "Erro interno ao cadastrar." }); }
 };
 
 exports.atualizarStatusLead = async (req, res) => {
@@ -209,14 +200,9 @@ exports.atualizarStatusLead = async (req, res) => {
         const leadAnterior = await prisma.cliente.findUnique({ where: { id: req.params.id } });
         const leadAlterado = await prisma.cliente.update({ where: { id: req.params.id }, data: updateData });
 
-        // VERIFICAÇÃO DE GATILHOS DE AUTOMAÇÃO
         if (status && status !== leadAnterior.leadStatus) {
-            if (status === 'QUALIFICADO') {
-                await automationEngine.dispararAutomacoes('LEAD_QUALIFICADO', leadAlterado);
-            }
-            if (status === 'CLIENTE') {
-                await automationEngine.dispararAutomacoes('NOVO_PACIENTE', leadAlterado);
-            }
+            if (status === 'QUALIFICADO') await automationEngine.dispararAutomacoes('LEAD_QUALIFICADO', leadAlterado);
+            if (status === 'CLIENTE') await automationEngine.dispararAutomacoes('NOVO_PACIENTE', leadAlterado);
         }
         if (tags && tags !== leadAnterior.tags) {
             await automationEngine.dispararAutomacoes('TAG_ADICIONADA', leadAlterado);
@@ -268,10 +254,7 @@ exports.assumirAtendimentoHumano = async (req, res) => {
     try {
         const clienteId = req.params.clienteId;
         const lead = await prisma.cliente.update({ where: { id: clienteId }, data: { falarHumano: true, leadStatus: 'EM_CONVERSA' } });
-        
-        // Gatilho: Chat transferido para humano
         await automationEngine.dispararAutomacoes('TRANSFERIDO_HUMANO', lead);
-        
         if (global.io) global.io.emit('atualizar_fila');
         res.status(200).json({ message: "Atendimento humano assumido." });
     } catch (error) { res.status(500).json({ error: "Erro ao assumir atendimento." }); }
@@ -281,10 +264,7 @@ exports.resolverAtendimentoHumano = async (req, res) => {
     try {
         const clienteId = req.params.clienteId;
         const lead = await prisma.cliente.update({ where: { id: clienteId }, data: { falarHumano: false } });
-        
-        // Gatilho: Chat encerrado pelo humano e devolvido
         await automationEngine.dispararAutomacoes('ATENDIMENTO_ENCERRADO', lead);
-
         if (global.io) global.io.emit('atualizar_fila');
         res.status(200).json({ message: "Conversa devolvida para a IA." });
     } catch (error) { res.status(500).json({ error: "Erro ao devolver para IA." }); }
@@ -321,14 +301,9 @@ exports.enviarMensagemManual = async (req, res) => {
 
 exports.getTratamentos = async (req, res) => {
     try {
-        const tratamentos = await prisma.tratamento.findMany({
-            include: { profissionais: true }, 
-            orderBy: { nome: 'asc' }
-        });
+        const tratamentos = await prisma.tratamento.findMany({ include: { profissionais: true }, orderBy: { nome: 'asc' } });
         res.status(200).json(tratamentos);
-    } catch (error) { 
-        res.status(500).json({ error: "Erro ao buscar tratamentos." }); 
-    }
+    } catch (error) { res.status(500).json({ error: "Erro ao buscar tratamentos." }); }
 };
 
 exports.salvarTratamento = async (req, res) => {
@@ -342,42 +317,30 @@ exports.salvarTratamento = async (req, res) => {
         let profIds = [];
         if (req.body.profissionais) {
             try { profIds = JSON.parse(req.body.profissionais).map(id => ({ id: parseInt(id) })); } 
-            catch (e) { console.error(e); }
+            catch (e) {}
         }
 
         const dadosBase = {
-            nome: req.body.nome,
-            categoria: req.body.categoria || 'Outros',
-            tipoPreco: req.body.tipoPreco || 'FIXO',
-            preco: req.body.preco ? parseFloat(req.body.preco) : null,
-            duracaoMin: parseInt(req.body.duracaoMin) || 30,
-            descricaoCurta: req.body.descricaoCurta || '',
-            descricaoCompleta: req.body.descricaoCompleta || '',
-            informacoesIA: req.body.informacoesIA || '',
-            faq: req.body.faq || '',
-            regrasIA: req.body.regrasIA || '',
-            podeAgendarIA: req.body.podeAgendarIA === 'true',
-            status: req.body.status || 'ATIVO',
+            nome: req.body.nome, categoria: req.body.categoria || 'Outros', tipoPreco: req.body.tipoPreco || 'FIXO',
+            preco: req.body.preco ? parseFloat(req.body.preco) : null, duracaoMin: parseInt(req.body.duracaoMin) || 30,
+            descricaoCurta: req.body.descricaoCurta || '', informacoesIA: req.body.informacoesIA || '', faq: req.body.faq || '',
+            regrasIA: req.body.regrasIA || '', podeAgendarIA: req.body.podeAgendarIA === 'true', status: req.body.status || 'ATIVO',
             imagemUrl: imageUrl
         };
 
         if (req.body.id && req.body.id !== 'undefined' && req.body.id !== '') {
             const update = await prisma.tratamento.update({ 
                 where: { id: parseInt(req.body.id) }, 
-                data: { ...dadosBase, profissionais: { set: profIds } },
-                include: { profissionais: true }
+                data: { ...dadosBase, profissionais: { set: profIds } }, include: { profissionais: true }
             });
             return res.status(200).json(update);
         } else {
             const create = await prisma.tratamento.create({ 
-                data: { ...dadosBase, profissionais: { connect: profIds } },
-                include: { profissionais: true }
+                data: { ...dadosBase, profissionais: { connect: profIds } }, include: { profissionais: true }
             });
             return res.status(201).json(create);
         }
-    } catch (error) { 
-        res.status(500).json({ error: "Erro ao salvar tratamento no catálogo." }); 
-    }
+    } catch (error) { res.status(500).json({ error: "Erro ao salvar tratamento." }); }
 };
 
 exports.excluirTratamento = async (req, res) => {
@@ -399,7 +362,6 @@ exports.atualizarConfigIA = async (req, res) => {
     try {
         const p = req.body;
         let avatarNovaUrl = p.avatarUrl || null;
-
         if (req.file) {
             const cloudResult = await cloudinaryService.uploadStream(req.file.buffer, 'clinica/ia', 'image');
             avatarNovaUrl = cloudResult.secure_url;
@@ -415,11 +377,7 @@ exports.atualizarConfigIA = async (req, res) => {
                 avatarUrl: avatarNovaUrl !== 'null' ? avatarNovaUrl : null
             }
         });
-
-        await prisma.logAlteracaoIA.create({
-            data: { autor: p.usuarioLogado || "Administrador", descricao: `Configurações da Inteligência Artificial atualizadas.` }
-        });
-
+        await prisma.logAlteracaoIA.create({ data: { autor: p.usuarioLogado || "Administrador", descricao: `Configurações da IA atualizadas.` } });
         res.status(200).json(config);
     } catch (error) { res.status(500).json({ error: "Erro ao atualizar IA." }); }
 };
@@ -428,14 +386,12 @@ exports.testarIA = async (req, res) => {
     try {
         const { mensagem } = req.body;
         if (!mensagem) return res.status(400).json({ error: "Mensagem vazia." });
-
         const configDb = await prisma.configSistema.findFirst();
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' } });
         const historicoFake = [{ role: 'assistant', content: `Olá! Sou ${configDb.nomeAssistente}. Como posso ajudar?` }];
-
         const respostaIA = await aiService.responderComContextoIA(mensagem, historicoFake, configDb, tratamentos);
         res.status(200).json({ resposta: respostaIA });
-    } catch (error) { res.status(500).json({ error: "A IA falhou em responder a simulação." }); }
+    } catch (error) { res.status(500).json({ error: "Falha na simulação IA." }); }
 };
 
 exports.getAgendamentosTodos = async (req, res) => {
@@ -446,15 +402,11 @@ exports.getAgendamentosTodos = async (req, res) => {
         if (status) where.status = status;
         if (profissionalId) where.profissionalSaudeId = parseInt(profissionalId);
         if (tratamentoId) where.tratamentoId = parseInt(tratamentoId);
-        
         if (data) {
             const dataFiltro = new Date(data);
             where.dataHora = { gte: startOfDay(dataFiltro), lte: endOfDay(dataFiltro) };
         }
-
-        if (search) {
-            where.cliente = { OR: [{ nome: { contains: search, mode: 'insensitive' } }, { id: { contains: search } }] };
-        }
+        if (search) where.cliente = { OR: [{ nome: { contains: search, mode: 'insensitive' } }, { id: { contains: search } }] };
 
         const agendamentos = await prisma.agendamento.findMany({ 
             where, include: { cliente: true, tratamento: true, profissionalSaude: true }, orderBy: { dataHora: 'asc' } 
@@ -474,13 +426,12 @@ exports.getAgendamentosTodos = async (req, res) => {
         };
 
         res.status(200).json({ data: agendamentos, stats });
-    } catch (error) { res.status(500).json({ error: "Erro ao buscar agenda clínica." }); }
+    } catch (error) { res.status(500).json({ error: "Erro agenda." }); }
 };
 
 exports.criarAgendamentoManual = async (req, res) => {
     try {
         const { clienteId, tratamentoId, profissionalSaudeId, dataHora, observacoes } = req.body;
-        
         const dataOriginal = new Date(dataHora);
         const novoAgendamento = await prisma.agendamento.create({
             data: {
@@ -489,35 +440,27 @@ exports.criarAgendamentoManual = async (req, res) => {
             },
             include: { cliente: true, tratamento: true }
         });
-
         const dataStr = dataOriginal.toLocaleDateString('pt-BR');
         const horaStr = dataOriginal.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-        
-        const msg = `Sua consulta para *${novoAgendamento.tratamento.nome}* foi agendada para ${dataStr} às ${horaStr}. Qualquer dúvida, estamos à disposição!`;
+        const msg = `Sua consulta para *${novoAgendamento.tratamento.nome}* foi agendada para ${dataStr} às ${horaStr}.`;
         await whatsappService.sendText(clienteId, msg);
         await prisma.mensagemIA.create({ data: { role: 'assistant', content: `[Sistema] ${msg}`, clienteId, atendenteHumano: false } });
-        
-        // Gatilho Motor de Automações: Consulta Agendada Diretamente como Confirmada
         await automationEngine.dispararAutomacoes('CONSULTA_CONFIRMADA', novoAgendamento);
-
         res.status(201).json(novoAgendamento);
-    } catch (error) { res.status(500).json({ error: "Erro ao criar agendamento no sistema." }); }
+    } catch (error) { res.status(500).json({ error: "Erro criar agendamento." }); }
 };
 
 exports.getHorariosLivresApi = async (req, res) => {
     try {
         const { data, tratamentoId, profissionalId } = req.query; 
         if (!data || !tratamentoId) return res.status(400).json({ error: "Faltam parâmetros" });
-
         const tratamentoDb = await prisma.tratamento.findUnique({ where: { id: parseInt(tratamentoId) } });
         if(!tratamentoDb) return res.status(404).json({ error: "Tratamento inválido" });
-
         const duracao = tratamentoDb.duracaoMin || 30;
         const profId = profissionalId ? parseInt(profissionalId) : null;
-
         const horarios = await getHorariosDisponiveis(data, duracao, profId);
         res.status(200).json(horarios);
-    } catch (error) { res.status(500).json({ error: "Falha na leitura da agenda." }); }
+    } catch (error) { res.status(500).json({ error: "Falha leitura agenda." }); }
 };
 
 exports.atualizarStatusAgendamento = async (req, res) => {
@@ -526,42 +469,101 @@ exports.atualizarStatusAgendamento = async (req, res) => {
         const att = await prisma.agendamento.update({ 
             where: { id: parseInt(req.params.id) }, data: { status }, include: { cliente: true, tratamento: true }
         });
-
-        // REGRAS DE GATILHOS DE ACORDO COM O NOVO STATUS
-        if (status === 'CONFIRMADA' || status === 'AGENDADO') { 
-            await automationEngine.dispararAutomacoes('CONSULTA_CONFIRMADA', att); 
-        } else if (status === 'REALIZADA' || status === 'CONCLUIDO') { 
-            await automationEngine.dispararAutomacoes('CONSULTA_REALIZADA', att); 
-        } else if (status === 'CANCELADA') {
-            await whatsappService.sendText(att.clienteId, `Sua consulta para ${att.tratamento?.nome} foi cancelada. Caso tenha sido um engano, responda esta mensagem para remarcar.`);
+        if (status === 'CONFIRMADA' || status === 'AGENDADO') await automationEngine.dispararAutomacoes('CONSULTA_CONFIRMADA', att); 
+        else if (status === 'REALIZADA' || status === 'CONCLUIDO') await automationEngine.dispararAutomacoes('CONSULTA_REALIZADA', att); 
+        else if (status === 'CANCELADA') {
+            await whatsappService.sendText(att.clienteId, `Sua consulta foi cancelada. Se foi um erro, entre em contato.`);
             await automationEngine.dispararAutomacoes('CONSULTA_CANCELADA', att); 
-        } else if (status === 'FALTA') {
-            await automationEngine.dispararAutomacoes('PACIENTE_FALTOU', att); 
-        }
-
+        } else if (status === 'FALTA') await automationEngine.dispararAutomacoes('PACIENTE_FALTOU', att); 
         res.status(200).json(att);
     } catch (error) { res.status(500).json({ error: "Erro atualizar consulta." }); }
 };
 
+// ==========================================
+// MÓDULO DE GESTÃO DE EQUIPE E AUDITORIA
+// ==========================================
 exports.getEquipe = async (req, res) => {
     try {
-        const usuarios = await prisma.usuario.findMany({ orderBy: { criadoEm: 'desc' } });
+        const usuarios = await prisma.usuario.findMany({ 
+            orderBy: { criadoEm: 'desc' },
+            select: { id: true, nome: true, email: true, funcao: true, status: true, ultimoAcesso: true, criadoEm: true, permissoes: true }
+        });
         res.status(200).json(usuarios);
-    } catch (error) { res.status(500).json({ error: "Erro equipe." }); }
+    } catch (error) { res.status(500).json({ error: "Erro ao buscar equipe." }); }
 };
 
 exports.criarMembroEquipe = async (req, res) => {
     try {
+        const { nome, email, funcao } = req.body;
+        
+        let permissoesDefault = {};
+        if(funcao === 'ADMIN') permissoesDefault = { crm: 'tudo', conversas: 'tudo', calendario: 'tudo', conf: 'tudo' };
+        if(funcao === 'ATENDENTE') permissoesDefault = { crm: 'editar', conversas: 'atender', calendario: 'ver' };
+        
         const newUser = await prisma.usuario.create({
-            data: { nome: req.body.nome, email: req.body.email, senha: req.body.senha, funcao: req.body.funcao, status: 'ONLINE' }
+            data: { 
+                nome, email, 
+                funcao: funcao || 'ATENDENTE', 
+                status: 'PENDENTE',
+                permissoes: JSON.stringify(permissoesDefault)
+            }
         });
+        
+        // Log de Auditoria
+        await registrarAtividade(1, 'Convidou Membro', 'Equipe', `Enviou convite de acesso para ${email}`);
+
         res.status(201).json(newUser);
-    } catch (error) { res.status(500).json({ error: "Erro ao criar membro." }); }
+    } catch (error) { res.status(500).json({ error: "Erro ao criar convite de membro." }); }
 };
 
-exports.deletarMembroEquipe = async (req, res) => {
+exports.atualizarMembroEquipe = async (req, res) => {
     try {
-        await prisma.usuario.delete({ where: { id: parseInt(req.params.id) } });
-        res.status(200).json({ message: "Membro deletado." });
-    } catch (error) { res.status(500).json({ error: "Erro ao deletar." }); }
+        const { status, funcao, permissoes } = req.body;
+        const updateData = {};
+        if (status) updateData.status = status;
+        if (funcao) updateData.funcao = funcao;
+        if (permissoes) updateData.permissoes = JSON.stringify(permissoes);
+
+        const updated = await prisma.usuario.update({
+            where: { id: parseInt(req.params.id) },
+            data: updateData
+        });
+
+        let acaoStr = status === 'SUSPENSO' ? 'Suspendeu Acesso' : 'Alterou Permissões';
+        await registrarAtividade(1, acaoStr, 'Equipe', `Atualizou o perfil de ${updated.nome}`);
+
+        res.status(200).json(updated);
+    } catch (error) { res.status(500).json({ error: "Erro ao atualizar membro." }); }
+};
+
+exports.getAtividadesEquipe = async (req, res) => {
+    try {
+        const atividades = await prisma.atividadeEquipe.findMany({
+            take: 100,
+            orderBy: { criadoEm: 'desc' },
+            include: { usuario: { select: { nome: true, funcao: true, avatarUrl: true } } }
+        });
+        res.status(200).json(atividades);
+    } catch (error) {
+        res.status(200).json([]); // Fallback
+    }
+};
+
+exports.getMembroPerfil = async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        const usuario = await prisma.usuario.findUnique({
+            where: { id },
+            select: { id: true, nome: true, email: true, funcao: true, status: true, ultimoAcesso: true, criadoEm: true }
+        });
+        
+        const leadsAtribuidos = await prisma.cliente.count({ where: { responsavelId: id } });
+        const agendamentos = await prisma.agendamento.count({ where: { profissionalSaudeId: id } });
+        
+        const atividades = await prisma.atividadeEquipe.findMany({
+            where: { usuarioId: id }, take: 15, orderBy: { criadoEm: 'desc' }
+        });
+
+        res.status(200).json({ usuario, stats: { leadsAtribuidos, agendamentos }, atividades });
+    } catch (error) { res.status(500).json({ error: "Erro ao buscar perfil." }); }
 };

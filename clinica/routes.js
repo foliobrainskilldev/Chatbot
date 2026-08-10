@@ -1,3 +1,5 @@
+// --- START OF FILE routes.js ---
+
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -60,7 +62,7 @@ router.put('/ia/config', upload.single('avatar'), crmControllerClinica.atualizar
 router.post('/ia/testar', crmControllerClinica.testarIA); 
 
 // ==========================================
-// CONFIGURAÇÕES GERAIS, WEBHOOKS E EQUIPE
+// CONFIGURAÇÕES GERAIS E WEBHOOKS
 // ==========================================
 router.get('/webhooks', webhookController.getWebhooks);
 router.post('/webhooks', webhookController.createWebhook);
@@ -68,19 +70,22 @@ router.put('/webhooks/:id/toggle', webhookController.toggleWebhook);
 router.delete('/webhooks/:id', webhookController.deleteWebhook);
 
 // ==========================================
-// MOTOR DE AUTOMAÇÕES, FLUXOS E FOLLOW-UP
+// MOTOR DE AUTOMAÇÕES E FLUXOS
 // ==========================================
 router.get('/automacoes', automacoesController.getAutomacoes);
 router.post('/automacoes', automacoesController.criarAutomacao);
-router.put('/automacoes/:id/toggle', automacoesController.toggleAutomacao); // NOVA
+router.put('/automacoes/:id/toggle', automacoesController.toggleAutomacao);
 router.delete('/automacoes/:id', automacoesController.deletarAutomacao);
-router.get('/automacoes/historico', automacoesController.getHistoricoExecucao); // NOVA
+router.get('/automacoes/historico', automacoesController.getHistoricoExecucao);
 
 // ==========================================
-// EQUIPE
+// EQUIPE, PERMISSÕES E AUDITORIA
 // ==========================================
+// IMPORTANTE: Rotas estáticas acima de rotas dinâmicas com /:id
+router.get('/equipe/atividades', crmControllerClinica.getAtividadesEquipe);
+router.get('/equipe/:id/perfil', crmControllerClinica.getMembroPerfil);
 router.get('/equipe', crmControllerClinica.getEquipe);
 router.post('/equipe', crmControllerClinica.criarMembroEquipe);
-router.delete('/equipe/:id', crmControllerClinica.deletarMembroEquipe);
+router.put('/equipe/:id', crmControllerClinica.atualizarMembroEquipe);
 
 module.exports = router;
