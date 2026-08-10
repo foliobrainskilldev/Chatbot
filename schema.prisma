@@ -1,5 +1,3 @@
-// --- START OF FILE schema.prisma ---
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -55,10 +53,10 @@ model Usuario {
   id          Int               @id @default(autoincrement())
   nome        String
   email       String            @unique
-  senha       String?           // Opcional para o fluxo de convite
+  senha       String?           
   funcao      String            @default("ATENDENTE") 
-  status      String            @default("PENDENTE") // ONLINE, PENDENTE, SUSPENSO
-  permissoes  String?           @db.Text // JSON de permissões granulares
+  status      String            @default("PENDENTE") 
+  permissoes  String?           @db.Text 
   ultimoAcesso DateTime?
   
   notas       NotaInterna[]
@@ -78,7 +76,7 @@ model AtividadeEquipe {
 }
 
 model Cliente {
-  id                  String               @id // Número de telefone via Meta API
+  id                  String               @id 
   nome                String?
   email               String?
   fotoUrl             String?              @db.Text 
@@ -200,10 +198,27 @@ model NotaInterna {
 model WebhookEndpoint {
   id        Int      @id @default(autoincrement())
   url       String   @db.Text
-  secret    String?
+  authType  String   @default("NONE") // NONE, BEARER, API_KEY
+  authToken String?  @db.Text
+  metodo    String   @default("POST")
   eventos   String   
   ativo     Boolean  @default(true)
   criadoEm  DateTime @default(now())
+  logs      WebhookLog[]
+}
+
+model WebhookLog {
+  id              Int              @id @default(autoincrement())
+  webhookId       Int?
+  webhook         WebhookEndpoint?  @relation(fields: [webhookId], references: [id], onDelete: SetNull)
+  evento          String
+  url             String           @db.Text
+  requestPayload  String           @db.Text
+  responseStatus  Int?
+  responseBody    String?          @db.Text
+  sucesso         Boolean
+  tentativas      Int              @default(1)
+  criadoEm        DateTime         @default(now())
 }
 
 model Automacao {

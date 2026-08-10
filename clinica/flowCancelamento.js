@@ -1,9 +1,8 @@
-// --- START OF FILE flowCancelamento.js ---
-
 const { prisma } = require('../db');
 const { format } = require('date-fns');
 const whatsappService = require('../whatsappService');
-const automationEngine = require('../services/automationEngine'); // IMPORT MOTOR DE AUTOMAÇÃO
+const automationEngine = require('../services/automationEngine');
+const webhookService = require('../services/webhookService');
 const { iniciarAgendamentoClinica } = require('./flowAgendamento'); 
 
 async function iniciarCancelamentoClinica(jid, senderNumber, stateMachine, STEPS, isRemarcacao = false) {
@@ -61,17 +60,21 @@ async function processarCancelamentoClinica(jid, textMessage, senderNumber, stat
         const agAtualizado = await prisma.agendamento.update({ 
             where: { id: agendamentoId }, 
             data: { status: statusNovo },
-            include: { cliente: true, tratamento: true }
+            include: { cliente: true, tratamento: true, profissionalSaude: true }
         });
         
         if (isRemarcacao) {
             // GATILHO REMARCADA
             await automationEngine.dispararAutomacoes('CONSULTA_REMARCADA', agAtualizado);
+            await webhookService.dispararEvento('appointment.updated', agAtualizado); // WEBHOOK
+
             await whatsappService.sendText(jid, "Consulta suspensa. Vamos escolher o novo horário agora.");
             return await iniciarAgendamentoClinica(jid, senderNumber, stateMachine, STEPS);
         } else {
             // GATILHO CANCELADA
             await automationEngine.dispararAutomacoes('CONSULTA_CANCELADA', agAtualizado);
+            await webhookService.dispararEvento('appointment.cancelled', agAtualizado); // WEBHOOK
+
             await whatsappService.sendText(jid, "✅ Sua consulta foi desmarcada com sucesso. Agradecemos por avisar.");
             stateMachine.set(senderNumber, { step: STEPS.MENU_PRINCIPAL, data: {} });
         }

@@ -1,5 +1,3 @@
-// --- START OF FILE routes.js ---
-
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -62,10 +60,12 @@ router.put('/ia/config', upload.single('avatar'), crmControllerClinica.atualizar
 router.post('/ia/testar', crmControllerClinica.testarIA); 
 
 // ==========================================
-// CONFIGURAÇÕES GERAIS E WEBHOOKS
+// INTEGRAÇÕES E WEBHOOKS AVANÇADOS
 // ==========================================
 router.get('/webhooks', webhookController.getWebhooks);
+router.get('/webhooks/logs', webhookController.getWebhookLogs); // <- NOVA ROTA
 router.post('/webhooks', webhookController.createWebhook);
+router.post('/webhooks/:id/test', webhookController.testWebhook); // <- NOVA ROTA
 router.put('/webhooks/:id/toggle', webhookController.toggleWebhook);
 router.delete('/webhooks/:id', webhookController.deleteWebhook);
 
@@ -81,7 +81,6 @@ router.get('/automacoes/historico', automacoesController.getHistoricoExecucao);
 // ==========================================
 // EQUIPE, PERMISSÕES E AUDITORIA
 // ==========================================
-// IMPORTANTE: Rotas estáticas acima de rotas dinâmicas com /:id
 router.get('/equipe/atividades', crmControllerClinica.getAtividadesEquipe);
 router.get('/equipe/:id/perfil', crmControllerClinica.getMembroPerfil);
 router.get('/equipe', crmControllerClinica.getEquipe);

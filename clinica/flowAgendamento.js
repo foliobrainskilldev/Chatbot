@@ -1,11 +1,9 @@
-// --- START OF FILE flowAgendamento.js ---
-
 const { prisma } = require('../db');
 const { getProximosDiasUteis, getHorariosDisponiveis } = require('../dateUtils');
 const { parse } = require('date-fns');
 const whatsappService = require('../whatsappService');
 const webhookService = require('../services/webhookService');
-const automationEngine = require('../services/automationEngine'); // IMPORT MOTOR DE AUTOMAÇÃO
+const automationEngine = require('../services/automationEngine'); 
 
 async function iniciarAgendamentoClinica(jid, senderNumber, stateMachine, STEPS) {
     const agendamentosPendentes = await prisma.agendamento.count({
@@ -137,7 +135,7 @@ async function handleAgendamentoClinica(jid, textMessage, senderNumber, stateMac
                         dataHora: dataHoraDb, clienteId: senderNumber, status: 'AGENDADO',
                         tratamentoId: userState.data.tratamento.id, profissionalSaudeId: userState.data.medico?.id || null
                     },
-                    include: { cliente: true, tratamento: true }
+                    include: { cliente: true, tratamento: true, profissionalSaude: true }
                 });
                 
                 const leadAlterado = await prisma.cliente.update({ 
@@ -148,8 +146,9 @@ async function handleAgendamentoClinica(jid, textMessage, senderNumber, stateMac
                 await whatsappService.sendText(jid, "Consulta e horário reservados com sucesso! Você receberá nosso lembrete automático antes da consulta. Obrigado!");
                 
                 // GATILHOS EXECUTADOS
-                await webhookService.dispararEvento('appointment.created', { agendamento: novoAgendamento, lead: leadAlterado });
                 await automationEngine.dispararAutomacoes('CONSULTA_CRIADA', novoAgendamento);
+                await webhookService.dispararEvento('appointment.created', novoAgendamento); // WEBHOOK
+
             } else {
                 await whatsappService.sendText(jid, 'Processo cancelado.');
             }

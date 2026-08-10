@@ -1,5 +1,3 @@
-// --- START OF FILE crmController.js ---
-
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
 const cloudinaryService = require('../services/cloudinaryService');
@@ -182,7 +180,10 @@ exports.criarLeadManual = async (req, res) => {
             data: { id: String(id), nome: nome || 'Lead Manual', origem: origem || 'Manual', leadStatus: 'NOVO' }
         });
 
+        // Automação e Webhook Integrado
         await automationEngine.dispararAutomacoes('NOVO_LEAD', novoLead);
+        await webhookService.dispararEvento('lead.created', novoLead);
+
         res.status(201).json(novoLead);
     } catch (error) { res.status(500).json({ error: "Erro interno ao cadastrar." }); }
 };
@@ -200,14 +201,24 @@ exports.atualizarStatusLead = async (req, res) => {
         const leadAnterior = await prisma.cliente.findUnique({ where: { id: req.params.id } });
         const leadAlterado = await prisma.cliente.update({ where: { id: req.params.id }, data: updateData });
 
+        // Disparo para Automações Nativas
         if (status && status !== leadAnterior.leadStatus) {
-            if (status === 'QUALIFICADO') await automationEngine.dispararAutomacoes('LEAD_QUALIFICADO', leadAlterado);
-            if (status === 'CLIENTE') await automationEngine.dispararAutomacoes('NOVO_PACIENTE', leadAlterado);
+            if (status === 'QUALIFICADO') {
+                await automationEngine.dispararAutomacoes('LEAD_QUALIFICADO', leadAlterado);
+                await webhookService.dispararEvento('lead.qualified', leadAlterado); // Webhook
+            }
+            if (status === 'CLIENTE') {
+                await automationEngine.dispararAutomacoes('NOVO_PACIENTE', leadAlterado);
+                await webhookService.dispararEvento('lead.converted', leadAlterado); // Webhook
+            }
         }
         if (tags && tags !== leadAnterior.tags) {
             await automationEngine.dispararAutomacoes('TAG_ADICIONADA', leadAlterado);
         }
         
+        // Sempre envia a atualização geral do lead para integrações (RD Station, HubSpot, etc)
+        await webhookService.dispararEvento('lead.updated', leadAlterado);
+
         res.status(200).json(leadAlterado);
     } catch (error) { res.status(500).json({ error: "Erro ao atualizar pipeline." }); }
 };
@@ -218,6 +229,8 @@ exports.atualizarLeadCompleto = async (req, res) => {
         const lead = await prisma.cliente.update({
             where: { id: req.params.id }, data: { nome, email, observacoes }
         });
+        
+        await webhookService.dispararEvento('lead.updated', lead); // Webhook
         res.status(200).json(lead);
     } catch (error) { res.status(500).json({ error: "Erro ao atualizar ficha do lead." }); }
 };
@@ -254,7 +267,10 @@ exports.assumirAtendimentoHumano = async (req, res) => {
     try {
         const clienteId = req.params.clienteId;
         const lead = await prisma.cliente.update({ where: { id: clienteId }, data: { falarHumano: true, leadStatus: 'EM_CONVERSA' } });
+        
         await automationEngine.dispararAutomacoes('TRANSFERIDO_HUMANO', lead);
+        await webhookService.dispararEvento('lead.updated', lead);
+        
         if (global.io) global.io.emit('atualizar_fila');
         res.status(200).json({ message: "Atendimento humano assumido." });
     } catch (error) { res.status(500).json({ error: "Erro ao assumir atendimento." }); }
@@ -264,7 +280,10 @@ exports.resolverAtendimentoHumano = async (req, res) => {
     try {
         const clienteId = req.params.clienteId;
         const lead = await prisma.cliente.update({ where: { id: clienteId }, data: { falarHumano: false } });
+        
         await automationEngine.dispararAutomacoes('ATENDIMENTO_ENCERRADO', lead);
+        await webhookService.dispararEvento('conversation.closed', lead); // Webhook
+        
         if (global.io) global.io.emit('atualizar_fila');
         res.status(200).json({ message: "Conversa devolvida para a IA." });
     } catch (error) { res.status(500).json({ error: "Erro ao devolver para IA." }); }
@@ -433,19 +452,25 @@ exports.criarAgendamentoManual = async (req, res) => {
     try {
         const { clienteId, tratamentoId, profissionalSaudeId, dataHora, observacoes } = req.body;
         const dataOriginal = new Date(dataHora);
+        
         const novoAgendamento = await prisma.agendamento.create({
             data: {
                 dataHora: dataOriginal, clienteId, status: 'CONFIRMADA', 
                 tratamentoId: parseInt(tratamentoId), profissionalSaudeId: profissionalSaudeId ? parseInt(profissionalSaudeId) : null, observacoes: observacoes || ""
             },
-            include: { cliente: true, tratamento: true }
+            include: { cliente: true, tratamento: true, profissionalSaude: true }
         });
+        
         const dataStr = dataOriginal.toLocaleDateString('pt-BR');
         const horaStr = dataOriginal.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
         const msg = `Sua consulta para *${novoAgendamento.tratamento.nome}* foi agendada para ${dataStr} às ${horaStr}.`;
+        
         await whatsappService.sendText(clienteId, msg);
         await prisma.mensagemIA.create({ data: { role: 'assistant', content: `[Sistema] ${msg}`, clienteId, atendenteHumano: false } });
+        
         await automationEngine.dispararAutomacoes('CONSULTA_CONFIRMADA', novoAgendamento);
+        await webhookService.dispararEvento('appointment.created', novoAgendamento); // Webhook
+
         res.status(201).json(novoAgendamento);
     } catch (error) { res.status(500).json({ error: "Erro criar agendamento." }); }
 };
@@ -467,14 +492,28 @@ exports.atualizarStatusAgendamento = async (req, res) => {
     try {
         const { status } = req.body;
         const att = await prisma.agendamento.update({ 
-            where: { id: parseInt(req.params.id) }, data: { status }, include: { cliente: true, tratamento: true }
+            where: { id: parseInt(req.params.id) }, data: { status }, include: { cliente: true, tratamento: true, profissionalSaude: true }
         });
-        if (status === 'CONFIRMADA' || status === 'AGENDADO') await automationEngine.dispararAutomacoes('CONSULTA_CONFIRMADA', att); 
-        else if (status === 'REALIZADA' || status === 'CONCLUIDO') await automationEngine.dispararAutomacoes('CONSULTA_REALIZADA', att); 
+        
+        // Notifica Webhooks Gerais
+        await webhookService.dispararEvento('appointment.updated', att);
+
+        if (status === 'CONFIRMADA' || status === 'AGENDADO') {
+            await automationEngine.dispararAutomacoes('CONSULTA_CONFIRMADA', att); 
+        } 
+        else if (status === 'REALIZADA' || status === 'CONCLUIDO') {
+            await automationEngine.dispararAutomacoes('CONSULTA_REALIZADA', att); 
+            await webhookService.dispararEvento('appointment.completed', att); // Webhook Específico
+        } 
         else if (status === 'CANCELADA') {
             await whatsappService.sendText(att.clienteId, `Sua consulta foi cancelada. Se foi um erro, entre em contato.`);
             await automationEngine.dispararAutomacoes('CONSULTA_CANCELADA', att); 
-        } else if (status === 'FALTA') await automationEngine.dispararAutomacoes('PACIENTE_FALTOU', att); 
+            await webhookService.dispararEvento('appointment.cancelled', att); // Webhook Específico
+        } 
+        else if (status === 'FALTA') {
+            await automationEngine.dispararAutomacoes('PACIENTE_FALTOU', att); 
+        }
+        
         res.status(200).json(att);
     } catch (error) { res.status(500).json({ error: "Erro atualizar consulta." }); }
 };
@@ -509,7 +548,6 @@ exports.criarMembroEquipe = async (req, res) => {
             }
         });
         
-        // Log de Auditoria
         await registrarAtividade(1, 'Convidou Membro', 'Equipe', `Enviou convite de acesso para ${email}`);
 
         res.status(201).json(newUser);
