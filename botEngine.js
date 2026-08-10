@@ -1,3 +1,5 @@
+// --- START OF FILE botEngine.js (RAIZ) ---
+
 const { prisma } = require('./db');
 const botBarbearia = require('./barbearia/botEngine'); // Motor exclusivo da Barbearia
 const botClinica = require('./clinica/botEngine');     // Motor exclusivo da Clínica
@@ -28,9 +30,12 @@ const processarWebhook = (req, res) => {
                     
                     // ===============================================
                     // INTERCEPTOR ISOLADOR: Descobre qual Nicho rodar
+                    // USANDO FINDUNIQUE GARANTE LEITURA DA CONFIG ATUAL
                     // ===============================================
-                    const configDb = await prisma.configSistema.findFirst();
+                    const configDb = await prisma.configSistema.findUnique({ where: { id: 1 } });
                     const modoAtivo = configDb?.modoAtivo || 'BARBEARIA';
+                    
+                    console.log(`[ROTEAMENTO META] Direcionando mensagem de ${message.from} para: ${modoAtivo}`);
                     
                     if (modoAtivo === 'BARBEARIA') {
                         await botBarbearia.processarMensagemEntrante(message);

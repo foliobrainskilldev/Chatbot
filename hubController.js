@@ -1,10 +1,12 @@
+// --- START OF FILE hubController.js ---
+
 const { prisma } = require('./db');
 const botBarbearia = require('./barbearia/botEngine');
 const botClinica = require('./clinica/botEngine');
 
 exports.getConfigSistema = async (req, res) => {
     try {
-        let config = await prisma.configSistema.findFirst();
+        let config = await prisma.configSistema.findUnique({ where: { id: 1 } });
         if (!config) {
             config = await prisma.configSistema.create({
                 data: { id: 1, modoAtivo: 'BARBEARIA', nomeAssistente: 'Assistente', tomDeVoz: 'Profissional' }
@@ -14,6 +16,30 @@ exports.getConfigSistema = async (req, res) => {
     } catch (e) {
         console.error("Erro Hub Config GET:", e);
         res.status(500).json({ error: "Erro ao buscar configurações no banco central." });
+    }
+};
+
+// Nova Função ISOLADA apenas para o Motor (Evita apagar outras configs de IA acidentalmente)
+exports.mudarMotorAtivo = async (req, res) => {
+    try {
+        const { modoAtivo } = req.body;
+        
+        const config = await prisma.configSistema.upsert({
+            where: { id: 1 },
+            update: { modoAtivo: modoAtivo },
+            create: { 
+                id: 1, 
+                modoAtivo: modoAtivo, 
+                nomeAssistente: 'Assistente', 
+                tomDeVoz: 'Profissional' 
+            }
+        });
+
+        console.log(`[HUB] Motor de Roteamento alterado para: ${modoAtivo}`);
+        res.status(200).json(config);
+    } catch (e) {
+        console.error("Erro ao mudar motor:", e);
+        res.status(500).json({ error: "Erro ao alterar roteamento do sistema." });
     }
 };
 
@@ -45,15 +71,7 @@ exports.saveConfigSistema = async (req, res) => {
                 tomDeVoz: d.tomDeVoz || "Amigável", 
                 objetivos: d.objetivos || "", 
                 regrasExtrasIA: d.regrasExtrasIA || "", 
-                faq: d.faq || "",
-                ignorarDiagnosticos: d.ignorarDiagnosticos || false, 
-                regrasTransferencia: d.regrasTransferencia || "",
-                notificarNovosLeads: d.notificarNovosLeads || false, 
-                autoFollowUp: d.autoFollowUp || false,
-                autoLembrete: d.autoLembrete || false, 
-                distribuicaoLeads: d.distribuicaoLeads || "MANUAL",
-                webhookUrl: d.webhookUrl || "", 
-                metaToken: d.metaToken || ""
+                faq: d.faq || ""
             }
         });
         res.status(200).json({ message: "Configurações Globais salvas com sucesso." });
@@ -75,13 +93,11 @@ exports.getHubStats = async (req, res) => {
 
 exports.formatarSistemaCompleto = async (req, res) => {
     try {
-        // Apaga TODO O BANCO DE DADOS (Leads, Mensagens e Agendamentos de TODOS os nichos)
         await prisma.notaInterna.deleteMany({}); 
         await prisma.mensagemIA.deleteMany({});
         await prisma.agendamento.deleteMany({}); 
         await prisma.cliente.deleteMany({});
         
-        // Limpa a memória volátil dos dois motores
         if (botBarbearia.limparMemoriaEstado) botBarbearia.limparMemoriaEstado();
         if (botClinica.limparMemoriaEstado) botClinica.limparMemoriaEstado();
 

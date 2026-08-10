@@ -1,3 +1,5 @@
+// --- START OF FILE routes.js ---
+
 const express = require('express');
 const router = express.Router();
 
@@ -17,6 +19,7 @@ router.post('/webhook', botEngine.processarWebhook);
 // ==========================================
 router.get('/hub/config', hubController.getConfigSistema);
 router.post('/hub/config', hubController.saveConfigSistema);
+router.post('/hub/motor', hubController.mudarMotorAtivo); // <--- NOVA ROTA INJETADA AQUI
 router.get('/hub/stats', hubController.getHubStats);
 router.post('/hub/reset', hubController.formatarSistemaCompleto);
 
