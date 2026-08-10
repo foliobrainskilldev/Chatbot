@@ -11,35 +11,82 @@ model ConfigSistema {
   id                  Int     @id @default(1)
   modoAtivo           String  @default("BARBEARIA")
   
-  // Identidade
+  // --- IDENTIDADE DA CLÍNICA ---
   nomeClinica         String  @default("Clínica Saúde Mais")
-  nomeAssistente      String  @default("Assistente Ana")
-  avatarUrl           String? @db.Text
-  idioma              String  @default("Português (Brasil)")
+  nomeComercial       String?
+  telefone            String?
+  whatsapp            String?
+  email               String?
+  endereco            String?
+  cidade              String?
+  pais                String  @default("Mocambique")
+  fusoHorario         String  @default("Africa/Maputo")
+  moeda               String  @default("MT")
+  logoUrl             String? @db.Text
+  site                String?
+  redesSociais        String? @db.Text // JSON
   
-  // Personalidade e Comunicação
-  tomDeVoz            String  @default("Profissional e acolhedor")
-  estiloComunicacao   String  @default("Respostas curtas e diretas")
-  formalidade         String  @default("Tratar o paciente por Você")
+  // --- HORÁRIO DE FUNCIONAMENTO ---
+  horarioFuncionamento String? @db.Text // JSON
+
+  // --- CRM E PIPELINE ---
+  distribuicaoLeads   String  @default("MANUAL")
+  responsavelPadrao   Int?
+  pipelineEtapas      String? @db.Text // JSON
+
+  // --- AGENDAMENTOS ---
+  agendamentoConfirmacao        Boolean @default(false)
+  agendamentoCancWhatsapp       Boolean @default(true)
+  agendamentoTempoMinCanc       Int     @default(24) // horas
+  agendamentoTempoMinRemar      Int     @default(24) // horas
+  agendamentoDuracaoPadrao      Int     @default(30) // minutos
+  agendamentoIntervalo          Int     @default(0)  // minutos
+  agendamentoAntecedencia       Int     @default(720) // 30 dias
+  agendamentoLimiteSimultaneo   Int     @default(2)
+
+  // --- SEGURANÇA E ACESSOS ---
+  seguranca2FA                  String  @default("OPCIONAL") 
+  segurancaTempoSessao          Int     @default(24) // horas
   
-  // Conhecimento e Limites
-  objetivos           String? @db.Text
-  permissoes          String? @db.Text
-  regrasExtrasIA      String? @db.Text
-  faq                 String? @db.Text
+  // --- NOTIFICAÇÕES ---
+  notificacoesConfig            String? @db.Text // JSON
+
+  // --- INTERFACE ---
+  interfaceTema                 String  @default("LIGHT")
+  interfaceIdioma               String  @default("pt-BR")
+  interfaceItensPagina          Int     @default(20)
+
+  // --- ARMAZENAMENTO ---
+  cloudinaryFolder              String  @default("clinica")
+
+  // --- PRIVACIDADE E DADOS ---
+  dadosRetencaoConversas        Int     @default(365) // dias
+  dadosRetencaoArquivos         Int     @default(365) // dias
+
+  // --- INTELIGÊNCIA ARTIFICIAL GLOBAL ---
+  iaAtiva                       Boolean @default(true)
+  iaTransferenciaAuto           Boolean @default(true)
+  iaTempoInatividade            Int     @default(15) // minutos
+  nomeAssistente                String  @default("Assistente Ana")
+  avatarUrl                     String? @db.Text
+  idioma                        String  @default("Português (Brasil)")
+  tomDeVoz                      String  @default("Profissional e acolhedor")
+  estiloComunicacao             String  @default("Respostas curtas e diretas")
+  formalidade                   String  @default("Tratar o paciente por Você")
+  objetivos                     String? @db.Text
+  permissoes                    String? @db.Text
+  regrasExtrasIA                String? @db.Text
+  faq                           String? @db.Text
+  regrasTransferencia           String? @db.Text
+  msgTransferencia              String  @default("Vou encaminhar você para um de nossos atendentes.")
   
-  // Transferência
-  regrasTransferencia String? @db.Text
-  msgTransferencia    String  @default("Vou encaminhar você para um de nossos atendentes. Aguarde um momento.")
-  
-  // Outros Setups Globais
+  // --- OUTROS ---
   metaToken           String? @db.Text
   webhookUrl          String?
   notificarNovosLeads Boolean @default(true)
   ignorarDiagnosticos Boolean @default(true)
   autoFollowUp        Boolean @default(false)
   autoLembrete        Boolean @default(false)
-  distribuicaoLeads   String  @default("MANUAL")
 }
 
 model LogAlteracaoIA {
@@ -198,7 +245,7 @@ model NotaInterna {
 model WebhookEndpoint {
   id        Int      @id @default(autoincrement())
   url       String   @db.Text
-  authType  String   @default("NONE") // NONE, BEARER, API_KEY
+  authType  String   @default("NONE") 
   authToken String?  @db.Text
   metodo    String   @default("POST")
   eventos   String   

@@ -6,6 +6,7 @@ const crmControllerClinica = require('./crmController');
 const relatoriosController = require('./relatoriosController');
 const webhookController = require('./webhookController');
 const automacoesController = require('./automacoesController'); 
+const configController = require('./configController'); // IMPORT DO NOVO CONTROLLER
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
@@ -17,6 +18,13 @@ router.get('/dashboard/stats', crmControllerClinica.getDashboardStats);
 router.get('/relatorios/geral', relatoriosController.getRelatoriosGerais);
 router.get('/relatorios/atendimento', relatoriosController.getRelatoriosAtendimento);
 router.get('/relatorios/exportar', relatoriosController.exportarRelatorioCSV);
+
+// ==========================================
+// CONFIGURAÇÕES GERAIS DA CLÍNICA
+// ==========================================
+router.get('/config', configController.getConfigCompleta);
+router.put('/config', upload.single('logo'), configController.atualizarConfigCompleta);
+router.post('/config/test-storage', configController.testCloudinary);
 
 // ==========================================
 // CRM, PIPELINE E LEADS
@@ -53,7 +61,7 @@ router.post('/tratamentos', upload.single('imagem'), crmControllerClinica.salvar
 router.delete('/tratamentos/:id', crmControllerClinica.excluirTratamento);
 
 // ==========================================
-// CONFIGURAÇÃO DO CÉREBRO DA IA
+// CONFIGURAÇÃO DO CÉREBRO DA IA (LEGADO)
 // ==========================================
 router.get('/ia/config', crmControllerClinica.getConfigIA);
 router.put('/ia/config', upload.single('avatar'), crmControllerClinica.atualizarConfigIA); 
@@ -63,9 +71,9 @@ router.post('/ia/testar', crmControllerClinica.testarIA);
 // INTEGRAÇÕES E WEBHOOKS AVANÇADOS
 // ==========================================
 router.get('/webhooks', webhookController.getWebhooks);
-router.get('/webhooks/logs', webhookController.getWebhookLogs); // <- NOVA ROTA
+router.get('/webhooks/logs', webhookController.getWebhookLogs);
 router.post('/webhooks', webhookController.createWebhook);
-router.post('/webhooks/:id/test', webhookController.testWebhook); // <- NOVA ROTA
+router.post('/webhooks/:id/test', webhookController.testWebhook);
 router.put('/webhooks/:id/toggle', webhookController.toggleWebhook);
 router.delete('/webhooks/:id', webhookController.deleteWebhook);
 

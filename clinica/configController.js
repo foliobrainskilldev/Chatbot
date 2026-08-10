@@ -1,0 +1,104 @@
+const { prisma } = require('../db');
+const cloudinaryService = require('../services/cloudinaryService');
+
+exports.getConfigCompleta = async (req, res) => {
+    try {
+        const config = await prisma.configSistema.findUnique({ where: { id: 1 } });
+        res.status(200).json(config);
+    } catch (error) {
+        console.error("Erro ao buscar configurações completas:", error);
+        res.status(500).json({ error: "Erro ao buscar configurações do sistema." });
+    }
+};
+
+exports.atualizarConfigCompleta = async (req, res) => {
+    try {
+        const data = req.body;
+        let logoNovaUrl = data.logoUrl || null;
+        
+        if (req.file) {
+            const cloudResult = await cloudinaryService.uploadStream(req.file.buffer, 'clinica/config', 'image');
+            logoNovaUrl = cloudResult.secure_url;
+        }
+
+        const updateData = {
+            nomeClinica: data.nomeClinica,
+            nomeComercial: data.nomeComercial,
+            telefone: data.telefone,
+            whatsapp: data.whatsapp,
+            email: data.email,
+            endereco: data.endereco,
+            cidade: data.cidade,
+            pais: data.pais,
+            fusoHorario: data.fusoHorario,
+            moeda: data.moeda,
+            site: data.site,
+            
+            // Tratamento de conversões booleanas
+            agendamentoConfirmacao: data.agendamentoConfirmacao === 'true',
+            agendamentoCancWhatsapp: data.agendamentoCancWhatsapp === 'true',
+            iaAtiva: data.iaAtiva === 'true',
+            iaTransferenciaAuto: data.iaTransferenciaAuto === 'true',
+            
+            // Tratamento de inteiros
+            responsavelPadrao: data.responsavelPadrao ? parseInt(data.responsavelPadrao) : null,
+            agendamentoTempoMinCanc: parseInt(data.agendamentoTempoMinCanc) || 24,
+            agendamentoTempoMinRemar: parseInt(data.agendamentoTempoMinRemar) || 24,
+            agendamentoDuracaoPadrao: parseInt(data.agendamentoDuracaoPadrao) || 30,
+            agendamentoIntervalo: parseInt(data.agendamentoIntervalo) || 0,
+            agendamentoAntecedencia: parseInt(data.agendamentoAntecedencia) || 720,
+            agendamentoLimiteSimultaneo: parseInt(data.agendamentoLimiteSimultaneo) || 2,
+            segurancaTempoSessao: parseInt(data.segurancaTempoSessao) || 24,
+            interfaceItensPagina: parseInt(data.interfaceItensPagina) || 20,
+            dadosRetencaoConversas: parseInt(data.dadosRetencaoConversas) || 365,
+            dadosRetencaoArquivos: parseInt(data.dadosRetencaoArquivos) || 365,
+            iaTempoInatividade: parseInt(data.iaTempoInatividade) || 15,
+            
+            // Strings e selects
+            distribuicaoLeads: data.distribuicaoLeads,
+            seguranca2FA: data.seguranca2FA,
+            interfaceTema: data.interfaceTema,
+            interfaceIdioma: data.interfaceIdioma,
+            cloudinaryFolder: data.cloudinaryFolder
+        };
+
+        // Tratamento de JSON (enviado como string do frontend)
+        if (data.horarioFuncionamento) updateData.horarioFuncionamento = data.horarioFuncionamento;
+        if (data.redesSociais) updateData.redesSociais = data.redesSociais;
+        if (data.pipelineEtapas) updateData.pipelineEtapas = data.pipelineEtapas;
+        if (data.notificacoesConfig) updateData.notificacoesConfig = data.notificacoesConfig;
+
+        if (logoNovaUrl && logoNovaUrl !== 'null') {
+            updateData.logoUrl = logoNovaUrl;
+        }
+
+        const config = await prisma.configSistema.update({
+            where: { id: 1 },
+            data: updateData
+        });
+
+        // Registrar Log de Auditoria
+        await prisma.atividadeEquipe.create({
+            data: {
+                usuarioId: 1, // Assumindo Admin
+                acao: 'Configuração Atualizada',
+                recurso: 'Sistema Global',
+                detalhes: 'Parâmetros administrativos alterados via painel.'
+            }
+        });
+
+        res.status(200).json(config);
+    } catch (error) {
+        console.error("Erro update config:", error);
+        res.status(500).json({ error: "Erro ao atualizar configurações." });
+    }
+};
+
+exports.testCloudinary = async (req, res) => {
+    try {
+        const hasCloudinary = !!process.env.CLOUDINARY_API_KEY;
+        res.status(200).json({ success: hasCloudinary });
+    } catch (error) {
+        res.status(500).json({ error: "Erro ao testar Cloudinary." });
+    }
+};
