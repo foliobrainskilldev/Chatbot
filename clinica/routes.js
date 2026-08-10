@@ -5,53 +5,66 @@ const multer = require('multer');
 const crmControllerClinica = require('./crmController'); 
 const relatoriosController = require('./relatoriosController');
 const webhookController = require('./webhookController');
-const automacoesController = require('./automacoesController'); // NOVO CONTROLLER
+const automacoesController = require('./automacoesController'); 
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-// DASHBOARD & ANALYTICS
+// ==========================================
+// ROTAS DE DASHBOARD E RELATÓRIOS
+// ==========================================
+// Agora esta rota retorna um payload denso contemplando KPIs, gráficos, funil e alertas
 router.get('/dashboard/stats', crmControllerClinica.getDashboardStats);
 router.get('/relatorios/geral', relatoriosController.getRelatoriosGerais);
 router.get('/relatorios/atendimento', relatoriosController.getRelatoriosAtendimento);
 
-// CRM & LEADS (Agora com query params para Paginação e Busca)
+// ==========================================
+// CRM, PIPELINE E LEADS
+// ==========================================
 router.get('/leads', crmControllerClinica.getLeads);
 router.put('/leads/:id/status', crmControllerClinica.atualizarStatusLead);
 router.put('/leads/:id', crmControllerClinica.atualizarLeadCompleto);
 
-// CHAT / CAIXA DE ENTRADA
+// ==========================================
+// CENTRAL DE MENSAGENS (INBOX)
+// ==========================================
 router.get('/conversas/pendentes', crmControllerClinica.getConversasPendentes);
 router.get('/conversas/:clienteId', crmControllerClinica.getMensagensConversa);
 router.post('/conversas/:clienteId/enviar', upload.single('arquivo'), crmControllerClinica.enviarMensagemManual);
 router.post('/conversas/:clienteId/assumir', crmControllerClinica.assumirAtendimentoHumano);
 router.post('/conversas/:clienteId/resolver', crmControllerClinica.resolverAtendimentoHumano);
 
-// CALENDÁRIO & AGENDAMENTOS
+// ==========================================
+// AGENDAMENTOS E CALENDÁRIO
+// ==========================================
 router.get('/agendamentos/todos', crmControllerClinica.getAgendamentosTodos);
 router.put('/agendamentos/:id/status', crmControllerClinica.atualizarStatusAgendamento);
 
+// ==========================================
 // BASE DE CONHECIMENTO (TRATAMENTOS)
+// ==========================================
 router.get('/tratamentos', crmControllerClinica.getTratamentos);
 router.post('/tratamentos', upload.single('imagem'), crmControllerClinica.salvarTratamento);
 router.delete('/tratamentos/:id', crmControllerClinica.excluirTratamento);
 
-// IA CONFIGURAÇÕES
+// ==========================================
+// CONFIGURAÇÃO DO CÉREBRO DA IA
+// ==========================================
 router.get('/ia/config', crmControllerClinica.getConfigIA);
 router.put('/ia/config', crmControllerClinica.atualizarConfigIA);
 
-// INTEGRAÇÕES & WEBHOOKS
+// ==========================================
+// CONFIGURAÇÕES GERAIS E INTEGRAÇÕES
+// ==========================================
 router.get('/webhooks', webhookController.getWebhooks);
 router.post('/webhooks', webhookController.createWebhook);
 router.put('/webhooks/:id/toggle', webhookController.toggleWebhook);
 router.delete('/webhooks/:id', webhookController.deleteWebhook);
 
-// AUTOMAÇÕES (NOVO ENDPOINT)
 router.get('/automacoes', automacoesController.getAutomacoes);
 router.post('/automacoes', automacoesController.criarAutomacao);
 router.delete('/automacoes/:id', automacoesController.deletarAutomacao);
 
-// GESTÃO DE EQUIPE
 router.get('/equipe', crmControllerClinica.getEquipe);
 router.post('/equipe', crmControllerClinica.criarMembroEquipe);
 router.delete('/equipe/:id', crmControllerClinica.deletarMembroEquipe);

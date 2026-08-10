@@ -2,50 +2,146 @@ const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
 const cloudinaryService = require('../services/cloudinaryService');
 const automationEngine = require('../services/automationEngine');
-const { startOfDay, subDays } = require('date-fns');
+const { startOfDay, endOfDay, subDays, format } = require('date-fns');
 
+// =========================================================================
+// SUPER CONTROLLER DO DASHBOARD: Agregação densa de dados para a UI
+// =========================================================================
 exports.getDashboardStats = async (req, res) => {
     try {
-        const totalLeads = await prisma.cliente.count();
-        const agendamentosTotais = await prisma.agendamento.count({ where: { status: 'AGENDADO', tratamentoId: { not: null } } });
-        const cancelamentosTotais = await prisma.agendamento.count({ where: { status: 'CANCELADO', tratamentoId: { not: null } } });
+        const dias = parseInt(req.query.dias) || 30;
+        const dataCorte = subDays(new Date(), dias);
+        const inicioHoje = startOfDay(new Date());
+        const fimHoje = endOfDay(new Date());
+
+        // 1. KPIs BÁSICOS
+        const conversasTotais = await prisma.mensagemIA.groupBy({ by: ['clienteId'] });
+        const novosLeads = await prisma.cliente.count({ where: { leadStatus: 'NOVO', criadoEm: { gte: dataCorte } } });
+        const leadsQualificados = await prisma.cliente.count({ where: { leadStatus: 'QUALIFICADO', criadoEm: { gte: dataCorte } } });
+        const agendamentosTotais = await prisma.agendamento.count({ where: { status: 'AGENDADO', tratamentoId: { not: null }, dataHora: { gte: dataCorte } } });
         
-        const funil = {
-            novo: await prisma.cliente.count({ where: { leadStatus: 'NOVO' } }),
-            interessado: await prisma.cliente.count({ where: { leadStatus: 'INTERESSADO' } }),
-            qualificado: await prisma.cliente.count({ where: { leadStatus: 'QUALIFICADO' } }),
-            agendado: await prisma.cliente.count({ where: { leadStatus: 'AGENDADO' } }),
-            cliente: await prisma.cliente.count({ where: { leadStatus: 'CLIENTE' } })
+        const consultasRealizadas = await prisma.agendamento.count({ where: { status: 'CONCLUIDO', tratamentoId: { not: null }, dataHora: { gte: dataCorte } } });
+        let taxaConversao = agendamentosTotais > 0 ? ((consultasRealizadas / agendamentosTotais) * 100).toFixed(1) : 0;
+
+        const consultasHoje = await prisma.agendamento.count({ where: { tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } } });
+        const pendentesHoje = await prisma.agendamento.count({ where: { status: 'AGENDADO', tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } } });
+
+        // 2. AGENDAMENTOS DO DIA (Tabela Operacional)
+        const agendamentosHojeList = await prisma.agendamento.findMany({
+            where: { tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } },
+            include: { cliente: true, tratamento: true, profissionalSaude: true },
+            orderBy: { dataHora: 'asc' }
+        });
+
+        // 3. LEADS RECENTES
+        const leadsRecentes = await prisma.cliente.findMany({
+            take: 5,
+            orderBy: { ultimaInteracao: 'desc' },
+            select: { id: true, nome: true, leadStatus: true, origem: true, tags: true }
+        });
+
+        // 4. ATENÇÃO NECESSÁRIA (Alertas Inteligentes)
+        const atencaoNecessaria = [];
+        const leadsEsperandoHumano = await prisma.cliente.findMany({
+            where: { falarHumano: true },
+            select: { id: true, nome: true }
+        });
+        leadsEsperandoHumano.forEach(lead => {
+            atencaoNecessaria.push({ clienteId: lead.id, clienteNome: lead.nome, motivo: 'Aguardando Atendimento Humano' });
+        });
+
+        const agendamentosSemResposta = await prisma.agendamento.findMany({
+            where: { status: 'AGENDADO', dataHora: { lte: new Date() } },
+            include: { cliente: true }
+        });
+        agendamentosSemResposta.forEach(ag => {
+            atencaoNecessaria.push({ clienteId: ag.cliente.id, clienteNome: ag.cliente.nome, motivo: 'Consulta Atrasada no Sistema' });
+        });
+
+        // 5. DESEMPENHO DA IA
+        const totalMensagens = await prisma.mensagemIA.count({ where: { role: 'assistant', criadoEm: { gte: dataCorte } } });
+        const msgsHumano = await prisma.mensagemIA.count({ where: { role: 'assistant', atendenteHumano: true, criadoEm: { gte: dataCorte } } });
+        const msgsIA = totalMensagens - msgsHumano;
+        
+        let txRes = totalMensagens > 0 ? ((msgsIA / totalMensagens) * 100).toFixed(1) : 0;
+        
+        const desempenhoIA = {
+            conversasIA: msgsIA,
+            transferidas: leadsEsperandoHumano.length,
+            resolvidas: msgsIA > leadsEsperandoHumano.length ? (msgsIA - leadsEsperandoHumano.length) : msgsIA,
+            taxaResolucao: txRes
         };
 
-        const topTratamentosAg = await prisma.agendamento.groupBy({
-            by: ['tratamentoId'], _count: { tratamentoId: true }, 
-            where: { tratamentoId: { not: null } }, 
+        // 6. GRÁFICOS E AGREGADOS (Para D3.js)
+        
+        // A. Funil
+        const contagemFunil = await prisma.cliente.groupBy({ by: ['leadStatus'], _count: { leadStatus: true } });
+        const getCount = (status) => { const f = contagemFunil.find(c => c.leadStatus === status); return f ? f._count.leadStatus : 0; };
+        
+        const graficoFunil = [
+            { etapa: 'Conversas', valor: conversasTotais.length },
+            { etapa: 'Novos', valor: getCount('NOVO') },
+            { etapa: 'Qualificados', valor: getCount('QUALIFICADO') },
+            { etapa: 'Agendados', valor: getCount('AGENDADO') },
+            { etapa: 'Clientes', valor: getCount('CLIENTE') }
+        ];
+
+        // B. Top Serviços
+        const topTratamentosDb = await prisma.agendamento.groupBy({
+            by: ['tratamentoId'], _count: { tratamentoId: true },
+            where: { tratamentoId: { not: null }, status: 'AGENDADO' },
             orderBy: { _count: { tratamentoId: 'desc' } }, take: 5
         });
 
         let topServicos = [];
-        for (let t of topTratamentosAg) {
-            const tratDb = await prisma.tratamento.findUnique({ where: { id: t.tratamentoId } });
-            if (tratDb) topServicos.push({ nome: tratDb.nome, count: t._count.tratamentoId });
+        for (let t of topTratamentosDb) {
+            const trat = await prisma.tratamento.findUnique({ where: { id: t.tratamentoId } });
+            if (trat) topServicos.push({ nome: trat.nome, count: t._count.tratamentoId });
         }
 
-        const leadsPorDia = [];
-        for (let i = 6; i >= 0; i--) {
-            const dataBase = subDays(new Date(), i);
-            const count = await prisma.cliente.count({
-                where: { criadoEm: { gte: startOfDay(dataBase) } }
-            });
-            leadsPorDia.push({ data: dataBase.toISOString().split('T')[0], count });
+        // C. Origem
+        const origensAgrupadas = await prisma.cliente.groupBy({ by: ['origem'], _count: { origem: true } });
+        const origensFormatadas = origensAgrupadas.map(o => ({ origem: o.origem || 'Outros', count: o._count.origem }));
+
+        // D. Evolução 
+        const evolucao = [];
+        for (let i = dias - 1; i >= 0; i--) {
+            const diaAlvo = subDays(new Date(), i);
+            const ini = startOfDay(diaAlvo);
+            const fim = endOfDay(diaAlvo);
+            
+            const leadsCount = await prisma.cliente.count({ where: { criadoEm: { gte: ini, lte: fim } } });
+            const agendamentosCount = await prisma.agendamento.count({ where: { criadoEm: { gte: ini, lte: fim }, tratamentoId: { not: null } } });
+            
+            evolucao.push({ data: format(diaAlvo, 'dd/MM'), leads: leadsCount, agendamentos: agendamentosCount });
         }
 
-        res.status(200).json({ totalLeads, agendamentosTotais, cancelamentosTotais, funil, topServicos, leadsPorDia });
+        res.status(200).json({
+            kpis: {
+                conversasTotais: conversasTotais.length, novosLeads, leadsQualificados, agendamentosTotais, taxaConversao,
+                consultasHoje, pendentesHoje
+            },
+            agendamentosHoje: agendamentosHojeList,
+            leadsRecentes: leadsRecentes,
+            atencaoNecessaria: atencaoNecessaria.slice(0, 5),
+            desempenhoIA: desempenhoIA,
+            graficos: {
+                funil: graficoFunil,
+                servicos: topServicos,
+                origens: origensFormatadas,
+                evolucao: evolucao
+            }
+        });
+
     } catch (error) { 
-        console.error("Erro Dashboard:", error);
-        res.status(500).json({ error: "Erro interno no dashboard." }); 
+        console.error("Erro Dashboard Principal:", error);
+        res.status(500).json({ error: "Erro interno ao mapear o Dashboard." }); 
     }
 };
 
+// =========================================================================
+// CRM E LEADS
+// =========================================================================
 exports.getLeads = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
@@ -123,6 +219,9 @@ exports.atualizarLeadCompleto = async (req, res) => {
     }
 };
 
+// =========================================================================
+// CHAT E CAIXA DE ENTRADA
+// =========================================================================
 exports.getConversasPendentes = async (req, res) => {
     try {
         const pendentes = await prisma.cliente.findMany({ 
@@ -212,6 +311,9 @@ exports.enviarMensagemManual = async (req, res) => {
     }
 };
 
+// =========================================================================
+// TRATAMENTOS (BASE DE CONHECIMENTO)
+// =========================================================================
 exports.getTratamentos = async (req, res) => {
     try {
         const tratamentos = await prisma.tratamento.findMany();
@@ -259,6 +361,9 @@ exports.excluirTratamento = async (req, res) => {
     }
 };
 
+// =========================================================================
+// CONFIGURAÇÕES DA IA
+// =========================================================================
 exports.getConfigIA = async (req, res) => {
     try {
         const config = await prisma.configSistema.findFirst();
@@ -287,6 +392,9 @@ exports.atualizarConfigIA = async (req, res) => {
     }
 };
 
+// =========================================================================
+// AGENDAMENTOS E CALENDÁRIO
+// =========================================================================
 exports.getAgendamentosTodos = async (req, res) => {
     try {
         const agendamentos = await prisma.agendamento.findMany({ 
@@ -321,6 +429,9 @@ exports.atualizarStatusAgendamento = async (req, res) => {
     }
 };
 
+// =========================================================================
+// EQUIPE E PERMISSÕES
+// =========================================================================
 exports.getEquipe = async (req, res) => {
     try {
         const usuarios = await prisma.usuario.findMany({
