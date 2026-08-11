@@ -28,7 +28,15 @@ exports.getDashboardStats = async (req, res) => {
         const leadsQualificados = await prisma.cliente.count({ where: { leadStatus: 'QUALIFICADO', criadoEm: { gte: dataCorte } } });
         const agendamentosTotais = await prisma.agendamento.count({ where: { status: 'AGENDADO', tratamentoId: { not: null }, dataHora: { gte: dataCorte } } });
         
-        const consultasRealizadas = await prisma.agendamento.count({ where: { status: 'CONCLUIDO', tratamentoId: { not: null }, dataHora: { gte: dataCorte } } });
+        // CORREÇÃO DA CONVERSÃO: Agora aceita REALIZADA ou CONCLUIDO
+        const consultasRealizadas = await prisma.agendamento.count({ 
+            where: { 
+                status: { in: ['REALIZADA', 'CONCLUIDO'] }, 
+                tratamentoId: { not: null }, 
+                dataHora: { gte: dataCorte } 
+            } 
+        });
+        
         let taxaConversao = agendamentosTotais > 0 ? ((consultasRealizadas / agendamentosTotais) * 100).toFixed(1) : 0;
 
         const consultasHoje = await prisma.agendamento.count({ where: { tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } } });
@@ -490,6 +498,16 @@ exports.criarAgendamentoManual = async (req, res) => {
         const { clienteId, tratamentoId, profissionalSaudeId, dataHora, observacoes } = req.body;
         const dataOriginal = new Date(dataHora);
         
+        // --- NOVO: Puxar o preço do Tratamento para Preencher o Valor Potencial do Cliente ---
+        const trat = await prisma.tratamento.findUnique({ where: { id: parseInt(tratamentoId) } });
+        if (trat && trat.preco) {
+            const cli = await prisma.cliente.findUnique({ where: { id: clienteId } });
+            if (cli && (!cli.valorPotencial || cli.valorPotencial === 0)) {
+                await prisma.cliente.update({ where: { id: clienteId }, data: { valorPotencial: trat.preco } });
+            }
+        }
+        // -------------------------------------------------------------------------------------
+
         const novoAgendamento = await prisma.agendamento.create({
             data: {
                 dataHora: dataOriginal, clienteId, status: 'CONFIRMADA', 

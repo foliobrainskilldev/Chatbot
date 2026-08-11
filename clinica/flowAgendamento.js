@@ -130,7 +130,14 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         include: { cliente: true, tratamento: true }
     });
     
-    await prisma.cliente.update({ where: { id: senderNumber }, data: { leadStatus: 'AGENDADO' } });
+    // --- NOVO: Auto-preencher valor potencial pela IA ---
+    const cli = await prisma.cliente.findUnique({ where: { id: senderNumber } });
+    let updateData = { leadStatus: 'AGENDADO' };
+    if (cli && (!cli.valorPotencial || cli.valorPotencial === 0) && userState.resolvedTreatment.preco) {
+        updateData.valorPotencial = userState.resolvedTreatment.preco;
+    }
+    await prisma.cliente.update({ where: { id: senderNumber }, data: updateData });
+    // ----------------------------------------------------
     
     const respostaContexto = await aiService.gerarRespostaNatural(
         "Gere uma mensagem confirmando de forma simpática que a consulta foi criada com sucesso com os detalhes que passei.",
