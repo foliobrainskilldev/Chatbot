@@ -77,10 +77,15 @@ async function sendInteractiveMenu(to, text, options) {
             action: {}
         };
         
+        // CORREÇÃO CRÍTICA: A Meta rejeita botões cujo título ultrapasse 20 caracteres. 
+        // Com o banco de dados dinâmico de tratamentos, a string é rigorosamente aparada aqui para evitar "Quebras silenciosas" de webhook.
         if (options.length <= 3) {
             interactiveObj.action.buttons = options.map(opt => ({
                 type: "reply",
-                reply: { id: String(opt.id).substring(0, 256), title: String(opt.title).substring(0, 20) }
+                reply: { 
+                    id: String(opt.id).substring(0, 256), 
+                    title: String(opt.title).length > 20 ? String(opt.title).substring(0, 17) + "..." : String(opt.title)
+                }
             }));
         } else {
             interactiveObj.action.button = "Ver Opções";
@@ -88,7 +93,8 @@ async function sendInteractiveMenu(to, text, options) {
                 title: "Selecione uma opção",
                 rows: options.slice(0, 10).map(opt => ({
                     id: String(opt.id).substring(0, 200),
-                    title: String(opt.title).substring(0, 24),
+                    // As listas aguentam até 24 caracteres antes de a API da Meta derrubar o request
+                    title: String(opt.title).length > 24 ? String(opt.title).substring(0, 21) + "..." : String(opt.title),
                     description: opt.description ? String(opt.description).substring(0, 72) : ""
                 }))
             }];

@@ -1,10 +1,9 @@
-// --- START OF FILE aiService.js ---
-
 const { OpenAI } = require('openai');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const axios = require('axios');
+const { format } = require('date-fns');
 
 const groq = new OpenAI({
     apiKey: process.env.GROQ_API_KEY, 
@@ -39,18 +38,13 @@ async function transcreverAudioPorUrl(audioUrl) {
     }
 }
 
+// Mantido apenas para compatibilidade com o bot da Barbearia (Legado)
 async function classificarIntencao(textoCliente) {
     if (!process.env.GROQ_API_KEY) return "DUVIDA";
     const prompt = `Analise a mensagem do paciente e classifique a intenção em APENAS UMA das TAGS abaixo. 
     Responda ESTRITAMENTE com a TAG.
-    TAGS DISPONÍVEIS:
-    AGENDAR (quer marcar consulta, agendar horário, fazer avaliação)
-    PRECOS (quer saber valores, custos)
-    HUMANO (quer falar com atendente, pessoa real, doutor, reclamação)
-    CANCELAR (quer desmarcar consulta, remarcar, cancelar)
-    DUVIDA (informações de localização, horário, tratamentos gerais, faq)
-    
-    Mensagem do paciente: "${textoCliente}"`;
+    TAGS DISPONÍVEIS: AGENDAR, PRECOS, HUMANO, CANCELAR, DUVIDA
+    Mensagem: "${textoCliente}"`;
 
     try {
         const resposta = await groq.chat.completions.create({
@@ -64,67 +58,110 @@ async function classificarIntencao(textoCliente) {
     }
 }
 
+// Mantido apenas para compatibilidade com o bot da Barbearia (Legado)
 async function responderComContextoIA(mensagemCliente, historicoAnterior, configSistema, tratamentos) {
-    if (!process.env.GROQ_API_KEY) throw new Error("IA Desconectada");
+    return await gerarRespostaNatural(mensagemCliente, historicoAnterior, { tratamentos }, configSistema);
+}
 
-    let listaTratamentos = tratamentos.filter(t => t.status === 'ATIVO').map(t => {
-        let precoStr = "Preço sob avaliação clínica";
-        if (t.tipoPreco === 'FIXO') precoStr = `R$ ${t.preco}`;
-        else if (t.tipoPreco === 'A_PARTIR') precoStr = `A partir de R$ ${t.preco}`;
-        else if (t.tipoPreco === 'FAIXA') precoStr = `Preço Variável. Requer avaliação.`;
+// -------------------------------------------------------------
+// NOVO PIPELINE NLP AVANÇADO DA CLÍNICA
+// -------------------------------------------------------------
 
-        return `[TRATAMENTO]: ${t.nome} (Categoria: ${t.categoria})
-- Preço: ${precoStr}
-- Duração Estimada: ${t.duracaoMin} minutos
-- Info para IA: ${t.informacoesIA || 'N/A'}
-- Regras/Limitações: ${t.regrasIA || 'N/A'}`;
-    }).join("\n\n");
+async function analisarMensagemNLP(textoCliente, historico, estadoAtual) {
+    if (!process.env.GROQ_API_KEY) return { intent: "unknown", confidence: 0, entities: {} };
 
-    const systemInstrucoes = `
-Você é ${configSistema.nomeAssistente}, o assistente virtual oficial da ${configSistema.nomeClinica || 'Clínica'}.
-Idioma base: ${configSistema.idioma || 'Português (Brasil)'}.
-Tom de voz: ${configSistema.tomDeVoz}.
-Estilo de Comunicação: ${configSistema.estiloComunicacao || 'Equilibrado'}.
-Nível de Formalidade: ${configSistema.formalidade || 'Profissional'}.
+    const hoje = format(new Date(), 'dd/MM/yyyy');
+    const prompt = `Você é o analisador NLP central de um HealthCRM.
+Sua tarefa é analisar a mensagem do paciente e extrair a intenção, a confiança (0.0 a 1.0) e as entidades.
+Hoje é ${hoje}. Calcule datas relativas baseadas no dia de hoje.
 
-OBJETIVOS PRINCIPAIS: ${configSistema.objetivos || 'Atender pacientes e agendar consultas'}.
-PERMISSÕES DA IA: ${configSistema.permissoes || 'Responder dúvidas'}.
+Intenções permitidas:
+- clinic.hours
+- clinic.location
+- clinic.contact
+- clinic.payment_methods
+- treatment.list
+- treatment.info
+- treatment.price
+- treatment.faq
+- appointment.create
+- appointment.check
+- appointment.reschedule
+- appointment.cancel
+- human.transfer
+- greeting
+- goodbye
+- unknown
 
-REGRA DE PREÇOS (CRÍTICA): Se o preço for "Sob avaliação" ou "A_PARTIR", não confirme valores finais.
-REGRAS EXTRAS PERSONALIZADAS: ${configSistema.regrasExtrasIA || 'Nenhuma regra extra.'}
-FAQ GERAL DA CLÍNICA: ${configSistema.faq || 'Nenhuma FAQ cadastrada.'}
+Entidades a extrair (apenas se mencionadas explicitamente na mensagem ou contexto claro):
+- treatment: nome do tratamento/procedimento
+- professional: nome do médico/doutor
+- date: data no formato exato DD/MM/YYYY
+- time: horário no formato exato HH:mm
 
-PROTEÇÕES INVIOLÁVEIS DO SISTEMA:
-1. NUNCA invente informações, horários ou preços que não estejam no seu contexto.
-2. NUNCA faça diagnóstico médico, não prescreva medicamentos nem prometa resultados clínicos.
-3. Se a pergunta for complexa ou médica, oriente a consultar com um especialista.
-4. Se o usuário demonstrar extrema insatisfação, disser um palavrão ou solicitar falar com um humano e você tiver a regra de transferência ativada, use a diretriz correta.
+Estado atual da conversa: ${JSON.stringify(estadoAtual)}
+Mensagem atual do paciente: "${textoCliente}"
 
-CATÁLOGO DE TRATAMENTOS:
-${listaTratamentos}
+Você deve responder APENAS com um objeto JSON válido, sem nenhum markdown, sem explicações extras.`;
 
-Lembre-se: aja como um humano prestativo, usando os dados fornecidos.
-`;
+    try {
+        const resposta = await groq.chat.completions.create({
+            model: "llama-3.1-8b-instant",
+            messages: [{ role: "system", content: prompt }],
+            temperature: 0.1,
+            response_format: { type: "json_object" }
+        });
+        
+        return JSON.parse(resposta.choices[0]?.message?.content);
+    } catch (erro) {
+        console.error("Erro no NLP JSON Parse:", erro);
+        return { intent: "unknown", confidence: 0, entities: {} };
+    }
+}
+
+async function gerarRespostaNatural(textoCliente, historico, dadosContexto, configSistema) {
+    if (!process.env.GROQ_API_KEY) return "Desculpe, sistemas de inteligência indisponíveis.";
+
+    const systemInstrucoes = `Você é ${configSistema.nomeAssistente}, assistente virtual oficial da ${configSistema.nomeClinica}.
+Idioma: ${configSistema.idioma}. Tom de voz: ${configSistema.tomDeVoz}. Estilo: ${configSistema.estiloComunicacao}.
+
+REGRA DE OURO E PROTEÇÃO INVIOLÁVEL: 
+Use EXATAMENTE os dados fornecidos no contexto abaixo para responder. NÃO INVENTE preços, NÃO INVENTE horários disponíveis, NÃO FAÇA diagnósticos médicos, NÃO PRESCREVA tratamentos.
+Se a informação não estiver no contexto abaixo, diga que não tem essa informação no momento e ofereça transferir para a equipe clínica.
+
+DADOS REAIS RECUPERADOS DO BANCO DE DADOS DA CLÍNICA (USE ISSO PARA RESPONDER):
+${JSON.stringify(dadosContexto, null, 2)}
+
+Aja de forma natural e responda diretamente à dúvida do paciente considerando o contexto acima.`;
 
     try {
         const msgs = [{ role: "system", content: systemInstrucoes }];
-        if (historicoAnterior) {
-            historicoAnterior.forEach(linha => {
+        if (historico && historico.length > 0) {
+            historico.forEach(linha => {
                 let contentClean = linha.content || "";
                 if (contentClean.includes('| Texto: ')) contentClean = contentClean.split('| Texto: ')[1].trim();
                 msgs.push({ role: linha.role, content: contentClean });
             });
         }
-        msgs.push({ role: "user", content: mensagemCliente });
+        msgs.push({ role: "user", content: textoCliente });
 
         const resposta = await groq.chat.completions.create({
-            model: "llama-3.1-70b-versatile", messages: msgs, temperature: 0.2, max_tokens: 500 
+            model: "llama-3.1-70b-versatile",
+            messages: msgs,
+            temperature: 0.3,
+            max_tokens: 400 
         });
         
-        return resposta.choices[0]?.message?.content || "Desculpe, não consegui processar sua solicitação agora.";
+        return resposta.choices[0]?.message?.content || "Desculpe, não consegui formular a resposta adequadamente agora.";
     } catch (erro) {
-        return "Desculpe, nossos sistemas de IA estão reiniciando ou indisponíveis no momento. Aguarde um instante."; 
+        return "Desculpe, meus servidores estão sobrecarregados no momento. Volte a tentar em instantes."; 
     }
 }
 
-module.exports = { classificarIntencao, responderComContextoIA, transcreverAudioPorUrl };
+module.exports = { 
+    transcreverAudioPorUrl, 
+    classificarIntencao, 
+    responderComContextoIA, 
+    analisarMensagemNLP, 
+    gerarRespostaNatural 
+};

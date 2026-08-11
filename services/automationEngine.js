@@ -1,9 +1,7 @@
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService'); 
-const axios = require('axios'); // Para Webhooks extras
+const axios = require('axios');
 
-// Sistema em memória para evitar Loops Infinitos (Cooldown)
-// Impede que a mesma automação rode para o mesmo cliente repetidamente em curtos períodos
 const executionCache = new Map();
 
 async function dispararAutomacoes(tipoGatilho, dados) {
@@ -12,7 +10,6 @@ async function dispararAutomacoes(tipoGatilho, dados) {
             where: { gatilho: tipoGatilho, ativo: true }
         });
 
-        // Hardcoded System Native Disparos (Segurança Base)
         if (tipoGatilho === 'CONSULTA_CONFIRMADA') {
             await dispararMensagemConfirmacaoNativa(dados);
         }
@@ -21,14 +18,12 @@ async function dispararAutomacoes(tipoGatilho, dados) {
 
         for (const regra of automacoes) {
             const clienteId = dados.clienteId || dados.id; 
-            if (!clienteId) continue; // Alvo inválido
+            if (!clienteId) continue; 
 
-            // 1. Avaliador de Condições (SE)
             if (!avaliarCondicoes(regra.condicoes, dados)) {
-                continue; // Não passou nos filtros
+                continue; 
             }
 
-            // 2. Proteção contra Loop (Cooldown de 60 Segundos)
             const cacheKey = `auto_${regra.id}_cliente_${clienteId}`;
             const lastExec = executionCache.get(cacheKey);
             if (lastExec && (Date.now() - lastExec < 60000)) {
@@ -37,9 +32,7 @@ async function dispararAutomacoes(tipoGatilho, dados) {
             }
             executionCache.set(cacheKey, Date.now());
 
-            // 3. Gerenciamento de Tempo / Atraso (AGUARDAR)
             if (regra.atraso > 0) {
-                // Coloca na Fila para ser executado no Futuro via CronJob
                 try {
                     const dataAgendada = new Date(Date.now() + (regra.atraso * 60000));
                     await prisma.filaAutomacao.create({
@@ -55,7 +48,6 @@ async function dispararAutomacoes(tipoGatilho, dados) {
                     console.error("Erro ao inserir na Fila de Automação (Tabela ausente?):", e.message);
                 }
             } else {
-                // Executar Imediatamente
                 await executarAcaoEGravarHistorico(regra, clienteId, dados);
             }
         }
@@ -72,7 +64,6 @@ function avaliarCondicoes(condicoesJson, dados) {
         if (condicoes.length === 0) return true;
         
         for (let cond of condicoes) {
-            // Extrai a variável correta baseada no objeto de dados recebido (Pode ser um Lead ou Agendamento)
             const valorReal = dados[cond.campo] || (dados.cliente && dados.cliente[cond.campo]) || (dados.tratamento && dados.tratamento.nome);
             const strValorReal = String(valorReal || '').toLowerCase();
             const strCondValor = String(cond.valor || '').toLowerCase();
@@ -84,7 +75,7 @@ function avaliarCondicoes(condicoesJson, dados) {
         return true; 
     } catch (e) {
         console.warn("Erro ao avaliar condição JSON:", e);
-        return false; // Por segurança, não executa se o JSON falhar
+        return false; 
     }
 }
 
@@ -96,7 +87,6 @@ async function executarAcaoEGravarHistorico(regra, clienteId, dados) {
         await executarAcaoReal(regra.acao, regra.parametro, clienteId, dados);
         msgDetalhe = 'Ação concluída.';
         
-        // Atualiza contador da regra
         await prisma.automacao.update({
             where: { id: regra.id },
             data: { execucoes: { increment: 1 } }
@@ -107,7 +97,6 @@ async function executarAcaoEGravarHistorico(regra, clienteId, dados) {
         console.error(`[Automação Falha] Regra ${regra.id}:`, error.message);
     }
 
-    // Gravar no Log de Histórico
     try {
         await prisma.automacaoHistorico.create({
             data: {
@@ -117,9 +106,7 @@ async function executarAcaoEGravarHistorico(regra, clienteId, dados) {
                 detalhes: msgDetalhe
             }
         });
-    } catch (e) {
-        // Silenciar erro caso a tabela não exista ainda.
-    }
+    } catch (e) { }
 }
 
 async function executarAcaoReal(tipoAcao, parametro, clienteId, dados) {
@@ -127,10 +114,8 @@ async function executarAcaoReal(tipoAcao, parametro, clienteId, dados) {
     const numCliente = clienteId; 
 
     switch (tipoAcao) {
-        // --- AÇÕES DE WHATSAPP ---
         case 'ENVIAR_MENSAGEM':
             if (parametro && numCliente) {
-                // Motor de Replace de Variáveis
                 let txtFinal = parametro.replace(/{{nome}}/g, nomeLead);
                 if (dados.dataHora) {
                     const dataObj = new Date(dados.dataHora);
@@ -140,9 +125,9 @@ async function executarAcaoReal(tipoAcao, parametro, clienteId, dados) {
                 
                 await whatsappService.sendText(numCliente, txtFinal);
                 
-                // Grava no Chat para o Atendente ver
+                // Usando a tag de Sistema para que o NLP Pipeline não confunda esse texto com sua própria "memória de persona"
                 await prisma.mensagemIA.create({ 
-                    data: { role: 'assistant', content: `[Automação]: ${txtFinal}`, clienteId: numCliente, atendenteHumano: false } 
+                    data: { role: 'assistant', content: `[SISTEMA AUTOMÁTICO]: ${txtFinal}`, clienteId: numCliente, atendenteHumano: false } 
                 });
             }
             break;
@@ -153,12 +138,11 @@ async function executarAcaoReal(tipoAcao, parametro, clienteId, dados) {
                 const type = tipoAcao === 'ENVIAR_IMAGEM' ? 'image' : 'audio';
                 await whatsappService.sendMediaUrl(numCliente, type, parametro, "");
                 await prisma.mensagemIA.create({ 
-                    data: { role: 'assistant', content: `[Automação MEDIA:${type}] ${parametro}`, clienteId: numCliente, atendenteHumano: false } 
+                    data: { role: 'assistant', content: `[SISTEMA AUTOMÁTICO MEDIA:${type}] ${parametro}`, clienteId: numCliente, atendenteHumano: false } 
                 });
             }
             break;
 
-        // --- AÇÕES DE CRM ---
         case 'ADD_TAG':
             if (parametro && numCliente) {
                 const cliente = await prisma.cliente.findUnique({ where: { id: numCliente } });
@@ -198,7 +182,6 @@ async function executarAcaoReal(tipoAcao, parametro, clienteId, dados) {
             }
             break;
 
-        // --- AÇÕES IA E ATENDIMENTO ---
         case 'PAUSAR_IA':
             if (numCliente) await prisma.cliente.update({ where: { id: numCliente }, data: { falarHumano: true } });
             break;
@@ -213,7 +196,6 @@ async function executarAcaoReal(tipoAcao, parametro, clienteId, dados) {
             }
             break;
 
-        // --- INTEGRAÇÕES ---
         case 'ENVIAR_WEBHOOK':
             if (parametro) {
                 await axios.post(parametro, { event: 'automacao_disparada', data: dados }, { timeout: 3000 });
@@ -225,7 +207,6 @@ async function executarAcaoReal(tipoAcao, parametro, clienteId, dados) {
     }
 }
 
-// Disparo nativo de segurança (Existente)
 async function dispararMensagemConfirmacaoNativa(agendamento) {
     if (!agendamento || !agendamento.clienteId || !agendamento.dataHora) return;
     try {

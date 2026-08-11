@@ -3,6 +3,7 @@ const whatsappService = require('../whatsappService');
 const cloudinaryService = require('../services/cloudinaryService');
 const automationEngine = require('../services/automationEngine');
 const webhookService = require('../services/webhookService');
+const aiService = require('../aiService'); // IMPORTAÇÃO DO NOVO SERVIÇO DE NLP
 const { getHorariosDisponiveis } = require('../dateUtils'); 
 const { startOfDay, endOfDay, subDays, format, parse } = require('date-fns');
 
@@ -180,7 +181,6 @@ exports.criarLeadManual = async (req, res) => {
             data: { id: String(id), nome: nome || 'Lead Manual', origem: origem || 'Manual', leadStatus: 'NOVO' }
         });
 
-        // Automação e Webhook Integrado
         await automationEngine.dispararAutomacoes('NOVO_LEAD', novoLead);
         await webhookService.dispararEvento('lead.created', novoLead);
 
@@ -201,22 +201,20 @@ exports.atualizarStatusLead = async (req, res) => {
         const leadAnterior = await prisma.cliente.findUnique({ where: { id: req.params.id } });
         const leadAlterado = await prisma.cliente.update({ where: { id: req.params.id }, data: updateData });
 
-        // Disparo para Automações Nativas
         if (status && status !== leadAnterior.leadStatus) {
             if (status === 'QUALIFICADO') {
                 await automationEngine.dispararAutomacoes('LEAD_QUALIFICADO', leadAlterado);
-                await webhookService.dispararEvento('lead.qualified', leadAlterado); // Webhook
+                await webhookService.dispararEvento('lead.qualified', leadAlterado); 
             }
             if (status === 'CLIENTE') {
                 await automationEngine.dispararAutomacoes('NOVO_PACIENTE', leadAlterado);
-                await webhookService.dispararEvento('lead.converted', leadAlterado); // Webhook
+                await webhookService.dispararEvento('lead.converted', leadAlterado); 
             }
         }
         if (tags && tags !== leadAnterior.tags) {
             await automationEngine.dispararAutomacoes('TAG_ADICIONADA', leadAlterado);
         }
         
-        // Sempre envia a atualização geral do lead para integrações (RD Station, HubSpot, etc)
         await webhookService.dispararEvento('lead.updated', leadAlterado);
 
         res.status(200).json(leadAlterado);
@@ -230,7 +228,7 @@ exports.atualizarLeadCompleto = async (req, res) => {
             where: { id: req.params.id }, data: { nome, email, observacoes }
         });
         
-        await webhookService.dispararEvento('lead.updated', lead); // Webhook
+        await webhookService.dispararEvento('lead.updated', lead); 
         res.status(200).json(lead);
     } catch (error) { res.status(500).json({ error: "Erro ao atualizar ficha do lead." }); }
 };
@@ -282,7 +280,7 @@ exports.resolverAtendimentoHumano = async (req, res) => {
         const lead = await prisma.cliente.update({ where: { id: clienteId }, data: { falarHumano: false } });
         
         await automationEngine.dispararAutomacoes('ATENDIMENTO_ENCERRADO', lead);
-        await webhookService.dispararEvento('conversation.closed', lead); // Webhook
+        await webhookService.dispararEvento('conversation.closed', lead); 
         
         if (global.io) global.io.emit('atualizar_fila');
         res.status(200).json({ message: "Conversa devolvida para a IA." });
@@ -401,16 +399,45 @@ exports.atualizarConfigIA = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Erro ao atualizar IA." }); }
 };
 
+// ==========================================
+// NOVO: SIMULADOR DO PIPELINE NLP
+// ==========================================
 exports.testarIA = async (req, res) => {
     try {
         const { mensagem } = req.body;
         if (!mensagem) return res.status(400).json({ error: "Mensagem vazia." });
+
         const configDb = await prisma.configSistema.findFirst();
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' } });
-        const historicoFake = [{ role: 'assistant', content: `Olá! Sou ${configDb.nomeAssistente}. Como posso ajudar?` }];
-        const respostaIA = await aiService.responderComContextoIA(mensagem, historicoFake, configDb, tratamentos);
+
+        // Simulação do Estado NLP
+        const estadoFake = { step: 'IDLE', intent: null, entities: {} };
+        const nlpResult = await aiService.analisarMensagemNLP(mensagem, [], estadoFake);
+
+        let respostaIA = "";
+
+        if (nlpResult.intent === 'appointment.create') {
+            respostaIA = `🔍 [INTENÇÃO IDENTIFICADA: AGENDAR (appointment.create)]\nEntidades extraídas: ${JSON.stringify(nlpResult.entities)}\n\n(Ação Interna: O backend entraria no fluxo de Agendamento bloqueando a IA solta).`;
+        } else if (nlpResult.intent === 'appointment.cancel' || nlpResult.intent === 'appointment.reschedule') {
+            respostaIA = `🔍 [INTENÇÃO IDENTIFICADA: CANCELAR/REMARCAR]\nEntidades extraídas: ${JSON.stringify(nlpResult.entities)}\n\n(Ação Interna: O backend buscaria as consultas do paciente no banco de dados).`;
+        } else if (nlpResult.intent === 'human.transfer') {
+            respostaIA = `🔍 [INTENÇÃO IDENTIFICADA: FALAR COM HUMANO]\n(Ação Interna: Lead transferido para fila manual e notificado no painel).`;
+        } else {
+            // Emula a Resposta Natural para intenções de FAQ e Informações
+            const contextoFake = {
+                intencao_detectada: nlpResult.intent,
+                dados_operacionais: { nome_clinica: configDb.nomeClinica, faq: configDb.faq },
+                catologo_servicos: tratamentos.map(t => ({ nome: t.nome, preco: t.preco, tipoPreco: t.tipoPreco }))
+            };
+            const textoResposta = await aiService.gerarRespostaNatural(mensagem, [], contextoFake, configDb);
+            respostaIA = `🔍 [INTENÇÃO: ${nlpResult.intent} | CONFIANÇA: ${(nlpResult.confidence * 100).toFixed(0)}%]\n\n🗣️ Resposta Gerada:\n${textoResposta}`;
+        }
+
         res.status(200).json({ resposta: respostaIA });
-    } catch (error) { res.status(500).json({ error: "Falha na simulação IA." }); }
+    } catch (error) { 
+        console.error("Erro na simulação:", error);
+        res.status(500).json({ error: "Falha na simulação IA." }); 
+    }
 };
 
 exports.getAgendamentosTodos = async (req, res) => {
@@ -466,10 +493,10 @@ exports.criarAgendamentoManual = async (req, res) => {
         const msg = `Sua consulta para *${novoAgendamento.tratamento.nome}* foi agendada para ${dataStr} às ${horaStr}.`;
         
         await whatsappService.sendText(clienteId, msg);
-        await prisma.mensagemIA.create({ data: { role: 'assistant', content: `[Sistema] ${msg}`, clienteId, atendenteHumano: false } });
+        await prisma.mensagemIA.create({ data: { role: 'assistant', content: `[SISTEMA AUTOMÁTICO] ${msg}`, clienteId, atendenteHumano: false } });
         
         await automationEngine.dispararAutomacoes('CONSULTA_CONFIRMADA', novoAgendamento);
-        await webhookService.dispararEvento('appointment.created', novoAgendamento); // Webhook
+        await webhookService.dispararEvento('appointment.created', novoAgendamento); 
 
         res.status(201).json(novoAgendamento);
     } catch (error) { res.status(500).json({ error: "Erro criar agendamento." }); }
@@ -495,7 +522,6 @@ exports.atualizarStatusAgendamento = async (req, res) => {
             where: { id: parseInt(req.params.id) }, data: { status }, include: { cliente: true, tratamento: true, profissionalSaude: true }
         });
         
-        // Notifica Webhooks Gerais
         await webhookService.dispararEvento('appointment.updated', att);
 
         if (status === 'CONFIRMADA' || status === 'AGENDADO') {
@@ -503,12 +529,12 @@ exports.atualizarStatusAgendamento = async (req, res) => {
         } 
         else if (status === 'REALIZADA' || status === 'CONCLUIDO') {
             await automationEngine.dispararAutomacoes('CONSULTA_REALIZADA', att); 
-            await webhookService.dispararEvento('appointment.completed', att); // Webhook Específico
+            await webhookService.dispararEvento('appointment.completed', att); 
         } 
         else if (status === 'CANCELADA') {
             await whatsappService.sendText(att.clienteId, `Sua consulta foi cancelada. Se foi um erro, entre em contato.`);
             await automationEngine.dispararAutomacoes('CONSULTA_CANCELADA', att); 
-            await webhookService.dispararEvento('appointment.cancelled', att); // Webhook Específico
+            await webhookService.dispararEvento('appointment.cancelled', att); 
         } 
         else if (status === 'FALTA') {
             await automationEngine.dispararAutomacoes('PACIENTE_FALTOU', att); 
@@ -583,7 +609,7 @@ exports.getAtividadesEquipe = async (req, res) => {
         });
         res.status(200).json(atividades);
     } catch (error) {
-        res.status(200).json([]); // Fallback
+        res.status(200).json([]); 
     }
 };
 

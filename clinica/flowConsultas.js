@@ -1,75 +1,55 @@
-// --- START OF FILE flowConsultas.js ---
-
 const { prisma } = require('../db');
-const { format } = require('date-fns');
+const aiService = require('../aiService');
 const whatsappService = require('../whatsappService');
 
-async function verEspecialidades(jid) {
-    const tratamentos = await prisma.tratamento.findMany({ 
-        where: { status: 'ATIVO' },
-        orderBy: { categoria: 'asc' } 
-    });
-    
-    if (tratamentos.length === 0) {
-        return await whatsappService.sendText(jid, "Nosso catálogo de serviços está sendo atualizado. Por favor, fale com a recepção.");
-    }
+async function processarDuvidas(jid, textoProcessado, senderNumber, userState, nlpResult, configDb, historico) {
+    let dadosContexto = {};
+    const intent = nlpResult.intent;
 
-    let textoTabela = "*📋 NOSSO CATÁLOGO DE ESPECIALIDADES*\n\n";
-    let categoriaAtual = "";
-
-    tratamentos.forEach(t => {
-        if (t.categoria !== categoriaAtual) {
-            categoriaAtual = t.categoria;
-            textoTabela += `\n🔹 *${categoriaAtual.toUpperCase()}*\n`;
+    // Constrói o contexto baseado unicamente na intenção exata identificada pelo NLP
+    if (intent === 'treatment.price' || intent === 'treatment.info' || intent === 'treatment.duration' || intent === 'treatment.faq') {
+        const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' }});
+        
+        if (nlpResult.entities.treatment) {
+            const search = nlpResult.entities.treatment.toLowerCase();
+            const match = tratamentos.find(t => t.nome.toLowerCase().includes(search));
+            if (match) {
+                dadosContexto.tratamento_solicitado = match;
+            } else {
+                dadosContexto.tratamentos_cadastrados_no_catalogo = tratamentos.map(t => ({ nome: t.nome, preco: t.preco, tipoPreco: t.tipoPreco, info: t.informacoesIA }));
+            }
+        } else {
+            dadosContexto.tratamentos_cadastrados_no_catalogo = tratamentos.map(t => ({ nome: t.nome, preco: t.preco, tipoPreco: t.tipoPreco, info: t.informacoesIA }));
         }
-
-        let precoStr = "Sob avaliação médica";
-        if (t.tipoPreco === 'FIXO') precoStr = `R$ ${t.preco}`;
-        else if (t.tipoPreco === 'A_PARTIR') precoStr = `A partir de R$ ${t.preco}`;
-        else if (t.tipoPreco === 'FAIXA') precoStr = `Valor Variável (Consultar)`;
-
-        textoTabela += `🩺 *${t.nome}* - ${precoStr}\n`;
-        if (t.descricaoCurta) textoTabela += `  _${t.descricaoCurta}_\n`;
-    });
-    
-    textoTabela += "\nPara agendar sua avaliação ou procedimento, volte ao menu e selecione 'Agendar Consulta'.";
-
-    await whatsappService.sendText(jid, textoTabela.trim());
-    await whatsappService.sendInteractiveMenu(jid, "Como posso ajudar agora?", [
-        { id: 'cmd_agendar', title: 'Agendar Consulta' },
-        { id: 'cmd_menu', title: 'Voltar ao Menu' }
-    ]);
-}
-
-async function verMeusAgendamentosClinica(jid, senderNumber) {
-    const agendamentos = await prisma.agendamento.findMany({
-        where: {
-            clienteId: senderNumber,
-            status: 'AGENDADO',
-            dataHora: { gte: new Date() },
-            tratamentoId: { not: null } 
-        },
-        include: { tratamento: true, profissionalSaude: true },
-        orderBy: { dataHora: 'asc' }
-    });
-
-    if (agendamentos.length === 0) {
-        return await whatsappService.sendText(jid, "Você não possui consultas médicas futuras agendadas no momento.");
+    } else if (intent === 'treatment.list') {
+        const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' }});
+        dadosContexto.catologo_servicos = tratamentos.map(t => ({ nome: t.nome, categoria: t.categoria }));
+    } else if (intent === 'appointment.check') {
+        const agendamentos = await prisma.agendamento.findMany({
+            where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() }, tratamentoId: { not: null } },
+            include: { tratamento: true, profissionalSaude: true },
+            orderBy: { dataHora: 'asc' }
+        });
+        dadosContexto.consultas_futuras_encontradas = agendamentos.map(ag => ({ dataHora: ag.dataHora, tratamento: ag.tratamento.nome, medico: ag.profissionalSaude?.nome || "Plantonista" }));
+    } else if (intent === 'clinic.hours' || intent === 'clinic.location' || intent === 'clinic.contact' || intent === 'clinic.payment_methods') {
+        dadosContexto.dados_operacionais = {
+            horarios: configDb.horarioFuncionamento,
+            endereco: configDb.endereco,
+            telefone: configDb.telefone,
+            faq: configDb.faq
+        };
+    } else {
+        // Intenções gerais: greeting, goodbye, unknown. Enviamos apenas os dados básicos para não sobrecarregar tokens.
+        dadosContexto.dados_basicos = { nome_clinica: configDb.nomeClinica, faq: configDb.faq };
     }
 
-    let texto = "📅 *SUAS PRÓXIMAS CONSULTAS:*\n\n";
-    agendamentos.forEach((ag, index) => {
-        const nomeProf = ag.profissionalSaude ? ag.profissionalSaude.nome : 'Médico Especialista';
-        texto += `*${index + 1}. ${ag.tratamento.nome}*\n`;
-        texto += `🕑 ${format(ag.dataHora, "dd/MM/yyyy 'às' HH:mm")}\n`;
-        texto += `👨‍⚕️ Especialista: ${nomeProf}\n\n`;
-    });
-
-    await whatsappService.sendText(jid, texto.trim());
-    await whatsappService.sendInteractiveMenu(jid, "Precisa desmarcar ou alterar alguma consulta?", [
-        { id: 'cmd_cancelar', title: 'Sim, Cancelar' },
-        { id: 'cmd_menu', title: 'Não, Voltar' }
-    ]);
+    // Gera a resposta natural unindo a Pergunta do Paciente + Restrições + Dados DB
+    const respostaIA = await aiService.gerarRespostaNatural(textoProcessado, historico, dadosContexto, configDb);
+    
+    // Grava localmente o histórico do bot para ele não se perder nas próximas mensagens
+    await prisma.mensagemIA.create({ data: { role: 'assistant', content: respostaIA, clienteId: senderNumber } });
+    
+    await whatsappService.sendText(jid, respostaIA);
 }
 
-module.exports = { verEspecialidades, verMeusAgendamentosClinica };
+module.exports = { processarDuvidas };

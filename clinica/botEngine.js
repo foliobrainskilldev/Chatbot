@@ -3,20 +3,12 @@ const whatsappService = require('../whatsappService');
 const aiService = require('../aiService');
 const webhookService = require('../services/webhookService');
 const automationEngine = require('../services/automationEngine');
-const { iniciarAgendamentoClinica, handleAgendamentoClinica } = require('./flowAgendamento');
-const { iniciarCancelamentoClinica, processarCancelamentoClinica } = require('./flowCancelamento');
+
+const { processarAgendamento } = require('./flowAgendamento');
+const { processarCancelamento } = require('./flowCancelamento');
+const { processarDuvidas } = require('./flowConsultas');
 
 const stateMachine = new Map();
-const STEPS = { 
-    MENU_PRINCIPAL: 'MENU_PRINCIPAL', 
-    AGENDAMENTO_TRATAMENTO: 'CLINICA_AG_TRATAMENTO', 
-    AGENDAMENTO_MEDICO: 'CLINICA_AG_MEDICO', 
-    AGENDAMENTO_DATA: 'CLINICA_AG_DATA', 
-    AGENDAMENTO_HORA: 'CLINICA_AG_HORA', 
-    AGENDAMENTO_CONFIRMAR: 'CLINICA_AG_CONFIRMAR',
-    CANCELAR_CONSULTA: 'CLINICA_CANCELAR',
-    REMARCAR_CONSULTA: 'CLINICA_REMARCAR'
-};
 
 async function getOrCreateCliente(numero, nomePushName = null) {
     let cliente = await prisma.cliente.findUnique({ where: { id: numero } });
@@ -24,11 +16,8 @@ async function getOrCreateCliente(numero, nomePushName = null) {
         cliente = await prisma.cliente.create({ 
             data: { id: numero, nome: nomePushName, leadStatus: 'NOVO', origem: 'WhatsApp IA' } 
         });
-        
-        // GATILHO: Novo Lead entrou via bot
         await webhookService.dispararEvento('lead.created', cliente);
         await automationEngine.dispararAutomacoes('NOVO_LEAD', cliente);
-
     } else {
         await prisma.cliente.update({ where: { id: numero }, data: { ultimaInteracao: new Date() } });
     }
@@ -41,11 +30,9 @@ async function processarMensagemEntrante(message) {
     let pushName = message.profile?.name || null;
     let cliente = await getOrCreateCliente(senderNumber, pushName);
     
-    // Se o cliente já está em atendimento humano, a IA não processa com Llama, apenas salva o log.
     if (cliente.falarHumano) {
         let textLog = message.text?.body || '[Mídia Recebida]';
         await prisma.mensagemIA.create({ data: { role: 'user', content: textLog, clienteId: senderNumber } });
-        
         await automationEngine.dispararAutomacoes('NOVA_MENSAGEM', { clienteId: senderNumber, cliente, mensagem: textLog });
         return;
     }
@@ -59,17 +46,14 @@ async function processarMensagemEntrante(message) {
         const mimeType = message[message.type].mime_type;
         mediaCloudinaryUrl = await whatsappService.downloadMetaMediaToCloudinary(mediaId, mimeType);
         textoProcessado = message[message.type].caption || "[Paciente enviou uma imagem/documento]";
-    } 
-    else if (message.type === 'audio') {
+    } else if (message.type === 'audio') {
         const mediaId = message.audio.id;
         const mimeType = message.audio.mime_type;
         mediaCloudinaryUrl = await whatsappService.downloadMetaMediaToCloudinary(mediaId, mimeType);
         textoProcessado = await aiService.transcreverAudioPorUrl(mediaCloudinaryUrl);
-    } 
-    else if (message.type === 'text') {
+    } else if (message.type === 'text') {
         textoProcessado = message.text.body;
-    } 
-    else if (message.type === 'interactive') {
+    } else if (message.type === 'interactive') {
         textoProcessado = message.interactive.button_reply?.id || message.interactive.list_reply?.id;
     }
 
@@ -77,73 +61,76 @@ async function processarMensagemEntrante(message) {
 
     const logConteudo = mediaCloudinaryUrl ? `[MEDIA:${message.type}] ${mediaCloudinaryUrl} | Texto: ${textoProcessado}` : textoProcessado;
     await prisma.mensagemIA.create({ data: { role: 'user', content: logConteudo, clienteId: senderNumber, midiaUrl: mediaCloudinaryUrl, tipoMidia: message.type } });
-
     await automationEngine.dispararAutomacoes('NOVA_MENSAGEM', { clienteId: senderNumber, cliente, mensagem: textoProcessado });
 
-    let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {} };
-
-    // Interceptadores de fluxos fechados
-    if (userState.step.startsWith('CLINICA_AG_')) {
-        await handleAgendamentoClinica(senderNumber, textoProcessado, senderNumber, stateMachine, STEPS);
-        return;
-    }
-    
-    if (userState.step === STEPS.CANCELAR_CONSULTA || userState.step === STEPS.REMARCAR_CONSULTA) {
-        await processarCancelamentoClinica(senderNumber, textoProcessado, senderNumber, stateMachine, STEPS);
-        return;
-    }
-
-    let intencao = await aiService.classificarIntencao(textoProcessado);
-    if (textoProcessado.toLowerCase().includes('remarcar')) {
-        intencao = 'REMARCAR';
-    }
-
+    let isInteractive = message.type === 'interactive';
+    let userState = stateMachine.get(senderNumber) || { step: 'IDLE', intent: null, entities: {} };
     const configDb = await prisma.configSistema.findFirst();
+    
+    const historicoRaw = await prisma.mensagemIA.findMany({ 
+        where: { clienteId: senderNumber }, 
+        take: 8, orderBy: { criadoEm: 'desc' } 
+    });
+    historicoRaw.reverse();
+    const historico = historicoRaw.map(h => ({ role: h.role, content: h.content }));
 
-    if (intencao === 'HUMANO') {
-        const leadTransferido = await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
-        
+    let nlpResult = { intent: "unknown", confidence: 1, entities: {} };
+
+    // ORQUESTRAÇÃO DE NLP VS MODO ESTRUTURADO INTERATIVO
+    if (!isInteractive && textoProcessado) {
+        nlpResult = await aiService.analisarMensagemNLP(textoProcessado, historico, userState);
+    } else if (isInteractive) {
+        if (textoProcessado.startsWith('trat_') || textoProcessado.match(/^\d{2}\/\d{2}\/\d{4}$/) || textoProcessado.match(/^\d{2}:\d{2}$/)) {
+            nlpResult.intent = 'appointment.create';
+        } else if (textoProcessado.startsWith('canc_')) {
+            nlpResult.intent = userState.intent === 'appointment.reschedule' ? 'appointment.reschedule' : 'appointment.cancel';
+        } else if (textoProcessado === 'cmd_agendar') {
+            nlpResult.intent = 'appointment.create';
+        } else if (textoProcessado === '0') {
+            nlpResult.intent = 'goodbye';
+        }
+    }
+
+    // Merge nas Entidades Identificadas (Memória Curta)
+    userState.entities = { ...userState.entities, ...(nlpResult.entities || {}) };
+
+    // Gestão de Confiança e Fixação de Intenção (Slot Filling)
+    let activeIntent = nlpResult.intent;
+    if (nlpResult.confidence < 0.3 && userState.step !== 'IDLE') {
+        activeIntent = userState.intent; 
+    } else if (nlpResult.intent !== 'unknown') {
+        userState.intent = activeIntent;
+    } else {
+        activeIntent = userState.intent || 'unknown';
+    }
+
+    if (activeIntent === 'human.transfer') {
+        await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
+        const leadTransferido = await prisma.cliente.findUnique({ where: { id: senderNumber } });
         await automationEngine.dispararAutomacoes('TRANSFERIDO_HUMANO', leadTransferido);
-        await webhookService.dispararEvento('lead.updated', leadTransferido); // WEBHOOK: Avisa CRM externo que lead mudou status
+        await webhookService.dispararEvento('lead.updated', leadTransferido);
 
         const resp = configDb.msgTransferencia || "Vou encaminhar você para nossa recepção. Um momento, por favor.";
         await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
         await whatsappService.sendText(senderNumber, resp);
-        
         if (global.io) global.io.emit('atualizar_fila');
+        stateMachine.set(senderNumber, { step: 'IDLE', intent: null, entities: {} });
         return;
     }
 
-    if (intencao === 'AGENDAR' || textoProcessado === 'cmd_agendar') {
+    // ROTEAMENTO PARA AS FERRAMENTAS DO BACKEND
+    if (activeIntent === 'appointment.create') {
         await prisma.cliente.update({ where: { id: senderNumber }, data: { leadStatus: 'QUALIFICADO' } });
-        return await iniciarAgendamentoClinica(senderNumber, senderNumber, stateMachine, STEPS);
+        await processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb);
+    } else if (activeIntent === 'appointment.cancel' || activeIntent === 'appointment.reschedule') {
+        await processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, activeIntent === 'appointment.reschedule');
+    } else {
+        await processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico);
     }
-
-    if (intencao === 'CANCELAR') {
-        return await iniciarCancelamentoClinica(senderNumber, senderNumber, stateMachine, STEPS, false);
-    }
-
-    if (intencao === 'REMARCAR') {
-        return await iniciarCancelamentoClinica(senderNumber, senderNumber, stateMachine, STEPS, true);
-    }
-
-    const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' } });
-    
-    const historico = await prisma.mensagemIA.findMany({ 
-        where: { clienteId: senderNumber }, 
-        take: 10, 
-        orderBy: { criadoEm: 'desc' } 
-    });
-    historico.reverse(); 
-
-    const respostaIA = await aiService.responderComContextoIA(textoProcessado, historico, configDb, tratamentos);
-    
-    await prisma.mensagemIA.create({ data: { role: 'assistant', content: respostaIA, clienteId: senderNumber } });
-    await whatsappService.sendText(senderNumber, respostaIA);
 }
 
 function limparMemoriaEstado() {
     stateMachine.clear();
 }
 
-module.exports = { processarMensagemEntrante, limparMemoriaEstado, stateMachine, STEPS };
+module.exports = { processarMensagemEntrante, limparMemoriaEstado, stateMachine };

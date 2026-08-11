@@ -2,28 +2,30 @@ const { addMinutes, isBefore, format, startOfDay, endOfDay, parse, addDays, getD
 const { prisma } = require('./db');
 
 function obterDiasTrabalhoGlobais() {
-    // 1=Segunda a 6=Sábado (Domingo=0). Pode ser movido para o banco no futuro.
+    // 1=Segunda a 6=Sábado (Domingo=0).
     return [1, 2, 3, 4, 5, 6]; 
 }
 
 async function getFeriadosBloqueados() {
     try {
-        // Tenta buscar na tabela Feriado. Se não existir no schema atual, ignora.
         const feriados = await prisma.feriado.findMany();
         return feriados.map(f => format(f.data, 'dd/MM/yyyy'));
     } catch (e) {
-        return []; // Tabela inexistente, retorna array vazio (fallback seguro)
+        return []; 
     }
 }
 
+// Essa função precisa ser extremamente rigorosa para garantir que o LLM sempre
+// interaja com o formato "DD/MM/YYYY" de forma imutável (sem fuso horário ou localizações quebras).
 async function getProximosDiasUteis(qtdDias = 7) {
     const diasPermitidos = obterDiasTrabalhoGlobais();
     const feriados = await getFeriadosBloqueados();
     let dias = [];
-    let dataAtual = new Date();
+    let dataAtual = new Date(); 
     
     while (dias.length < qtdDias) {
         const diaSemana = getDay(dataAtual); 
+        // Força a string no padrão que a IA (LLM) foi treinada para enxergar (DD/MM/YYYY)
         const dataFormatada = format(dataAtual, 'dd/MM/yyyy');
         
         if (diasPermitidos.includes(diaSemana) && !feriados.includes(dataFormatada)) {
@@ -35,12 +37,12 @@ async function getProximosDiasUteis(qtdDias = 7) {
 }
 
 async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, profissionalSaudeId = null) {
+    // O NLP ou Interface devem passar rigorosamente 'dd/MM/yyyy'. O fallback default garante que o parse não quebre a aplicação.
     const dataEscolhida = parse(dataString, 'dd/MM/yyyy', new Date());
     
     let horaAbertura = 8; 
     let horaFecho = 18;
 
-    // Se houver um médico específico, busca a agenda dele no banco
     if (profissionalSaudeId) {
         try {
             const medico = await prisma.profissionalSaude.findUnique({ where: { id: parseInt(profissionalSaudeId) } });
@@ -90,7 +92,7 @@ async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, prof
             }
         }
 
-        if (!conflito) horariosLivres.push(format(horarioAtual, 'HH:mm'));
+        if (!conflito) horariosLivres.push(format(horarioAtual, 'HH:mm')); // String rígida que o LLM compreende perfeitamente
         horarioAtual = addMinutes(horarioAtual, 30);
     }
 
