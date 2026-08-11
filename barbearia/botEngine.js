@@ -35,6 +35,7 @@ async function enviarMenuGeral(jid) {
 async function processarMensagemEntrante(message) {
     const senderNumber = message.from;
     const jid = senderNumber;
+    const msgId = message.id;
     
     try {
         console.log(`💈 [MOTOR BARBEARIA] Processando mensagem de ${senderNumber}`);
@@ -56,7 +57,8 @@ async function processarMensagemEntrante(message) {
             return;
         }
 
-        await whatsappService.markAsReadAndTyping(message.id, senderNumber);
+        // NOVO: Chamada atualizada para ativar os Tiques Azuis e o "Digitando..."
+        await whatsappService.markAsReadAndTyping(msgId, senderNumber);
 
         let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {} };
         

@@ -26,7 +26,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         return;
     }
     
-    // SLOT 1: TRATAMENTO
+    // SLOT 1: TRATAMENTO (Consome a Entidade extraída pelo NLP)
     if (!userState.resolvedTreatment) {
         if (isInteractive && textoProcessado.startsWith('trat_')) {
             const idTrat = parseInt(textoProcessado.replace('trat_', ''));
@@ -64,8 +64,10 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
             if (diasValidos.includes(textoProcessado)) userState.resolvedDate = textoProcessado;
             else await whatsappService.sendText(jid, 'Data inválida ou nossa clínica não opera nesse dia.');
         } else if (userState.entities.date) {
-            if (diasValidos.includes(userState.entities.date)) {
-                userState.resolvedDate = userState.entities.date;
+            // Se a entidade de data bater com um dia válido, usamos para pular a pergunta
+            const matchDia = diasValidos.find(d => d === userState.entities.date || d.includes(userState.entities.date));
+            if (matchDia) {
+                userState.resolvedDate = matchDia;
             }
         }
         
@@ -93,7 +95,8 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
             if (horasLivres.includes(textoProcessado)) userState.resolvedTime = textoProcessado;
             else await whatsappService.sendText(jid, 'Horário já foi ocupado ou está inválido. Escolha outro.');
         } else if (userState.entities.time) {
-            if (horasLivres.includes(userState.entities.time)) userState.resolvedTime = userState.entities.time;
+            const matchHora = horasLivres.find(h => h === userState.entities.time || h.includes(userState.entities.time));
+            if (matchHora) userState.resolvedTime = matchHora;
         }
         
         if (!userState.resolvedTime) {

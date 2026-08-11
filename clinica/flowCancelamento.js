@@ -16,7 +16,7 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
         return;
     }
 
-    const agendamentos = await prisma.agendamento.findMany({
+    let agendamentos = await prisma.agendamento.findMany({
         where: { clienteId: senderNumber, status: { in: ['AGENDADO', 'CONFIRMADA'] }, dataHora: { gte: new Date() }, tratamentoId: { not: null } },
         include: { tratamento: true },
         orderBy: { dataHora: 'asc' }
@@ -29,12 +29,21 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
         return;
     }
 
+    // NOVO: Filtra usando as entidades do NLP (Ex: Se o paciente disse "cancelar a limpeza")
+    if (userState.entities && agendamentos.length > 1) {
+        if (userState.entities.treatment) {
+            const search = userState.entities.treatment.toLowerCase();
+            const filtrados = agendamentos.filter(ag => ag.tratamento.nome.toLowerCase().includes(search));
+            if (filtrados.length > 0) agendamentos = filtrados;
+        }
+    }
+
     // SLOT: Seleção da consulta alvo
     if (!userState.resolvedAppointmentId) {
         if (isInteractive && textoProcessado.startsWith('canc_')) {
             userState.resolvedAppointmentId = parseInt(textoProcessado.replace('canc_', ''));
         } else if (agendamentos.length === 1) {
-            // Preenchimento Automático se houver apenas uma consulta
+            // Preenchimento Automático se houver apenas uma consulta (ou se o NLP filtrou para 1)
             userState.resolvedAppointmentId = agendamentos[0].id;
         } else {
             let opcoes = agendamentos.slice(0, 9).map(ag => ({ id: `canc_${ag.id}`, title: ag.tratamento.nome.substring(0, 24), description: format(ag.dataHora, 'dd/MM/yyyy HH:mm') }));

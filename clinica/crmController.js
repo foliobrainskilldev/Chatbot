@@ -3,11 +3,10 @@ const whatsappService = require('../whatsappService');
 const cloudinaryService = require('../services/cloudinaryService');
 const automationEngine = require('../services/automationEngine');
 const webhookService = require('../services/webhookService');
-const aiService = require('../aiService'); // IMPORTAÇÃO DO NOVO SERVIÇO DE NLP
+const aiService = require('../aiService'); 
 const { getHorariosDisponiveis } = require('../dateUtils'); 
 const { startOfDay, endOfDay, subDays, format, parse } = require('date-fns');
 
-// --- Helper Global de Auditoria de Equipe ---
 async function registrarAtividade(usuarioId, acao, recurso, detalhes = "") {
     if(!usuarioId) return;
     try {
@@ -400,7 +399,7 @@ exports.atualizarConfigIA = async (req, res) => {
 };
 
 // ==========================================
-// NOVO: SIMULADOR DO PIPELINE NLP
+// SIMULADOR DO PIPELINE NLP (ATUALIZADO)
 // ==========================================
 exports.testarIA = async (req, res) => {
     try {
@@ -417,20 +416,26 @@ exports.testarIA = async (req, res) => {
         let respostaIA = "";
 
         if (nlpResult.intent === 'appointment.create') {
-            respostaIA = `🔍 [INTENÇÃO IDENTIFICADA: AGENDAR (appointment.create)]\nEntidades extraídas: ${JSON.stringify(nlpResult.entities)}\n\n(Ação Interna: O backend entraria no fluxo de Agendamento bloqueando a IA solta).`;
+            respostaIA = `[AÇÃO DE BACKEND]\nO motor identificou a intenção de AGENDAR.\nEntidades extraídas: ${JSON.stringify(nlpResult.entities)}\nO sistema iniciaria o fluxo de botões para escolher data e horário.`;
         } else if (nlpResult.intent === 'appointment.cancel' || nlpResult.intent === 'appointment.reschedule') {
-            respostaIA = `🔍 [INTENÇÃO IDENTIFICADA: CANCELAR/REMARCAR]\nEntidades extraídas: ${JSON.stringify(nlpResult.entities)}\n\n(Ação Interna: O backend buscaria as consultas do paciente no banco de dados).`;
+            respostaIA = `[AÇÃO DE BACKEND]\nO motor identificou a intenção de CANCELAR/REMARCAR.\nEntidades extraídas: ${JSON.stringify(nlpResult.entities)}\nO sistema buscaria as consultas ativas do paciente.`;
         } else if (nlpResult.intent === 'human.transfer') {
-            respostaIA = `🔍 [INTENÇÃO IDENTIFICADA: FALAR COM HUMANO]\n(Ação Interna: Lead transferido para fila manual e notificado no painel).`;
+            respostaIA = `[AÇÃO DE BACKEND]\nTransferindo para a fila de atendimento humano...`;
         } else {
             // Emula a Resposta Natural para intenções de FAQ e Informações
-            const contextoFake = {
-                intencao_detectada: nlpResult.intent,
-                dados_operacionais: { nome_clinica: configDb.nomeClinica, faq: configDb.faq },
-                catologo_servicos: tratamentos.map(t => ({ nome: t.nome, preco: t.preco, tipoPreco: t.tipoPreco }))
-            };
-            const textoResposta = await aiService.gerarRespostaNatural(mensagem, [], contextoFake, configDb);
-            respostaIA = `🔍 [INTENÇÃO: ${nlpResult.intent} | CONFIANÇA: ${(nlpResult.confidence * 100).toFixed(0)}%]\n\n🗣️ Resposta Gerada:\n${textoResposta}`;
+            let dadosContexto = {};
+            if (nlpResult.intent.startsWith('treatment.')) {
+                dadosContexto.catologo_servicos = tratamentos.map(t => ({ nome: t.nome, preco: t.preco, tipoPreco: t.tipoPreco, info: t.informacoesIA }));
+            } else {
+                dadosContexto.dados_operacionais = {
+                    horarios: configDb?.horarioFuncionamento || "Segunda a Sexta",
+                    endereco: configDb?.endereco || "Endereço cadastrado",
+                    telefone: configDb?.telefone || "",
+                    faq: configDb?.faq || ""
+                };
+            }
+            const textoResposta = await aiService.gerarRespostaNatural(mensagem, [], dadosContexto, configDb);
+            respostaIA = textoResposta;
         }
 
         res.status(200).json({ resposta: respostaIA });
@@ -544,9 +549,6 @@ exports.atualizarStatusAgendamento = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Erro atualizar consulta." }); }
 };
 
-// ==========================================
-// MÓDULO DE GESTÃO DE EQUIPE E AUDITORIA
-// ==========================================
 exports.getEquipe = async (req, res) => {
     try {
         const usuarios = await prisma.usuario.findMany({ 

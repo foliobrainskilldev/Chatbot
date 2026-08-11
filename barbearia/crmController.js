@@ -1,5 +1,6 @@
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
+const cloudinaryService = require('../services/cloudinaryService'); // Adicionado
 const { startOfDay, endOfDay, subDays, format } = require('date-fns');
 const botEngine = require('./botEngine');
 
@@ -103,28 +104,38 @@ exports.criarNotaInterna = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Erro criar nota." }); }
 };
 
+// ATUALIZADO: Suporte a Mídia via Cloudinary e Typing Indicator
 exports.enviarMensagemManual = async (req, res) => {
     try {
         const { clienteId } = req.params; 
         const texto = req.body.texto || ""; 
         let msgDb = texto;
+        let cloudinaryUrl = null;
+        let typeMsg = null;
+
+        // Dispara o indicador "Digitando..." no WhatsApp
+        await whatsappService.markAsReadAndTyping(null, clienteId);
+        await new Promise(r => setTimeout(r, 1000)); // Delay sutil
 
         if (req.file) {
             const mimeType = req.file.mimetype; 
-            const type = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('video/') ? 'video' : 'document');
-            const mediaId = await whatsappService.uploadMediaToMeta(req.file.path, mimeType);
-            if (mediaId) {
-                await whatsappService.sendMediaMessage(clienteId, type, mediaId, texto); 
-                msgDb = `[MEDIA:${type}] /${req.file.path} | Transcrição: ${texto}`; 
-            }
+            const resourceType = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('video/') ? 'video' : 'raw');
+            
+            // Faz upload para o Cloudinary (Substitui o Meta Upload)
+            const cloudResult = await cloudinaryService.uploadStream(req.file.buffer, 'barbearia/atendimento', resourceType);
+            cloudinaryUrl = cloudResult.secure_url;
+            typeMsg = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('video/') ? 'video' : 'document');
+            
+            await whatsappService.sendMediaUrl(clienteId, typeMsg, cloudinaryUrl, texto);
+            msgDb = `[MEDIA:${typeMsg}] ${cloudinaryUrl} | Transcrição: ${texto}`; 
         } else if (texto) { 
             await whatsappService.sendText(clienteId, texto); 
         }
         
-        const novaMsg = await prisma.mensagemIA.create({ data: { role: 'assistant', content: msgDb, clienteId } });
+        const novaMsg = await prisma.mensagemIA.create({ data: { role: 'assistant', content: msgDb, clienteId, atendenteHumano: true } });
         if (global.io) global.io.emit('nova_mensagem', { clienteId, mensagem: novaMsg });
         res.status(200).json(novaMsg);
-    } catch (error) { res.status(500).json({ error: "Erro ao enviar." }); }
+    } catch (error) { res.status(500).json({ error: "Erro ao enviar mensagem manual." }); }
 };
 
 exports.resolverAtendimentoHumano = async (req, res) => {
@@ -159,7 +170,6 @@ exports.atualizarStatusAgendamento = async (req, res) => {
 
 exports.formatarSistema = async (req, res) => {
     try {
-        // Zera o banco (perigoso)
         await prisma.notaInterna.deleteMany({}); 
         await prisma.mensagemIA.deleteMany({});
         await prisma.agendamento.deleteMany({}); 

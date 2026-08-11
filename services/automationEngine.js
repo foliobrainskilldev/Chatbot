@@ -27,7 +27,7 @@ async function dispararAutomacoes(tipoGatilho, dados) {
             const cacheKey = `auto_${regra.id}_cliente_${clienteId}`;
             const lastExec = executionCache.get(cacheKey);
             if (lastExec && (Date.now() - lastExec < 60000)) {
-                console.warn(`[Automations Loop Protect] Regra ${regra.id} bloqueada para ${clienteId}. Frequência muito alta.`);
+                console.warn(`[Automations] Regra ${regra.id} bloqueada para ${clienteId}. Frequência muito alta.`);
                 continue; 
             }
             executionCache.set(cacheKey, Date.now());
@@ -45,7 +45,7 @@ async function dispararAutomacoes(tipoGatilho, dados) {
                         }
                     });
                 } catch (e) {
-                    console.error("Erro ao inserir na Fila de Automação (Tabela ausente?):", e.message);
+                    console.error("Erro ao inserir na Fila de Automação:", e.message);
                 }
             } else {
                 await executarAcaoEGravarHistorico(regra, clienteId, dados);
@@ -73,10 +73,7 @@ function avaliarCondicoes(condicoesJson, dados) {
             if (cond.operador === 'CONTEM' && !strValorReal.includes(strCondValor)) return false;
         }
         return true; 
-    } catch (e) {
-        console.warn("Erro ao avaliar condição JSON:", e);
-        return false; 
-    }
+    } catch (e) { return false; }
 }
 
 async function executarAcaoEGravarHistorico(regra, clienteId, dados) {
@@ -94,7 +91,6 @@ async function executarAcaoEGravarHistorico(regra, clienteId, dados) {
     } catch (error) {
         sucesso = false;
         msgDetalhe = error.message.substring(0, 200);
-        console.error(`[Automação Falha] Regra ${regra.id}:`, error.message);
     }
 
     try {
@@ -123,9 +119,11 @@ async function executarAcaoReal(tipoAcao, parametro, clienteId, dados) {
                     txtFinal = txtFinal.replace(/{{hora}}/g, dataObj.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'}));
                 }
                 
-                await whatsappService.sendText(numCliente, txtFinal);
+                // NOVO: Adiciona Tiques Azuis e "Digitando..." com delay natural
+                await whatsappService.markAsReadAndTyping(null, numCliente);
+                await new Promise(resolve => setTimeout(resolve, 2500)); // Delay para parecer humano
                 
-                // Usando a tag de Sistema para que o NLP Pipeline não confunda esse texto com sua própria "memória de persona"
+                await whatsappService.sendText(numCliente, txtFinal);
                 await prisma.mensagemIA.create({ 
                     data: { role: 'assistant', content: `[SISTEMA AUTOMÁTICO]: ${txtFinal}`, clienteId: numCliente, atendenteHumano: false } 
                 });
@@ -136,6 +134,10 @@ async function executarAcaoReal(tipoAcao, parametro, clienteId, dados) {
         case 'ENVIAR_AUDIO':
             if (parametro && numCliente) {
                 const type = tipoAcao === 'ENVIAR_IMAGEM' ? 'image' : 'audio';
+                
+                await whatsappService.markAsReadAndTyping(null, numCliente);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
                 await whatsappService.sendMediaUrl(numCliente, type, parametro, "");
                 await prisma.mensagemIA.create({ 
                     data: { role: 'assistant', content: `[SISTEMA AUTOMÁTICO MEDIA:${type}] ${parametro}`, clienteId: numCliente, atendenteHumano: false } 
@@ -212,6 +214,9 @@ async function dispararMensagemConfirmacaoNativa(agendamento) {
     try {
         const dataObj = new Date(agendamento.dataHora);
         const txt = `Sua consulta foi agendada para ${dataObj.toLocaleDateString('pt-BR')} às ${dataObj.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+        
+        await whatsappService.markAsReadAndTyping(null, agendamento.clienteId);
+        await new Promise(resolve => setTimeout(resolve, 1500));
         await whatsappService.sendText(agendamento.clienteId, txt);
     } catch (error) {}
 }

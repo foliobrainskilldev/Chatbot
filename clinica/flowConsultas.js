@@ -1,4 +1,3 @@
-// clinica/flowConsultas.js
 const { prisma } = require('../db');
 const aiService = require('../aiService');
 const whatsappService = require('../whatsappService');
@@ -40,7 +39,7 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
             faq: configDb?.faq || ""
         };
     } else {
-        // Intenções gerais: greeting, goodbye, unknown. Enviamos apenas os dados básicos para não sobrecarregar tokens.
+        // Intenções gerais: greeting, goodbye, unknown.
         dadosContexto.dados_basicos = { nome_clinica: configDb?.nomeClinica || "Clínica", faq: configDb?.faq || "" };
     }
 

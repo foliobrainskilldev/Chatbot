@@ -43,16 +43,15 @@ async function processarMensagemEntrante(message) {
             return; 
         }
 
-        // Ticks Azuis e Digitando
+        // NOVO: Ticks Azuis e Digitando (Typing Indicator da Meta)
         await whatsappService.markAsReadAndTyping(msgId, senderNumber);
 
         let textoProcessado = "";
-        let mediaCloudinaryUrl = null;
 
         if (message.type === 'image' || message.type === 'document') {
             textoProcessado = message[message.type].caption || "[Imagem/Documento]";
         } else if (message.type === 'audio') {
-            textoProcessado = "[Áudio Recebido]";
+            textoProcessado = "[Áudio Recebido]"; // Aqui entraria o STT no futuro
         } else if (message.type === 'text') {
             textoProcessado = message.text.body;
         } else if (message.type === 'interactive') {
@@ -79,9 +78,14 @@ async function processarMensagemEntrante(message) {
 
         let nlpResult = { intent: "unknown", confidence: 1, entities: {} };
 
+        // NOVO: Pipeline Híbrido NLP/LLM
         if (!isInteractive && textoProcessado) {
             nlpResult = await aiService.analisarMensagemNLP(textoProcessado, historico, userState);
-            console.log(`🧠 [NLP] Intenção detectada: ${nlpResult.intent}`);
+            console.log(`🧠 [NLP] Intenção detectada: ${nlpResult.intent} | Confiança: ${nlpResult.confidence}`);
+            
+            // Mesclar entidades extraídas com o estado atual do usuário
+            userState.entities = { ...userState.entities, ...nlpResult.entities };
+            stateMachine.set(senderNumber, userState);
         } else if (isInteractive) {
             if (textoProcessado.startsWith('trat_') || textoProcessado === 'cmd_agendar') nlpResult.intent = 'appointment.create';
             else if (textoProcessado.startsWith('canc_')) nlpResult.intent = 'appointment.cancel';
@@ -89,8 +93,13 @@ async function processarMensagemEntrante(message) {
 
         let activeIntent = nlpResult.intent || 'unknown';
 
-        const delayMs = Math.floor(Math.random() * (4000 - 2000 + 1)) + 2000;
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        // Verificação de Confiança do NLP
+        if (nlpResult.confidence < 0.4 && !isInteractive) {
+            const resp = "Desculpe, não entendi muito bem. Você gostaria de marcar uma consulta, saber sobre nossos tratamentos ou falar com um atendente?";
+            await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
+            await whatsappService.sendText(senderNumber, resp);
+            return;
+        }
 
         if (activeIntent === 'human.transfer') {
             await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
@@ -100,10 +109,12 @@ async function processarMensagemEntrante(message) {
             return;
         }
 
-        if (activeIntent === 'appointment.create') {
+        // Roteamento baseado na Intenção e no Estado
+        if (activeIntent === 'appointment.create' || userState.step === 'AGENDAMENTO') {
             await processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb);
-        } else if (activeIntent === 'appointment.cancel' || activeIntent === 'appointment.reschedule') {
-            await processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, false);
+        } else if (activeIntent === 'appointment.cancel' || activeIntent === 'appointment.reschedule' || userState.step === 'CANCELAMENTO') {
+            const isRemarcacao = activeIntent === 'appointment.reschedule';
+            await processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao);
         } else {
             await processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico);
         }

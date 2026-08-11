@@ -1,129 +1,140 @@
-const { OpenAI } = require('openai');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
 const axios = require('axios');
-const { format } = require('date-fns');
 
-const groq = new OpenAI({
-    apiKey: process.env.GROQ_API_KEY || "chave_ausente", 
-    baseURL: "https://api.groq.com/openai/v1",
-});
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-async function transcreverAudioPorUrl(audioUrl) {
-    if (!process.env.GROQ_API_KEY || process.env.GROQ_API_KEY === 'chave_ausente' || !audioUrl) {
-        console.warn("⚠️ [AI SERVICE] Transcrição ignorada: Chave da GROQ ausente.");
-        return "";
+async function analisarMensagemNLP(mensagem, historico, userState) {
+    if (!OPENAI_API_KEY) {
+        console.warn("⚠️ [NLP] OPENAI_API_KEY não configurada. Usando fallback baseado em regras.");
+        return fallbackNLP(mensagem);
     }
-    
-    const tempFilePath = path.join(os.tmpdir(), `audio_${Date.now()}.ogg`);
-    
+
     try {
-        console.log("🎙️ [AI SERVICE] Baixando áudio para transcrição...");
-        const response = await axios.get(audioUrl, { responseType: 'stream' });
-        const writer = fs.createWriteStream(tempFilePath);
-        response.data.pipe(writer);
-        
-        await new Promise((resolve, reject) => {
-            writer.on('finish', resolve);
-            writer.on('error', reject);
-        });
+        const prompt = `
+Você é o motor de NLP de um HealthCRM (Clínica Médica).
+Sua tarefa é analisar a mensagem do paciente e extrair a intenção (intent) e as entidades (entities).
 
-        console.log("🧠 [AI SERVICE] Enviando áudio para Whisper (Groq)...");
-        const transcricao = await groq.audio.transcriptions.create({
-            file: fs.createReadStream(tempFilePath),
-            model: "whisper-large-v3-turbo", 
-            language: "pt", 
-        });
-        return transcricao.text;
-    } catch (erro) {
-        console.error("❌ [ERRO AI TRANSCRIÇÃO]:", erro.message);
-        return "[Áudio inaudível]";
-    } finally {
-        if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-    }
+Intenções permitidas:
+- clinic.hours (horário de funcionamento)
+- clinic.location (localização)
+- clinic.contact (contato)
+- clinic.payment_methods (pagamento)
+- treatment.list (listar tratamentos)
+- treatment.info (informação de tratamento)
+- treatment.price (preço de tratamento)
+- treatment.duration (duração)
+- treatment.faq (dúvidas gerais sobre tratamento)
+- appointment.create (marcar consulta)
+- appointment.check (verificar consultas)
+- appointment.reschedule (remarcar)
+- appointment.cancel (cancelar)
+- human.transfer (falar com atendente)
+- greeting (saudação)
+- goodbye (despedida)
+- unknown (não entendi)
+
+Entidades para extrair (se presentes):
+- treatment (nome do tratamento)
+- date (data, ex: "amanhã", "sexta-feira", "15/10")
+- time (horário, ex: "15h", "de manhã")
+- professional (nome do médico/profissional)
+
+Estado atual da conversa: ${JSON.stringify(userState)}
+
+Responda APENAS com um JSON válido no formato exato:
+{
+  "intent": "...",
+  "confidence": 0.95,
+  "entities": {
+    "treatment": "...",
+    "date": "...",
+    "time": "...",
+    "professional": "..."
+  }
 }
+`;
 
-async function analisarMensagemNLP(textoCliente, historico, estadoAtual) {
-    if (!process.env.GROQ_API_KEY || process.env.GROQ_API_KEY === 'chave_ausente') {
-        console.warn("⚠️ [AI SERVICE] Chave GROQ ausente. NLP bypassado.");
-        return { intent: "unknown", confidence: 0, entities: {} };
-    }
-
-    const hoje = format(new Date(), 'dd/MM/yyyy');
-    const prompt = `Você é o analisador NLP de um HealthCRM. 
-Extraia a intenção, a confiança (0.0 a 1.0) e as entidades (treatment, professional, date, time).
-Hoje é ${hoje}. Responda APENAS com um JSON válido.
-Intenções: clinic.hours, clinic.location, treatment.list, appointment.create, appointment.cancel, human.transfer, greeting, unknown.`;
-
-    try {
-        console.log("🧠 [AI SERVICE] Analisando Intenção (NLP)...");
-        const resposta = await groq.chat.completions.create({
-            model: "llama-3.1-8b-instant",
+        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+            model: "gpt-4o-mini",
             messages: [
                 { role: "system", content: prompt },
-                { role: "user", content: textoCliente || "[Mensagem de mídia/vazia]" }
+                { role: "user", content: mensagem }
             ],
-            temperature: 0.1,
+            temperature: 0,
             response_format: { type: "json_object" }
+        }, {
+            headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` }
         });
-        
-        return JSON.parse(resposta.choices[0]?.message?.content || "{}");
-    } catch (erro) {
-        console.error("❌ [ERRO AI NLP Groq]:", erro.message);
-        return { intent: "unknown", confidence: 0, entities: {} };
+
+        const result = JSON.parse(response.data.choices[0].message.content);
+        return result;
+    } catch (error) {
+        console.error("❌ [NLP] Erro na API da OpenAI:", error.message);
+        return fallbackNLP(mensagem);
     }
 }
 
-async function gerarRespostaNatural(textoCliente, historico, dadosContexto, configSistema) {
-    if (!process.env.GROQ_API_KEY || process.env.GROQ_API_KEY === 'chave_ausente') {
-        console.error("❌ [ERRO AI SERVICE] Tentativa de gerar resposta sem API Key configurada!");
-        return "Desculpe, o motor de Inteligência Artificial está desconectado no momento.";
-    }
-
-    const assistenteNome = configSistema?.nomeAssistente || "Assistente";
-    const clinicaNome = configSistema?.nomeClinica || "Clínica";
+function fallbackNLP(mensagem) {
+    const msg = mensagem.toLowerCase();
+    let intent = "unknown";
+    if (msg.includes("agendar") || msg.includes("marcar")) intent = "appointment.create";
+    else if (msg.includes("cancelar")) intent = "appointment.cancel";
+    else if (msg.includes("preço") || msg.includes("valor") || msg.includes("custa")) intent = "treatment.price";
+    else if (msg.includes("humano") || msg.includes("atendente")) intent = "human.transfer";
+    else if (msg.includes("horário") || msg.includes("horas")) intent = "clinic.hours";
+    else if (msg.includes("onde") || msg.includes("local")) intent = "clinic.location";
     
-    const systemInstrucoes = `Você é ${assistenteNome}, assistente virtual da ${clinicaNome}.
-REGRA: Use EXATAMENTE os dados fornecidos no contexto: ${JSON.stringify(dadosContexto)}`;
+    return {
+        intent,
+        confidence: 0.6,
+        entities: {}
+    };
+}
+
+async function gerarRespostaNatural(mensagem, historico, contexto, configDb) {
+    if (!OPENAI_API_KEY) {
+        return "Recebi sua mensagem, mas meu motor de IA está temporariamente indisponível. Como posso ajudar de forma simples?";
+    }
 
     try {
-        const msgs = [{ role: "system", content: systemInstrucoes }];
-        let lastRole = "system";
+        const prompt = `
+Você é ${configDb?.nomeAssistente || 'o assistente virtual'} da clínica ${configDb?.nomeClinica || 'HealthCRM'}.
+Tom de voz: ${configDb?.tomDeVoz || 'Profissional e acolhedor'}.
+Estilo: ${configDb?.estiloComunicacao || 'Respostas curtas e objetivas'}.
+Formalidade: ${configDb?.formalidade || 'Sempre tratar por Senhor/Senhora'}.
 
-        if (historico && historico.length > 0) {
-            historico.forEach(linha => {
-                let content = linha.content || "[Mídia Recebida]";
-                if (content.includes('| Texto: ')) content = content.split('| Texto: ')[1].trim();
-                if (!content) content = "[Mídia Recebida]";
+Regras:
+1. NUNCA invente preços, horários ou diagnósticos.
+2. Use os DADOS DE CONTEXTO fornecidos abaixo para basear sua resposta.
+3. Se a informação não estiver no contexto, diga que não tem essa informação no momento e ofereça transferência para um humano.
 
-                if (linha.role === lastRole) {
-                    msgs[msgs.length - 1].content += `\n${content}`;
-                } else {
-                    msgs.push({ role: linha.role, content: content });
-                    lastRole = linha.role;
-                }
-            });
-        }
-        
-        let textoFinal = textoCliente || "[Mídia]";
-        if (lastRole !== "user") {
-            msgs.push({ role: "user", content: textoFinal });
-        }
+DADOS DE CONTEXTO (Vindos do Banco de Dados Operacional):
+${JSON.stringify(contexto, null, 2)}
 
-        console.log("🧠 [AI SERVICE] Gerando resposta humanizada...");
-        const resposta = await groq.chat.completions.create({
-            model: "llama-3.1-70b-versatile",
-            messages: msgs,
-            temperature: 0.3,
-            max_tokens: 400 
+Responda à mensagem do usuário de forma natural e conversacional.
+`;
+
+        const messages = [
+            { role: "system", content: prompt },
+            ...historico.map(h => ({ role: h.role, content: h.content })),
+            { role: "user", content: mensagem }
+        ];
+
+        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+            model: "gpt-4o-mini",
+            messages: messages,
+            temperature: 0.7
+        }, {
+            headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` }
         });
-        
-        return resposta.choices[0]?.message?.content || "Desculpe, não consegui formular a resposta.";
-    } catch (erro) {
-        console.error("❌ [ERRO AI GERAÇÃO DE RESPOSTA]:", erro.response ? erro.response.data : erro.message);
-        return "Desculpe, meus servidores estão muito ocupados agora. Pode repetir a mensagem?"; 
+
+        return response.data.choices[0].message.content;
+    } catch (error) {
+        console.error("❌ [IA] Erro ao gerar resposta natural:", error.message);
+        return "Desculpe, tive um pequeno problema técnico ao formular a resposta. Poderia repetir?";
     }
 }
 
-module.exports = { transcreverAudioPorUrl, analisarMensagemNLP, gerarRespostaNatural };
+module.exports = {
+    analisarMensagemNLP,
+    gerarRespostaNatural
+};
