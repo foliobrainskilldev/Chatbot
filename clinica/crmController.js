@@ -337,10 +337,17 @@ exports.salvarTratamento = async (req, res) => {
         }
 
         const dadosBase = {
-            nome: req.body.nome, categoria: req.body.categoria || 'Outros', tipoPreco: req.body.tipoPreco || 'FIXO',
-            preco: req.body.preco ? parseFloat(req.body.preco) : null, duracaoMin: parseInt(req.body.duracaoMin) || 30,
-            descricaoCurta: req.body.descricaoCurta || '', informacoesIA: req.body.informacoesIA || '', faq: req.body.faq || '',
-            regrasIA: req.body.regrasIA || '', podeAgendarIA: req.body.podeAgendarIA === 'true', status: req.body.status || 'ATIVO',
+            nome: req.body.nome, 
+            categoria: req.body.categoria || 'Outros', 
+            tipoPreco: req.body.tipoPreco || 'FIXO',
+            preco: (req.body.preco && !isNaN(parseFloat(req.body.preco))) ? parseFloat(req.body.preco) : null, 
+            duracaoMin: (req.body.duracaoMin && !isNaN(parseInt(req.body.duracaoMin))) ? parseInt(req.body.duracaoMin) : 30,
+            descricaoCurta: req.body.descricaoCurta || '', 
+            informacoesIA: req.body.informacoesIA || '', 
+            faq: req.body.faq || '',
+            regrasIA: req.body.regrasIA || '', 
+            podeAgendarIA: req.body.podeAgendarIA === 'true', 
+            status: req.body.status || 'ATIVO',
             imagemUrl: imageUrl
         };
 
@@ -356,7 +363,10 @@ exports.salvarTratamento = async (req, res) => {
             });
             return res.status(201).json(create);
         }
-    } catch (error) { res.status(500).json({ error: "Erro ao salvar tratamento." }); }
+    } catch (error) { 
+        console.error("Erro no salvarTratamento:", error);
+        res.status(500).json({ error: "Erro ao salvar tratamento. " + error.message }); 
+    }
 };
 
 exports.excluirTratamento = async (req, res) => {
@@ -398,9 +408,6 @@ exports.atualizarConfigIA = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Erro ao atualizar IA." }); }
 };
 
-// ==========================================
-// SIMULADOR DO PIPELINE NLP (ATUALIZADO)
-// ==========================================
 exports.testarIA = async (req, res) => {
     try {
         const { mensagem } = req.body;
@@ -409,7 +416,6 @@ exports.testarIA = async (req, res) => {
         const configDb = await prisma.configSistema.findFirst();
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' } });
 
-        // Simulação do Estado NLP
         const estadoFake = { step: 'IDLE', intent: null, entities: {} };
         const nlpResult = await aiService.analisarMensagemNLP(mensagem, [], estadoFake);
 
@@ -422,7 +428,6 @@ exports.testarIA = async (req, res) => {
         } else if (nlpResult.intent === 'human.transfer') {
             respostaIA = `[AÇÃO DE BACKEND]\nTransferindo para a fila de atendimento humano...`;
         } else {
-            // Emula a Resposta Natural para intenções de FAQ e Informações
             let dadosContexto = {};
             if (nlpResult.intent.startsWith('treatment.')) {
                 dadosContexto.catologo_servicos = tratamentos.map(t => ({ nome: t.nome, preco: t.preco, tipoPreco: t.tipoPreco, info: t.informacoesIA }));
