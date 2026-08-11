@@ -1,5 +1,26 @@
+const fs = require('fs');
 const path = require('path');
-require('dotenv').config({ path: path.resolve(__dirname, '.env') });
+
+// 💡 LEITOR INTELIGENTE DE AMBIENTE (Resolve o problema do Render)
+const envLocal = path.resolve(__dirname, '.env');
+const envRenderSecret = '/etc/secrets/.env'; // Caminho secreto do Render
+
+if (fs.existsSync(envLocal)) {
+    require('dotenv').config({ path: envLocal });
+    console.log("⚙️ [SISTEMA] Lendo credenciais do arquivo .env local.");
+} else if (fs.existsSync(envRenderSecret)) {
+    require('dotenv').config({ path: envRenderSecret });
+    console.log("⚙️ [SISTEMA] Lendo credenciais do Secret File do Render.");
+} else {
+    console.log("⚙️ [SISTEMA] Nenhum .env encontrado. Usando variáveis puras do Sistema Operacional.");
+}
+
+// 💡 RAIO-X DE DIAGNÓSTICO (Vai aparecer nos logs do Render quando iniciar)
+console.log("\n=== DIAGNÓSTICO DE CREDENCIAIS (RENDER) ===");
+console.log("WHATSAPP_TOKEN: ", process.env.WHATSAPP_TOKEN ? "✅ ENCONTRADO" : "❌ AUSENTE OU VAZIO");
+console.log("PHONE_NUMBER_ID:", process.env.PHONE_NUMBER_ID ? "✅ ENCONTRADO" : "❌ AUSENTE OU VAZIO");
+console.log("OPENAI_API_KEY: ", process.env.OPENAI_API_KEY ? "✅ ENCONTRADO" : "❌ AUSENTE OU VAZIO");
+console.log("===========================================\n");
 
 const express = require('express');
 const cors = require('cors');
@@ -117,14 +138,14 @@ async function bootstrap() {
     try {
         await seedDatabase();
 
-        // 💡 SOLUÇÃO: Importação Dinâmica. Isso resolve a "Circular Dependency" e o crash!
+        // 💡 Importação Dinâmica do Cron
         const cronJobs = require('./cronJobs');
         if (cronJobs && typeof cronJobs.iniciarAutomacoes === 'function') {
             cronJobs.iniciarAutomacoes();
         } else if (cronJobs && typeof cronJobs.iniciarAutomaçoes === 'function') {
             cronJobs.iniciarAutomaçoes();
         } else {
-            console.warn("⚠️ Função do Cron Job não encontrada. Ignorando e seguindo em frente.");
+            console.warn("⚠️ Função do Cron Job não encontrada. Ignorando.");
         }
         
         server.listen(PORT, () => {

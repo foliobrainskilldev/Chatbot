@@ -3,9 +3,9 @@ const axios = require('axios');
 const API_VERSION = 'v18.0';
 
 async function sendWhatsAppRequest(data) {
-    // Avaliação Dinâmica (Garante que nunca retorne undefined mesmo se o dotenv atrasar)
-    const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
-    const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
+    // Busca e limpa espaços vazios invisíveis que podem vir do painel do Render
+    const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN ? process.env.WHATSAPP_TOKEN.trim() : null;
+    const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID ? String(process.env.PHONE_NUMBER_ID).trim() : null;
 
     if (!WHATSAPP_TOKEN || !PHONE_NUMBER_ID) {
         console.error("⚠️ [WhatsApp] FALTAM CREDENCIAIS: Verifique o WHATSAPP_TOKEN e PHONE_NUMBER_ID no .env");
@@ -21,7 +21,7 @@ async function sendWhatsAppRequest(data) {
                 'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
                 'Content-Type': 'application/json'
             },
-            timeout: 8000 // Timeout de segurança para não travar o bot
+            timeout: 8000
         });
         return response.data;
     } catch (error) {
