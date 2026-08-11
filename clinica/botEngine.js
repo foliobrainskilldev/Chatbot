@@ -3,6 +3,7 @@ const whatsappService = require('../whatsappService');
 const aiService = require('../aiService');
 const webhookService = require('../services/webhookService');
 const automationEngine = require('../services/automationEngine');
+const cloudinaryService = require('../cloudinaryService'); // Adicionado para lidar com as mídias recebidas
 
 const stateMachine = new Map();
 
@@ -37,48 +38,81 @@ async function processarMensagemEntrante(message) {
             let pushName = message.profile?.name || null;
             let cliente = await getOrCreateCliente(senderNumber, pushName);
             
-            // 1. Se o Humano está ativamente conversando, a IA apenas observa e salva
-            if (cliente.falarHumano) {
-                let textLog = message.text?.body || '[Mídia Recebida]';
-                await prisma.mensagemIA.create({ data: { role: 'user', content: textLog, clienteId: senderNumber } });
-                console.log(`🛑 [MOTOR CLÍNICA] Lead em atendimento humano. Ignorado pela IA.`);
-                return; 
-            }
-
             await whatsappService.markAsReadAndTyping(msgId, senderNumber);
 
             let textoProcessado = "";
+            let midiaUrl = null;
+            let tipoMidia = message.type;
             let isTranscribed = false;
 
-            // 2. Extração de Áudio e Mídia
+            // 1. Processar Mídias e Textos Recebidos do Paciente (Ocorre sempre, mesmo com humano ativo)
             if (message.type === 'audio') {
                 const mediaId = message.audio.id;
-                console.log(`🎙️ [WHISPER] Baixando áudio do WhatsApp...`);
+                console.log(`🎙️ [MÍDIA] Baixando áudio do WhatsApp...`);
                 try {
                     const audioBuffer = await whatsappService.downloadMedia(mediaId);
+                    
+                    // Salvar no Cloudinary para renderizar no player de áudio do Front-end
+                    const cloudRes = await cloudinaryService.uploadStream(audioBuffer, 'clinica/pacientes/audios', 'video');
+                    midiaUrl = cloudRes.secure_url;
+                    
                     textoProcessado = await aiService.transcreverAudio(audioBuffer);
                     isTranscribed = true;
                     console.log(`🎙️ [WHISPER] Texto Transcrito: "${textoProcessado}"`);
                 } catch (e) {
-                    textoProcessado = "[Áudio Recebido - Falha na Transcrição]";
+                    console.error("Erro ao baixar/transcrever áudio:", e);
+                    textoProcessado = "[Falha na transcrição do áudio]";
                 }
-            } else if (message.type === 'image' || message.type === 'document') {
-                textoProcessado = message[message.type].caption || "[Imagem/Documento Recebido]";
+            } else if (['image', 'video', 'document'].includes(message.type)) {
+                const mediaId = message[message.type].id;
+                textoProcessado = message[message.type].caption || ""; // Se o paciente mandou foto com legenda
+                console.log(`🖼️ [MÍDIA] Baixando ${message.type} do paciente...`);
+                try {
+                    const mediaBuffer = await whatsappService.downloadMedia(mediaId);
+                    const resourceType = message.type === 'image' ? 'image' : (message.type === 'video' ? 'video' : 'raw');
+                    
+                    const cloudRes = await cloudinaryService.uploadStream(mediaBuffer, `clinica/pacientes/${message.type}s`, resourceType);
+                    midiaUrl = cloudRes.secure_url;
+                } catch (e) {
+                    console.error(`Erro ao salvar ${message.type}:`, e);
+                }
             } else if (message.type === 'text') {
                 textoProcessado = message.text.body;
             } else if (message.type === 'interactive') {
                 textoProcessado = message.interactive.button_reply?.id || message.interactive.list_reply?.id;
             }
 
-            if (!textoProcessado) {
-                console.log(`⚠️ [MOTOR CLÍNICA] Mensagem sem texto suportado ignorada.`);
+            if (!textoProcessado && !midiaUrl) {
+                console.log(`⚠️ [MOTOR CLÍNICA] Mensagem sem texto e sem mídia ignorada.`);
                 return;
             }
 
-            const msgParaSalvar = isTranscribed ? `[Áudio Transcrito]: ${textoProcessado}` : textoProcessado;
-            await prisma.mensagemIA.create({ data: { role: 'user', content: msgParaSalvar, clienteId: senderNumber, tipoMidia: message.type } });
-            
-            // 3. CAPTURA DA PESQUISA DE SATISFAÇÃO (CSAT) APÓS ATENDIMENTO HUMANO
+            // 2. Salvar na Base de Dados usando a formatação que o Painel do Atendente exige
+            let contentToSave = textoProcessado;
+            if (midiaUrl) {
+                // Ex: [MEDIA:image] https://cloudinary... | Texto: Olha meu dente
+                contentToSave = `[MEDIA:${tipoMidia}] ${midiaUrl} | Texto: ${textoProcessado}`;
+            } else if (isTranscribed) {
+                contentToSave = `[Áudio Transcrito]: ${textoProcessado}`;
+            }
+
+            await prisma.mensagemIA.create({ 
+                data: { 
+                    role: 'user', 
+                    content: contentToSave, 
+                    clienteId: senderNumber, 
+                    tipoMidia: tipoMidia,
+                    midiaUrl: midiaUrl
+                } 
+            });
+
+            // 3. Se o humano estiver no controle, o motor PARA AQUI. (Mídia já salva)
+            if (cliente.falarHumano) {
+                console.log(`🛑 [MOTOR CLÍNICA] Lead em atendimento humano. IA ignorou a mensagem.`);
+                return; 
+            }
+
+            // 4. CAPTURA DA PESQUISA DE SATISFAÇÃO (CSAT) APÓS ATENDIMENTO HUMANO
             const historicoRaw = await prisma.mensagemIA.findMany({ 
                 where: { clienteId: senderNumber }, 
                 take: 8, orderBy: { criadoEm: 'desc' } 
@@ -90,7 +124,6 @@ async function processarMensagemEntrante(message) {
                 if (!isNaN(nota) && nota >= 1 && nota <= 5) {
                     console.log(`📊 [CRM] CSAT Recebido de ${senderNumber}: ${nota} Estrelas`);
                     
-                    // Salva a métrica no CRM como Nota Interna
                     await prisma.notaInterna.create({
                         data: {
                             texto: `📊 Avaliação de Atendimento (CSAT): ${nota} Estrela(s)`,
@@ -99,15 +132,14 @@ async function processarMensagemEntrante(message) {
                         }
                     });
 
-                    // Mensagem de agradecimento e retorno à base padrão
                     const msgAgradecimento = "Obrigado pela sua avaliação! Isso nos ajuda a melhorar sempre. 😊 Se precisar de mais alguma coisa, é só chamar.";
                     await whatsappService.sendText(senderNumber, msgAgradecimento);
                     await prisma.mensagemIA.create({ data: { role: 'assistant', content: msgAgradecimento, clienteId: senderNumber } });
-                    return; // Interrompe para o NLP não tentar analisar o número "5"
+                    return; 
                 }
             }
 
-            // 4. Processamento padrão de PNL (Motor IA)
+            // 5. Processamento Padrão de IA (NLP)
             let isInteractive = message.type === 'interactive';
             let userState = stateMachine.get(senderNumber) || { step: 'IDLE', intent: null, entities: {} };
             const configDb = await prisma.configSistema.findFirst();
@@ -137,14 +169,13 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // 5. Roteamento de Intenções
+            // 6. Roteamento de Intenções
             if (activeIntent === 'human.transfer') {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
                 const resp = configDb?.msgTransferencia || "Vou transferir você para um atendente. Um momento.";
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
                 await whatsappService.sendText(senderNumber, resp);
                 
-                // Grava o motivo da transferência no CRM
                 await prisma.notaInterna.create({
                     data: { texto: `Transferência solicitada pelo paciente. Motivo extraído pela IA: Dúvida complexa/Humano requerido.`, clienteId: senderNumber, usuarioId: 1 }
                 });
