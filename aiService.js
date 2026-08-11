@@ -1,4 +1,3 @@
-// aiService.js
 const { OpenAI } = require('openai');
 const fs = require('fs');
 const path = require('path');
@@ -7,7 +6,7 @@ const axios = require('axios');
 const { format } = require('date-fns');
 
 const groq = new OpenAI({
-    apiKey: process.env.GROQ_API_KEY, 
+    apiKey: process.env.GROQ_API_KEY || "chave_ausente", 
     baseURL: "https://api.groq.com/openai/v1",
 });
 
@@ -33,7 +32,7 @@ async function transcreverAudioPorUrl(audioUrl) {
         return transcricao.text;
     } catch (erro) {
         console.error("Erro na transcrição de áudio:", erro);
-        return "[Áudio inaudível ou erro de transcrição]";
+        return "[Áudio inaudível]";
     } finally {
         if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     }
@@ -43,102 +42,63 @@ async function analisarMensagemNLP(textoCliente, historico, estadoAtual) {
     if (!process.env.GROQ_API_KEY) return { intent: "unknown", confidence: 0, entities: {} };
 
     const hoje = format(new Date(), 'dd/MM/yyyy');
-    const prompt = `Você é o analisador NLP central de um HealthCRM.
-Sua tarefa é analisar a mensagem do paciente e extrair a intenção, a confiança (0.0 a 1.0) e as entidades.
-Hoje é ${hoje}. Calcule datas relativas baseadas no dia de hoje.
-
-Intenções permitidas:
-- clinic.hours
-- clinic.location
-- clinic.contact
-- clinic.payment_methods
-- treatment.list
-- treatment.info
-- treatment.price
-- treatment.faq
-- appointment.create
-- appointment.check
-- appointment.reschedule
-- appointment.cancel
-- human.transfer
-- greeting
-- goodbye
-- unknown
-
-Entidades a extrair (apenas se mencionadas explicitamente):
-- treatment: nome do tratamento/procedimento
-- professional: nome do médico/doutor
-- date: data no formato exato DD/MM/YYYY
-- time: horário no formato exato HH:mm
-
-Estado atual da conversa: ${JSON.stringify(estadoAtual)}
-Mensagem atual do paciente: "${textoCliente}"
-
-Você deve responder APENAS com um objeto JSON válido.`;
+    const prompt = `Você é o analisador NLP de um HealthCRM. 
+Extraia a intenção, a confiança (0.0 a 1.0) e as entidades (treatment, professional, date, time).
+Hoje é ${hoje}. Responda APENAS com um JSON válido.
+Intenções: clinic.hours, clinic.location, treatment.list, appointment.create, appointment.cancel, human.transfer, greeting, unknown.`;
 
     try {
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant",
-            messages: [{ role: "system", content: prompt }],
+            messages: [
+                { role: "system", content: prompt },
+                // CORREÇÃO CRÍTICA: O Groq exige que exista uma mensagem de 'user'
+                { role: "user", content: textoCliente || "[Mensagem de mídia/vazia]" }
+            ],
             temperature: 0.1,
             response_format: { type: "json_object" }
         });
         
-        const content = resposta.choices[0]?.message?.content || "{}";
-        return JSON.parse(content);
+        return JSON.parse(resposta.choices[0]?.message?.content || "{}");
     } catch (erro) {
-        console.error("Erro no NLP JSON Parse. Fazendo Fallback Seguro.", erro);
+        console.error("Erro NLP Groq (Bad Request/JSON):", erro.message);
         return { intent: "unknown", confidence: 0, entities: {} };
     }
 }
 
 async function gerarRespostaNatural(textoCliente, historico, dadosContexto, configSistema) {
-    if (!process.env.GROQ_API_KEY) return "Desculpe, nossos sistemas de IA estão reiniciando ou indisponíveis no momento.";
+    if (!process.env.GROQ_API_KEY) return "Sistemas de IA indisponíveis no momento.";
 
     const assistenteNome = configSistema?.nomeAssistente || "Assistente";
     const clinicaNome = configSistema?.nomeClinica || "Clínica";
-    const idioma = configSistema?.idioma || "Português";
-    const tomVoz = configSistema?.tomDeVoz || "Amigável";
-    const estilo = configSistema?.estiloComunicacao || "Objetivo";
-
-    const systemInstrucoes = `Você é ${assistenteNome}, assistente virtual oficial da ${clinicaNome}.
-Idioma: ${idioma}. Tom de voz: ${tomVoz}. Estilo: ${estilo}.
-
-REGRA DE OURO: 
-Use EXATAMENTE os dados fornecidos no contexto abaixo para responder. NÃO INVENTE preços, NÃO INVENTE horários, NÃO FAÇA diagnósticos.
-Se a informação não estiver no contexto, diga que não sabe no momento.
-
-DADOS REAIS RECUPERADOS DO BANCO (USE ISSO):
-${JSON.stringify(dadosContexto, null, 2)}
-
-Responda diretamente à dúvida do paciente.`;
+    
+    const systemInstrucoes = `Você é ${assistenteNome}, assistente virtual da ${clinicaNome}.
+REGRA: Use EXATAMENTE os dados fornecidos no contexto: ${JSON.stringify(dadosContexto)}`;
 
     try {
         const msgs = [{ role: "system", content: systemInstrucoes }];
-        
+        let lastRole = "system";
+
+        // Organiza o histórico agrupando mensagens consecutivas do mesmo papel (Evita crash do Llama 3)
         if (historico && historico.length > 0) {
             historico.forEach(linha => {
-                let contentClean = linha.content || "";
-                if (contentClean.includes('| Texto: ')) contentClean = contentClean.split('| Texto: ')[1].trim();
-                
-                // Evita strings vazias que causam travamento (400 Bad Request) na API do Groq
-                if (contentClean.trim() === "") contentClean = "[Mídia Recebida]";
-                
-                // Evita papéis consecutivos do mesmo tipo (Ex: user seguido de user)
-                if (msgs.length > 0 && msgs[msgs.length - 1].role === linha.role) {
-                    msgs[msgs.length - 1].content += `\n${contentClean}`;
+                let content = linha.content || "[Mídia Recebida]";
+                if (content.includes('| Texto: ')) content = content.split('| Texto: ')[1].trim();
+                if (!content) content = "[Mídia Recebida]";
+
+                if (linha.role === lastRole) {
+                    msgs[msgs.length - 1].content += `\n${content}`;
                 } else {
-                    msgs.push({ role: linha.role, content: contentClean });
+                    msgs.push({ role: linha.role, content: content });
+                    lastRole = linha.role;
                 }
             });
         }
         
-        let textoFinal = textoCliente || "[Áudio/Imagem Recebida]";
+        let textoFinal = textoCliente || "[Mídia]";
         
-        // Se a última mensagem já é o texto enviado pelo usuário salvo pelo banco de dados, não repetimos
-        if (msgs.length > 0 && msgs[msgs.length - 1].role === "user") {
-            // Histórico já atualizado com a última mensagem
-        } else {
+        // Se a última mensagem da array não for 'user', adicionamos para manter a lógica exigida
+        if (lastRole !== "user") {
             msgs.push({ role: "user", content: textoFinal });
         }
 
@@ -149,15 +109,11 @@ Responda diretamente à dúvida do paciente.`;
             max_tokens: 400 
         });
         
-        return resposta.choices[0]?.message?.content || "Desculpe, não consegui processar a informação adequadamente agora.";
+        return resposta.choices[0]?.message?.content || "Desculpe, não consegui formular a resposta.";
     } catch (erro) {
-        console.error("Erro na geração de resposta IA:", erro.message || erro);
-        return "Desculpe, meus servidores estão ocupados no momento. Poderia repetir ou voltar a tentar em alguns instantes?"; 
+        console.error("Erro na Geração de Resposta:", erro.message);
+        return "Desculpe, meus servidores estão muito ocupados agora. Pode repetir a mensagem?"; 
     }
 }
 
-module.exports = { 
-    transcreverAudioPorUrl, 
-    analisarMensagemNLP, 
-    gerarRespostaNatural 
-};
+module.exports = { transcreverAudioPorUrl, analisarMensagemNLP, gerarRespostaNatural };
