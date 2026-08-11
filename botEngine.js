@@ -1,7 +1,7 @@
 const { prisma } = require('./db');
 const botBarbearia = require('./barbearia/botEngine'); 
 const botClinica = require('./clinica/botEngine');     
-const whatsappService = require('./whatsappService'); // Importado para mandar avisos de emergência
+const whatsappService = require('./whatsappService'); 
 
 const verificarWebhook = (req, res) => {
     const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'barbearia_secreta_2024';
@@ -10,7 +10,7 @@ const verificarWebhook = (req, res) => {
     const challenge = req.query['hub.challenge'];
 
     if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-        console.log('✅ Webhook autorizado com sucesso pela Meta!');
+        console.log('✅ Webhook autorizado pela Meta!');
         res.status(200).send(challenge);
     } else {
         res.sendStatus(403);
@@ -23,33 +23,37 @@ const processarWebhook = (req, res) => {
     (async () => {
         try {
             const body = req.body;
+            if (!body.object) return;
+
+            let changes = body.entry?.[0]?.changes?.[0]?.value;
             
-            if (body.object) {
-                let changes = body.entry?.[0]?.changes?.[0]?.value;
-                if (changes?.statuses) return; 
-                
-                if (changes?.messages?.[0]) {
-                    const message = changes.messages[0];
-                    
-                    const configDb = await prisma.configSistema.findUnique({ where: { id: 1 } });
-                    const modoAtivo = configDb?.modoAtivo || 'BARBEARIA';
-                    
-                    if (modoAtivo === 'BARBEARIA') {
-                        await botBarbearia.processarMensagemEntrante(message);
-                    } else if (modoAtivo === 'CLINICA') {
-                        await botClinica.processarMensagemEntrante(message);
-                    }
-                } 
-            }
-        } catch (error) {
-            console.error('❌ ERRO INTERNO NO WEBHOOK ROOT:', error.message);
-            // ESCUDO FINAL: Tenta notificar o utilizador no WhatsApp caso o sistema rebente
-            try {
-                let senderNumber = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from;
-                if (senderNumber) {
-                    await whatsappService.sendText(senderNumber, "⚠️ Olá! O meu sistema está a reiniciar ou com falha de conexão. Volto a estar disponível em breves instantes.");
+            // 🚨 RASTREADOR DE SILÊNCIO: Captura as rejeições assíncronas da Meta!
+            if (changes?.statuses) {
+                let statusObj = changes.statuses[0];
+                if (statusObj.status === 'failed') {
+                    console.error('🚨 [ALERTA META API] O WhatsApp bloqueou a entrega da mensagem! Motivo exato:', JSON.stringify(statusObj.errors, null, 2));
                 }
-            } catch(e) {}
+                return; 
+            }
+            
+            if (changes?.messages?.[0]) {
+                const message = changes.messages[0];
+                console.log(`\n📩 [WEBHOOK] Mensagem do paciente ${message.from} recebida no servidor.`);
+
+                const configDb = await prisma.configSistema.findUnique({ where: { id: 1 } });
+                const modoAtivo = configDb?.modoAtivo || 'BARBEARIA';
+                console.log(`⚙️ [SISTEMA] Motor Ativo no BD: ${modoAtivo}`);
+                
+                if (modoAtivo === 'BARBEARIA') {
+                    await botBarbearia.processarMensagemEntrante(message);
+                } else if (modoAtivo === 'CLINICA') {
+                    await botClinica.processarMensagemEntrante(message);
+                }
+                
+                console.log(`🏁 [FIM] Processo concluído com sucesso para: ${message.from}\n`);
+            } 
+        } catch (error) {
+            console.error('❌ [ERRO CRÍTICO INTERNO]:', error);
         }
     })();
 };

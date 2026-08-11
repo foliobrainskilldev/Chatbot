@@ -1,7 +1,6 @@
 const axios = require('axios');
 const cloudinaryService = require('./services/cloudinaryService');
 
-// Remove espaços em branco acidentais nas variáveis de ambiente que causam erro 401/404
 const META_TOKEN = (process.env.META_TOKEN || '').trim();
 const PHONE_NUMBER_ID = (process.env.PHONE_NUMBER_ID || '').trim();
 
@@ -21,6 +20,7 @@ async function markAsReadAndTyping(messageId, to) {
             status: 'read',
             message_id: String(messageId)
         });
+        console.log(`👁️ [META API] Mensagem de ${to} marcada como lida.`);
 
         if (to) {
             await api.post('/messages', {
@@ -30,24 +30,27 @@ async function markAsReadAndTyping(messageId, to) {
                 type: 'typing_indicator',
                 typing_indicator: { type: 'text' }
             });
+            console.log(`✍️ [META API] Indicador "Digitando..." disparado para ${to}.`);
         }
     } catch (error) {
-        // Ignora silenciosamente se o typing_indicator não for suportado pelo número
+        console.log("⚠️ Aviso: Este número não suportou o indicador de digitando, ignorando e avançando.");
     }
 }
 
 async function sendText(to, text) {
     if (!to || !text) return;
     try {
-        await api.post('/messages', {
+        console.log(`📤 [META API] A enviar resposta de texto para ${to}...`);
+        const response = await api.post('/messages', {
             messaging_product: 'whatsapp',
             recipient_type: 'individual',
             to: String(to),
             type: 'text',
             text: { body: String(text) }
         });
+        console.log(`✅ [META API] SUCESSO! Mensagem aceite pelo WhatsApp. ID:`, response.data?.messages?.[0]?.id);
     } catch (error) {
-        console.error("❌ Erro envio Texto Meta:", error?.response?.data || error.message);
+        console.error("❌ [ERRO META TEXTO]:", JSON.stringify(error?.response?.data || error.message, null, 2));
     }
 }
 
@@ -80,7 +83,6 @@ async function sendInteractiveMenu(to, text, options) {
                         id: String(opt.id).substring(0, 200),
                         title: String(opt.title).length > 24 ? String(opt.title).substring(0, 21) + "..." : String(opt.title)
                     };
-                    // CORREÇÃO DA META API: Nunca enviar "description" vazia, senão a mensagem é bloqueada
                     if (opt.description && String(opt.description).trim() !== "") {
                         row.description = String(opt.description).substring(0, 72);
                     }
@@ -89,21 +91,22 @@ async function sendInteractiveMenu(to, text, options) {
             }];
         }
         
-        await api.post('/messages', {
+        console.log(`📤 [META API] A enviar Menu Interativo para ${to}...`);
+        const response = await api.post('/messages', {
             messaging_product: 'whatsapp',
             recipient_type: 'individual',
             to: String(to),
             type: 'interactive',
             interactive: interactiveObj
         });
+        console.log(`✅ [META API] SUCESSO! Menu aceite pelo WhatsApp. ID:`, response.data?.messages?.[0]?.id);
     } catch (error) {
-        console.error("⚠️ Meta rejeitou o Menu Interativo. Enviando menu como texto puro...");
-        // FALLBACK: Se a Meta rejeitar os botões, envia as opções em formato de texto para NÃO FICAR EM SILÊNCIO
+        console.error("⚠️ [ERRO META MENU] A Meta rejeitou o menu. Acionando Fallback em Texto.");
         let txtFallback = text + "\n\n";
         options.forEach((opt, index) => {
             txtFallback += `*${index + 1}.* ${opt.title}\n`;
         });
-        txtFallback += "\n👉 Responda com o nome da opção desejada.";
+        txtFallback += "\n👉 Responda com o nome ou número da opção desejada.";
         await sendText(to, txtFallback);
     }
 }
@@ -122,7 +125,7 @@ async function sendMediaUrl(to, type, url, caption = "") {
         }
         await api.post('/messages', payload);
     } catch (error) {
-        console.error(`Erro envio Mídia (${type}) Meta:`, error?.response?.data || error.message);
+        console.error(`❌ [ERRO META MÍDIA]`, error?.response?.data || error.message);
     }
 }
 
