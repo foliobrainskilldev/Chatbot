@@ -119,14 +119,14 @@ async function executarAcaoReal(tipoAcao, parametro, clienteId, dados) {
                     txtFinal = txtFinal.replace(/{{hora}}/g, dataObj.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'}));
                 }
                 
-                // NOVO: Adiciona Tiques Azuis e "Digitando..." com delay natural
-                await whatsappService.markAsReadAndTyping(null, numCliente);
-                await new Promise(resolve => setTimeout(resolve, 2500)); // Delay para parecer humano
-                
-                await whatsappService.sendText(numCliente, txtFinal);
-                await prisma.mensagemIA.create({ 
-                    data: { role: 'assistant', content: `[SISTEMA AUTOMÁTICO]: ${txtFinal}`, clienteId: numCliente, atendenteHumano: false } 
-                });
+                try {
+                    await whatsappService.markAsReadAndTyping(null, numCliente);
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    await whatsappService.sendText(numCliente, txtFinal);
+                    await prisma.mensagemIA.create({ 
+                        data: { role: 'assistant', content: `[SISTEMA AUTOMÁTICO]: ${txtFinal}`, clienteId: numCliente, atendenteHumano: false } 
+                    });
+                } catch(e) { console.error("Erro Automacao WhatsApp Text:", e.message); }
             }
             break;
 
@@ -134,14 +134,14 @@ async function executarAcaoReal(tipoAcao, parametro, clienteId, dados) {
         case 'ENVIAR_AUDIO':
             if (parametro && numCliente) {
                 const type = tipoAcao === 'ENVIAR_IMAGEM' ? 'image' : 'audio';
-                
-                await whatsappService.markAsReadAndTyping(null, numCliente);
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                
-                await whatsappService.sendMediaUrl(numCliente, type, parametro, "");
-                await prisma.mensagemIA.create({ 
-                    data: { role: 'assistant', content: `[SISTEMA AUTOMÁTICO MEDIA:${type}] ${parametro}`, clienteId: numCliente, atendenteHumano: false } 
-                });
+                try {
+                    await whatsappService.markAsReadAndTyping(null, numCliente);
+                    await new Promise(resolve => setTimeout(resolve, 1500));
+                    await whatsappService.sendMediaUrl(numCliente, type, parametro, "");
+                    await prisma.mensagemIA.create({ 
+                        data: { role: 'assistant', content: `[SISTEMA AUTOMÁTICO MEDIA:${type}] ${parametro}`, clienteId: numCliente, atendenteHumano: false } 
+                    });
+                } catch(e) { console.error("Erro Automacao WhatsApp Media:", e.message); }
             }
             break;
 

@@ -33,66 +33,75 @@ async function enviarMenuGeral(jid) {
 }
 
 async function processarMensagemEntrante(message) {
-    const senderNumber = message.from;
-    const jid = senderNumber;
-    const msgId = message.id;
-    
-    try {
-        console.log(`💈 [MOTOR BARBEARIA] Processando mensagem de ${senderNumber}`);
-
-        let textMessage = message.text?.body || "";
-        if (message.type === 'interactive') {
-            textMessage = message.interactive.button_reply?.id || message.interactive.list_reply?.id;
-        }
-
-        let cliente = await getOrCreateCliente(senderNumber);
-        
-        if (cliente.falarHumano) {
-            console.log(`🛑 [MOTOR BARBEARIA] Cliente em atendimento humano. Ignorando bot.`);
-            return; 
-        }
-        
-        if (!textMessage) {
-            console.log(`⚠️ [MOTOR BARBEARIA] Mensagem sem texto ignorada.`);
-            return;
-        }
-
-        // NOVO: Chamada atualizada para ativar os Tiques Azuis e o "Digitando..."
-        await whatsappService.markAsReadAndTyping(msgId, senderNumber);
-
-        let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {} };
-        
-        const delayMs = Math.floor(Math.random() * (4000 - 2000 + 1)) + 2000;
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-
-        if (textMessage.startsWith('srv_') || textMessage.startsWith('barb_') || userState.step.startsWith('AGENDAMENTO_')) {
-            await handleAgendamento(jid, textMessage, senderNumber, stateMachine, STEPS);
-            return;
-        }
-
-        if (userState.step === STEPS.CANCELAR_AGENDAMENTO) {
-            await processarCancelamento(jid, textMessage, senderNumber, stateMachine, STEPS);
-            return;
-        }
-
-        if (textMessage === 'cmd_agendar' || textMessage.includes('agendar') || textMessage.includes('marcar')) return await iniciarAgendamento(jid, senderNumber, stateMachine, STEPS);
-        if (textMessage === 'cmd_precos') return await verPrecosEServicos(jid);
-        if (textMessage === 'cmd_agenda') return await verMeusAgendamentos(jid, senderNumber);
-        if (textMessage === 'cmd_cancelar') return await iniciarCancelamento(jid, senderNumber, stateMachine, STEPS);
-        
-        if (textMessage === 'cmd_humano') {
-            await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
-            await whatsappService.sendText(jid, 'A transferir para a equipa da Barbearia. Aguarde por favor.');
-            return;
-        }
-
-        // Se não reconheceu comando, envia o menu.
-        await enviarMenuGeral(jid);
-        
-    } catch (error) {
-        console.error('❌ ERRO CRÍTICO NO MOTOR DA BARBEARIA:', error);
-        await whatsappService.sendText(senderNumber, "Desculpe, a nossa IA teve uma pequena falha. Diga 'Oi' para recomeçarmos!");
+    // 1. Barreira Anti-Crash da Meta
+    if (!message || !message.from) {
+        return; 
     }
+
+    // 2. Isolamento de Processo Assíncrono
+    setTimeout(async () => {
+        const senderNumber = message.from;
+        const msgId = message.id;
+        
+        try {
+            console.log(`\n===========================================`);
+            console.log(`💈 [MOTOR BARBEARIA] PROCESSANDO: ${senderNumber}`);
+            console.log(`===========================================`);
+
+            let textMessage = message.text?.body || "";
+            if (message.type === 'interactive') {
+                textMessage = message.interactive.button_reply?.id || message.interactive.list_reply?.id;
+            }
+
+            let cliente = await getOrCreateCliente(senderNumber);
+            
+            if (cliente.falarHumano) {
+                console.log(`🛑 [MOTOR BARBEARIA] Cliente em atendimento humano. Ignorando bot.`);
+                return; 
+            }
+            
+            if (!textMessage) {
+                console.log(`⚠️ [MOTOR BARBEARIA] Mensagem sem texto ignorada.`);
+                return;
+            }
+
+            // Marca azul e Digitando
+            await whatsappService.markAsReadAndTyping(msgId, senderNumber);
+
+            let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {} };
+            
+            // Delay natural para leitura
+            const delayMs = Math.floor(Math.random() * (3000 - 1500 + 1)) + 1500;
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+
+            if (textMessage.startsWith('srv_') || textMessage.startsWith('barb_') || userState.step.startsWith('AGENDAMENTO_')) {
+                await handleAgendamento(senderNumber, textMessage, senderNumber, stateMachine, STEPS);
+                return;
+            }
+
+            if (userState.step === STEPS.CANCELAR_AGENDAMENTO) {
+                await processarCancelamento(senderNumber, textMessage, senderNumber, stateMachine, STEPS);
+                return;
+            }
+
+            if (textMessage === 'cmd_agendar' || textMessage.includes('agendar') || textMessage.includes('marcar')) return await iniciarAgendamento(senderNumber, senderNumber, stateMachine, STEPS);
+            if (textMessage === 'cmd_precos') return await verPrecosEServicos(senderNumber);
+            if (textMessage === 'cmd_agenda') return await verMeusAgendamentos(senderNumber, senderNumber);
+            if (textMessage === 'cmd_cancelar') return await iniciarCancelamento(senderNumber, senderNumber, stateMachine, STEPS);
+            
+            if (textMessage === 'cmd_humano') {
+                await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
+                await whatsappService.sendText(senderNumber, 'A transferir para a equipa da Barbearia. Aguarde por favor.');
+                return;
+            }
+
+            await enviarMenuGeral(senderNumber);
+            
+        } catch (error) {
+            console.error('❌ ERRO CRÍTICO NO MOTOR DA BARBEARIA:', error);
+            await whatsappService.sendText(senderNumber, "Desculpe, a nossa IA teve uma pequena falha. Diga 'Oi' para recomeçarmos!");
+        }
+    }, 0);
 }
 
 module.exports = { processarMensagemEntrante, limparMemoriaEstado, stateMachine };

@@ -6,9 +6,10 @@ const API_VERSION = 'v18.0';
 
 async function sendWhatsAppRequest(data) {
     if (!WHATSAPP_TOKEN || !PHONE_NUMBER_ID) {
-        console.warn("⚠️ [WhatsApp] Token ou Phone ID não configurados.");
+        console.error("⚠️ [WhatsApp] FALTAM CREDENCIAIS: Verifique o WHATSAPP_TOKEN e PHONE_NUMBER_ID no .env");
         return null;
     }
+    
     try {
         const response = await axios({
             method: 'POST',
@@ -17,33 +18,39 @@ async function sendWhatsAppRequest(data) {
             headers: {
                 'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
                 'Content-Type': 'application/json'
-            }
+            },
+            timeout: 8000 // Timeout de segurança para não travar o bot
         });
         return response.data;
     } catch (error) {
-        console.error("❌ [WhatsApp] Erro na API:", error.response ? error.response.data : error.message);
+        console.error("❌ [WhatsApp API ERRO]:", error.response ? JSON.stringify(error.response.data) : error.message);
         return null;
     }
 }
 
 async function markAsReadAndTyping(msgId, to) {
-    // 1. Marca a mensagem como lida (Tiques azuis)
-    if (msgId) {
-        await sendWhatsAppRequest({
-            messaging_product: "whatsapp",
-            message_id: msgId,
-            status: "read"
-        });
-    }
-    // 2. Ativa o indicador de "Digitando..." (Typing Indicator)
-    if (to) {
-        await sendWhatsAppRequest({
-            messaging_product: "whatsapp",
-            recipient_type: "individual",
-            to: to,
-            type: "sender_action",
-            sender_action: "typing_on"
-        });
+    try {
+        // 1. Marca a mensagem como lida (Tiques azuis)
+        if (msgId) {
+            await sendWhatsAppRequest({
+                messaging_product: "whatsapp",
+                message_id: msgId,
+                status: "read"
+            });
+        }
+        
+        // 2. Ativa o indicador de "Digitando..." (Typing Indicator)
+        if (to) {
+            await sendWhatsAppRequest({
+                messaging_product: "whatsapp",
+                recipient_type: "individual",
+                to: to,
+                type: "sender_action",
+                sender_action: "typing_on"
+            });
+        }
+    } catch (e) {
+        console.error("⚠️ [WhatsApp] Erro não crítico ao tentar marcar como lida/digitando:", e.message);
     }
 }
 

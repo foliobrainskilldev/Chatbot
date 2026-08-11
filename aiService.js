@@ -4,7 +4,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 async function analisarMensagemNLP(mensagem, historico, userState) {
     if (!OPENAI_API_KEY) {
-        console.warn("⚠️ [NLP] OPENAI_API_KEY não configurada. Usando fallback baseado em regras.");
+        console.warn("⚠️ [NLP] OPENAI_API_KEY não configurada no .env. Usando fallback básico.");
         return fallbackNLP(mensagem);
     }
 
@@ -28,7 +28,7 @@ Intenções permitidas:
 - appointment.reschedule (remarcar)
 - appointment.cancel (cancelar)
 - human.transfer (falar com atendente)
-- greeting (saudação)
+- greeting (saudação / oi / olá)
 - goodbye (despedida)
 - unknown (não entendi)
 
@@ -38,7 +38,7 @@ Entidades para extrair (se presentes):
 - time (horário, ex: "15h", "de manhã")
 - professional (nome do médico/profissional)
 
-Estado atual da conversa: ${JSON.stringify(userState)}
+Estado atual da conversa (Contexto): ${JSON.stringify(userState || {})}
 
 Responda APENAS com um JSON válido no formato exato:
 {
@@ -65,10 +65,11 @@ Responda APENAS com um JSON válido no formato exato:
             headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` }
         });
 
-        const result = JSON.parse(response.data.choices[0].message.content);
-        return result;
+        const rawContent = response.data.choices[0].message.content;
+        return JSON.parse(rawContent);
+        
     } catch (error) {
-        console.error("❌ [NLP] Erro na API da OpenAI:", error.message);
+        console.error("❌ [NLP ERRO] Falha ao analisar intenção:", error.response ? JSON.stringify(error.response.data) : error.message);
         return fallbackNLP(mensagem);
     }
 }
@@ -82,6 +83,7 @@ function fallbackNLP(mensagem) {
     else if (msg.includes("humano") || msg.includes("atendente")) intent = "human.transfer";
     else if (msg.includes("horário") || msg.includes("horas")) intent = "clinic.hours";
     else if (msg.includes("onde") || msg.includes("local")) intent = "clinic.location";
+    else if (msg === "oi" || msg === "olá" || msg === "ola" || msg === "bom dia" || msg === "boa tarde") intent = "greeting";
     
     return {
         intent,
@@ -92,7 +94,7 @@ function fallbackNLP(mensagem) {
 
 async function gerarRespostaNatural(mensagem, historico, contexto, configDb) {
     if (!OPENAI_API_KEY) {
-        return "Recebi sua mensagem, mas meu motor de IA está temporariamente indisponível. Como posso ajudar de forma simples?";
+        return "Recebi sua mensagem, mas meu sistema inteligente está offline. Como posso ajudar de forma objetiva?";
     }
 
     try {
@@ -102,20 +104,20 @@ Tom de voz: ${configDb?.tomDeVoz || 'Profissional e acolhedor'}.
 Estilo: ${configDb?.estiloComunicacao || 'Respostas curtas e objetivas'}.
 Formalidade: ${configDb?.formalidade || 'Sempre tratar por Senhor/Senhora'}.
 
-Regras:
-1. NUNCA invente preços, horários ou diagnósticos.
-2. Use os DADOS DE CONTEXTO fornecidos abaixo para basear sua resposta.
-3. Se a informação não estiver no contexto, diga que não tem essa informação no momento e ofereça transferência para um humano.
+Regras Obrigatórias:
+1. NUNCA invente preços, horários ou diagnósticos médicos.
+2. Use EXCLUSIVAMENTE os DADOS DE CONTEXTO fornecidos abaixo para basear sua resposta.
+3. Se a informação que o paciente pediu não estiver no contexto, diga gentilmente que não possui essa informação no momento e ofereça transferência para um atendente.
 
-DADOS DE CONTEXTO (Vindos do Banco de Dados Operacional):
+DADOS DE CONTEXTO DA CLÍNICA:
 ${JSON.stringify(contexto, null, 2)}
 
-Responda à mensagem do usuário de forma natural e conversacional.
+Sua tarefa: Leia a mensagem do usuário e responda de forma natural, amigável e conversacional, aplicando as regras acima.
 `;
 
         const messages = [
             { role: "system", content: prompt },
-            ...historico.map(h => ({ role: h.role, content: h.content })),
+            ...(historico || []).map(h => ({ role: h.role, content: h.content })),
             { role: "user", content: mensagem }
         ];
 
@@ -129,8 +131,8 @@ Responda à mensagem do usuário de forma natural e conversacional.
 
         return response.data.choices[0].message.content;
     } catch (error) {
-        console.error("❌ [IA] Erro ao gerar resposta natural:", error.message);
-        return "Desculpe, tive um pequeno problema técnico ao formular a resposta. Poderia repetir?";
+        console.error("❌ [IA ERRO] Falha ao gerar resposta natural:", error.response ? JSON.stringify(error.response.data) : error.message);
+        return "Desculpe, tive um pequeno problema ao formular a resposta agora. Você poderia repetir, por favor?";
     }
 }
 

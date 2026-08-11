@@ -6,7 +6,7 @@ exports.getWebhooks = async (req, res) => {
         const webhooks = await prisma.webhookEndpoint.findMany({
             orderBy: { criadoEm: 'desc' }
         });
-        // Remove os tokens sensíveis do payload do frontend
+        // Remove os tokens sensíveis do payload do frontend por segurança
         const safeWebhooks = webhooks.map(wb => ({
             ...wb,
             authToken: wb.authToken ? '********' : null
@@ -26,7 +26,7 @@ exports.createWebhook = async (req, res) => {
                 authType: authType || 'NONE',
                 authToken: authToken || null,
                 metodo: metodo || 'POST',
-                eventos: eventos.join(', '), // Recebe Array e salva como string separada por vírgula
+                eventos: eventos.join(', '), 
                 ativo: true 
             }
         });
@@ -62,13 +62,12 @@ exports.deleteWebhook = async (req, res) => {
     }
 };
 
-// NOVO: Endpoint para Testar Webhooks Reais
 exports.testWebhook = async (req, res) => {
     try {
         const { id } = req.params;
         const { evento } = req.body;
 
-        // Gera um payload mockado estruturado para o teste
+        // Gera um payload mockado estruturado para o teste visual do painel
         const fakePayload = {
             id: "lead_teste_123",
             name: "Usuário de Teste",
@@ -90,12 +89,11 @@ exports.testWebhook = async (req, res) => {
     }
 };
 
-// NOVO: Buscar histórico de Webhooks para a tabela da UI
 exports.getWebhookLogs = async (req, res) => {
     try {
         const logs = await prisma.webhookLog.findMany({
             orderBy: { criadoEm: 'desc' },
-            take: 100, // Limitamos as últimas 100 entregas para não pesar
+            take: 100, // Limitamos para performance
             include: {
                 webhook: { select: { url: true } }
             }

@@ -1,5 +1,3 @@
-// --- START OF FILE relatoriosController.js ---
-
 const { prisma } = require('../db');
 const { startOfDay, endOfDay, subDays, format, parseISO } = require('date-fns');
 
@@ -40,7 +38,6 @@ exports.getRelatoriosGerais = async (req, res) => {
         
         const convTotal = clientesConversaram.length;
         const convNovas = clientesConversaram.filter(c => c.criadoEm >= dataInicio).length;
-        // Resolvidas = Terminou o atendimento sem intervenção humana e agendou/encerrou.
         const convResolvidas = clientesConversaram.filter(c => !c.falarHumano && ['AGENDADO', 'CLIENTE', 'QUALIFICADO'].includes(c.leadStatus)).length;
 
         // 2. CARDS: Leads
@@ -80,7 +77,7 @@ exports.getRelatoriosGerais = async (req, res) => {
             { nome: 'Pacientes', valor: uniquePacientes, perdaQtd: 0, perdaPerc: 0 }
         ];
 
-        // 6. ORIGENS
+        // 6. ORIGENS E TRATAMENTOS
         const origensMap = {};
         leadsNoPeriodo.forEach(l => {
             const o = l.origem || 'Desconhecida';
@@ -94,7 +91,6 @@ exports.getRelatoriosGerais = async (req, res) => {
         });
         const origensData = Object.values(origensMap).map(o => ({ ...o, conversao: calcPercent(o.agendados, o.leads) }));
 
-        // 7. TRATAMENTOS
         const tratMap = {};
         agendamentosAll.forEach(a => {
             const t = a.tratamento.nome;
@@ -104,40 +100,9 @@ exports.getRelatoriosGerais = async (req, res) => {
             if(a.status === 'REALIZADA' || a.status === 'CONCLUIDO') tratMap[t].pacientes++;
             tratMap[t].valorPotencial += p;
         });
-        // Simplificação: interessados no tratamento baseia-se nos agendados * fator (pois intenção profunda requer NLP avançado nos chats)
         const tratData = Object.values(tratMap).map(t => ({ ...t, interessados: Math.floor(t.agendados * 1.5) }));
 
-        // 8. PROFISSIONAIS
-        const profMap = {};
-        agendamentosAll.filter(a => a.profissionalSaudeId).forEach(a => {
-            const p = a.profissionalSaude.nome;
-            if(!profMap[p]) profMap[p] = { nome: p, agendamentos: 0, realizadas: 0, cancelamentos: 0, faltas: 0 };
-            profMap[p].agendamentos++;
-            if(a.status === 'REALIZADA' || a.status === 'CONCLUIDO') profMap[p].realizadas++;
-            if(a.status === 'CANCELADA') profMap[p].cancelamentos++;
-            if(a.status === 'FALTA') profMap[p].faltas++;
-        });
-        const profData = Object.values(profMap).map(p => ({ ...p, conversao: calcPercent(p.realizadas, p.agendamentos) }));
-
-        // 9. ATENDENTES
-        const usuarios = await prisma.usuario.findMany();
-        const atendMap = {};
-        usuarios.forEach(u => atendMap[u.id] = { nome: u.nome, conversas: 0, qualificados: 0, agendamentos: 0, tempoMedio: '0m' });
-        leadsNoPeriodo.filter(l => l.responsavelId).forEach(l => {
-            atendMap[l.responsavelId].conversas++;
-            if(l.leadStatus === 'QUALIFICADO') atendMap[l.responsavelId].qualificados++;
-        });
-        const atendData = Object.values(atendMap).filter(a => a.conversas > 0);
-
-        // 10. MENSAGENS E PICOS
-        const msgsDocs = msgs.filter(m => m.tipoMidia === 'document').length;
-        const msgsImg = msgs.filter(m => m.tipoMidia === 'image').length;
-        const msgsAud = msgs.filter(m => m.tipoMidia === 'audio').length;
-
-        // Pic de demanda simplificado
-        let picoHoraMsg = '10:00'; let picoHoraAg = '14:00'; let diaPico = 'Segunda-feira'; // Na prática precisaria de um group by complexo.
-
-        // 11. EVOLUÇÃO (D3)
+        // 7. EVOLUÇÃO
         const evolucaoMap = {};
         let stepDate = new Date(dataInicio);
         while(stepDate <= dataFim) {
@@ -174,26 +139,16 @@ exports.getRelatoriosGerais = async (req, res) => {
                 resolvidas: resolvidasIA,
                 transferidas: transferidas,
                 taxaResolucao: calcPercent(resolvidasIA, convTotal),
-                agendamentos: iaAgendou,
-                qualificados: leadsNoPeriodo.filter(l => !l.falarHumano && l.leadStatus === 'QUALIFICADO').length,
-                tempoMedio: '3s' // Mock, demandaria diff de tempo em cada mensagem
+                agendamentos: iaAgendou
             },
             funil: funil,
             origens: origensData,
             tratamentos: tratData,
-            cancelamentos: {
-                total: agSolicitados, canceladas: agCancelados, remarcadas: agRemarcados, faltas: agFalta, realizadas: agRealizados,
-                taxaCancelamento: calcPercent(agCancelados, agSolicitados), taxaNoShow: calcPercent(agFalta, agConfirmados)
-            },
-            profissionais: profData,
-            atendentes: atendData,
-            mensagens: { recebidas: msgsRec, enviadasIA: msgsIa, enviadasHumano: msgsHum, audios: msgsAud, imagens: msgsImg, documentos: msgsDocs },
-            demanda: { diaMensagens: diaPico, horaMensagens: picoHoraMsg, horaAgendamentos: picoHoraAg },
             evolucao: Object.values(evolucaoMap)
         });
 
     } catch (error) {
-        console.error("Erro Relatórios Analíticos Completo:", error);
+        console.error("❌ Erro Relatórios Analíticos Completo:", error);
         res.status(500).json({ error: "Erro ao gerar matriz de dados analíticos." });
     }
 };
@@ -202,7 +157,6 @@ exports.exportarRelatorioCSV = async (req, res) => {
     try {
         const { tipo, dias } = req.query;
         let dataInicio = startOfDay(subDays(new Date(), dias === 'all' ? 3650 : (parseInt(dias) || 30)));
-        
         let csv = "";
 
         if (tipo === 'leads' || tipo === 'completo') {
@@ -219,18 +173,17 @@ exports.exportarRelatorioCSV = async (req, res) => {
             });
             if(tipo === 'completo') csv += "--- AGENDAMENTOS ---\n";
             csv += "DATA HORA,PACIENTE,TRATAMENTO,MEDICO,STATUS\n";
-            ags.forEach(a => { csv += `${format(a.dataHora, 'dd/MM/yyyy HH:mm')},${a.cliente.nome || a.clienteId},${a.tratamento.nome},${a.profissionalSaude?.nome || 'De Plantão'},${a.status}\n`; });
+            ags.forEach(a => { csv += `${format(a.dataHora, 'dd/MM/yyyy HH:mm')},${a.cliente.nome || a.clienteId},${a.tratamento.nome},${a.profissionalSaude?.nome || 'Sem Preferência'},${a.status}\n`; });
         }
 
         res.header('Content-Type', 'text/csv');
         res.attachment(`export_${tipo}_${Date.now()}.csv`);
         res.status(200).send(csv);
     } catch (error) {
-        console.error("Erro Exportar CSV:", error);
         res.status(500).json({ error: "Erro ao gerar arquivo de exportação." });
     }
 };
 
 exports.getRelatoriosAtendimento = async (req, res) => {
-    res.status(200).json({ message: "Rota obsoleta, mesclada no getRelatoriosGerais para otimização de request." });
+    res.status(200).json({ message: "Rota obsoleta. Usar getRelatoriosGerais." });
 };

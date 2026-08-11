@@ -4,11 +4,7 @@ const { prisma } = require('../db');
 /**
  * Dispara eventos para URLs externas cadastradas no banco (Webhooks).
  * Com suporte real a Autenticação, Retry Automático e Logging.
- * 
- * @param {String} nomeEvento - O nome do evento (Ex: 'lead.created', 'appointment.created')
- * @param {Object} payloadData - Objeto com os dados do evento.
- * @param {Boolean} isTest - Se for true, força envio mesmo se endpoint for teste.
- * @param {Number} forceEndpointId - ID específico para testar apenas uma URL.
+ * Roda de forma assíncrona para não travar o event loop do WhatsApp.
  */
 async function dispararEvento(nomeEvento, payloadData, isTest = false, forceEndpointId = null) {
     try {
@@ -31,6 +27,7 @@ async function dispararEvento(nomeEvento, payloadData, isTest = false, forceEndp
             data: payloadData
         };
 
+        // Usa Promise.allSettled para não deixar uma URL lenta quebrar as outras
         const disparos = endpoints.map(async (endpoint) => {
             const headers = { 'Content-Type': 'application/json' };
             
@@ -41,21 +38,20 @@ async function dispararEvento(nomeEvento, payloadData, isTest = false, forceEndp
             }
 
             let attempts = 0;
-            const maxAttempts = isTest ? 1 : 3; // Em teste só tenta 1 vez
+            const maxAttempts = isTest ? 1 : 3; 
             let success = false;
             let responseStatus = null;
             let responseBody = null;
-            let axiosResponse = null;
 
             while (attempts < maxAttempts && !success) {
                 attempts++;
                 try {
-                    axiosResponse = await axios({
+                    const axiosResponse = await axios({
                         method: endpoint.metodo || 'POST',
                         url: endpoint.url,
                         data: payloadFinal,
                         headers: headers,
-                        timeout: 5000
+                        timeout: 5000 // Segurança: 5 seg máx por tentativa
                     });
                     success = true;
                     responseStatus = axiosResponse.status;
@@ -65,13 +61,13 @@ async function dispararEvento(nomeEvento, payloadData, isTest = false, forceEndp
                     responseBody = error.response ? (typeof error.response.data === 'object' ? JSON.stringify(error.response.data) : String(error.response.data)) : error.message;
                     
                     if (attempts < maxAttempts) {
-                        // Backoff exponencial: 1s, 2s...
+                        // Backoff exponencial: aguarda antes de tentar de novo
                         await new Promise(resolve => setTimeout(resolve, attempts * 1000));
                     }
                 }
             }
 
-            // Gravar o resultado no Histórico de Entregas (WebhookLog)
+            // Gravar o resultado no Histórico de Entregas
             try {
                 await prisma.webhookLog.create({
                     data: {
@@ -86,7 +82,7 @@ async function dispararEvento(nomeEvento, payloadData, isTest = false, forceEndp
                     }
                 });
             } catch (logError) {
-                console.error("Erro ao registrar log do webhook:", logError);
+                console.error("⚠️ [Webhook] Erro ao registrar log:", logError.message);
             }
 
             return {
@@ -99,11 +95,10 @@ async function dispararEvento(nomeEvento, payloadData, isTest = false, forceEndp
             };
         });
 
-        const results = await Promise.all(disparos);
-        return results;
+        return await Promise.all(disparos);
 
     } catch (error) {
-        console.error("Erro interno no gerenciador de Webhooks:", error);
+        console.error("❌ [Webhook] Erro interno no gerenciador:", error.message);
         return [{ success: false, error: error.message }];
     }
 }

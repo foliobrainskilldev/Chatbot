@@ -6,7 +6,7 @@ const crmControllerClinica = require('./crmController');
 const relatoriosController = require('./relatoriosController');
 const webhookController = require('./webhookController');
 const automacoesController = require('./automacoesController'); 
-const configController = require('./configController'); // IMPORT DO NOVO CONTROLLER
+const configController = require('./configController');
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
@@ -61,7 +61,7 @@ router.post('/tratamentos', upload.single('imagem'), crmControllerClinica.salvar
 router.delete('/tratamentos/:id', crmControllerClinica.excluirTratamento);
 
 // ==========================================
-// CONFIGURAÇÃO DO CÉREBRO DA IA (LEGADO)
+// CONFIGURAÇÃO DO CÉREBRO DA IA 
 // ==========================================
 router.get('/ia/config', crmControllerClinica.getConfigIA);
 router.put('/ia/config', upload.single('avatar'), crmControllerClinica.atualizarConfigIA); 

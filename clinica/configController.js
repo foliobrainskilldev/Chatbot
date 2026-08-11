@@ -17,6 +17,7 @@ exports.atualizarConfigCompleta = async (req, res) => {
         let logoNovaUrl = data.logoUrl || null;
         
         if (req.file) {
+            // Usa o buffer em memória para jogar pro Cloudinary direto
             const cloudResult = await cloudinaryService.uploadStream(req.file.buffer, 'clinica/config', 'image');
             logoNovaUrl = cloudResult.secure_url;
         }
@@ -34,13 +35,11 @@ exports.atualizarConfigCompleta = async (req, res) => {
             moeda: data.moeda,
             site: data.site,
             
-            // Tratamento de conversões booleanas
             agendamentoConfirmacao: data.agendamentoConfirmacao === 'true',
             agendamentoCancWhatsapp: data.agendamentoCancWhatsapp === 'true',
             iaAtiva: data.iaAtiva === 'true',
             iaTransferenciaAuto: data.iaTransferenciaAuto === 'true',
             
-            // Tratamento de inteiros
             responsavelPadrao: data.responsavelPadrao ? parseInt(data.responsavelPadrao) : null,
             agendamentoTempoMinCanc: parseInt(data.agendamentoTempoMinCanc) || 24,
             agendamentoTempoMinRemar: parseInt(data.agendamentoTempoMinRemar) || 24,
@@ -54,7 +53,6 @@ exports.atualizarConfigCompleta = async (req, res) => {
             dadosRetencaoArquivos: parseInt(data.dadosRetencaoArquivos) || 365,
             iaTempoInatividade: parseInt(data.iaTempoInatividade) || 15,
             
-            // Strings e selects
             distribuicaoLeads: data.distribuicaoLeads,
             seguranca2FA: data.seguranca2FA,
             interfaceTema: data.interfaceTema,
@@ -62,7 +60,6 @@ exports.atualizarConfigCompleta = async (req, res) => {
             cloudinaryFolder: data.cloudinaryFolder
         };
 
-        // Tratamento de JSON (enviado como string do frontend)
         if (data.horarioFuncionamento) updateData.horarioFuncionamento = data.horarioFuncionamento;
         if (data.redesSociais) updateData.redesSociais = data.redesSociais;
         if (data.pipelineEtapas) updateData.pipelineEtapas = data.pipelineEtapas;
@@ -77,10 +74,9 @@ exports.atualizarConfigCompleta = async (req, res) => {
             data: updateData
         });
 
-        // Registrar Log de Auditoria
         await prisma.atividadeEquipe.create({
             data: {
-                usuarioId: 1, // Assumindo Admin
+                usuarioId: 1, 
                 acao: 'Configuração Atualizada',
                 recurso: 'Sistema Global',
                 detalhes: 'Parâmetros administrativos alterados via painel.'
