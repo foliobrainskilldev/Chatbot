@@ -12,49 +12,42 @@ const security = require('./middlewares/security');
 
 const app = express();
 
-// ==========================================
 // CORREÇÃO CRÍTICA PARA HOSPEDAGEM (RENDER/HEROKU)
-// ==========================================
-// Diz ao Express para confiar no Proxy do Render. 
-// Sem isso, o limitador de requisições bloqueia o Webhook do WhatsApp e causa silêncio total.
+// Diz ao Express para confiar no Proxy do Render.
 app.set('trust proxy', 1);
 
 const server = http.createServer(app);
 
-// ==========================================
-// CONFIGURAÇÃO DO WEBSOCKET (REAL-TIME)
-// ==========================================
+// CONFIGURAÇÃO DO WEBSOCKET
 const io = new Server(server, { 
     cors: { 
-        origin: "*", // Em produção estrita, mude para o domínio do painel
+        origin: "*", 
         methods: ["GET", "POST", "PUT", "DELETE"]
     } 
 });
-global.io = io; // Disponibiliza globalmente para os controllers
+global.io = io; 
 
-// ==========================================
 // MIDDLEWARES DE SEGURANÇA E PARSERS
-// ==========================================
 app.use(security.securityHeaders);
 app.use(cors());
 app.use(security.payloadLimit);
 app.use(security.urlEncodedLimit);
 
-// ==========================================
-// ROTEAMENTO PRINCIPAL
-// ==========================================
-// O limitador global é aplicado em todas as rotas abaixo desta linha
-app.use('/api', security.globalLimiter); 
+// ADICIONADO: Logger global para diagnosticar se a requisição da Meta chega no Render
+app.use((req, res, next) => {
+    if (req.method === 'POST' && req.url.includes('/webhook')) {
+        console.log(`[INCOMING REQUEST] IP: ${req.ip} | Method: ${req.method} | URL: ${req.url}`);
+    }
+    next();
+});
 
-// O limitador exclusivo para o Webhook da Meta
+// LIMITADORES DE REQUISIÇÃO
+app.use('/api', security.globalLimiter); 
 app.use('/webhook', security.webhookLimiter); 
 
-// Conecta o roteador central (que ramifica Clínica, Barbearia e Webhooks)
 app.use('/', routes);
 
-// ==========================================
-// HEALTH CHECK (SaaS Status)
-// ==========================================
+// HEALTH CHECK
 app.get('/health', (req, res) => {
     res.status(200).json({ 
         status: "online", 
@@ -63,15 +56,12 @@ app.get('/health', (req, res) => {
     });
 });
 
-// ==========================================
-// INICIALIZAÇÃO & GRACEFUL SHUTDOWN
-// ==========================================
 const PORT = process.env.PORT || 3000;
 
 async function bootstrap() {
     try {
         await seedDatabase();
-        iniciarAutomaçoes(); // Inicia os CRONs de lembretes e follow-ups
+        iniciarAutomaçoes(); 
         
         server.listen(PORT, () => {
             console.log(`[SYSTEM] API Central SaaS operando na porta ${PORT}`);
@@ -83,7 +73,6 @@ async function bootstrap() {
     }
 }
 
-// Graceful Shutdown (Fecha conexões com banco antes de desligar)
 process.on('SIGTERM', async () => {
     console.log('[SYSTEM] Sinal SIGTERM recebido. Encerrando processos...');
     await prisma.$disconnect();

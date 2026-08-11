@@ -14,12 +14,14 @@ async function getOrCreateCliente(numero, nomePushName = null) {
     let cliente = await prisma.cliente.findUnique({ where: { id: numero } });
     if (!cliente) {
         cliente = await prisma.cliente.create({ 
-            data: { id: numero, nome: nomePushName, leadStatus: 'NOVO', origem: 'WhatsApp IA' } 
+            data: { id: numero, nome: nomePushName || 'Paciente', leadStatus: 'NOVO', origem: 'WhatsApp IA' } 
         });
         await webhookService.dispararEvento('lead.created', cliente);
         await automationEngine.dispararAutomacoes('NOVO_LEAD', cliente);
     } else {
-        await prisma.cliente.update({ where: { id: numero }, data: { ultimaInteracao: new Date() } });
+        const updates = { ultimaInteracao: new Date() };
+        if (nomePushName && !cliente.nome) updates.nome = nomePushName;
+        await prisma.cliente.update({ where: { id: numero }, data: updates });
     }
     return cliente;
 }
@@ -29,12 +31,15 @@ async function processarMensagemEntrante(message) {
     const msgId = message.id;
 
     try {
+        console.log(`🤖 [MOTOR CLÍNICA] Processando mensagem de ${senderNumber}`);
+        
         let pushName = message.profile?.name || null;
         let cliente = await getOrCreateCliente(senderNumber, pushName);
         
         if (cliente.falarHumano) {
             let textLog = message.text?.body || '[Mídia Recebida]';
             await prisma.mensagemIA.create({ data: { role: 'user', content: textLog, clienteId: senderNumber } });
+            console.log(`🛑 [MOTOR CLÍNICA] Lead em atendimento humano. Mensagem salva, IA ignorada.`);
             return; 
         }
 
@@ -47,7 +52,6 @@ async function processarMensagemEntrante(message) {
         if (message.type === 'image' || message.type === 'document') {
             textoProcessado = message[message.type].caption || "[Imagem/Documento]";
         } else if (message.type === 'audio') {
-            // Em caso de falha de leitura, define texto genérico
             textoProcessado = "[Áudio Recebido]";
         } else if (message.type === 'text') {
             textoProcessado = message.text.body;
@@ -55,7 +59,10 @@ async function processarMensagemEntrante(message) {
             textoProcessado = message.interactive.button_reply?.id || message.interactive.list_reply?.id;
         }
 
-        if (!textoProcessado) return;
+        if (!textoProcessado) {
+            console.log(`⚠️ [MOTOR CLÍNICA] Mensagem sem texto ou tipo suportado ignorada.`);
+            return;
+        }
 
         await prisma.mensagemIA.create({ data: { role: 'user', content: textoProcessado, clienteId: senderNumber, tipoMidia: message.type } });
         
@@ -74,6 +81,7 @@ async function processarMensagemEntrante(message) {
 
         if (!isInteractive && textoProcessado) {
             nlpResult = await aiService.analisarMensagemNLP(textoProcessado, historico, userState);
+            console.log(`🧠 [NLP] Intenção detectada: ${nlpResult.intent}`);
         } else if (isInteractive) {
             if (textoProcessado.startsWith('trat_') || textoProcessado === 'cmd_agendar') nlpResult.intent = 'appointment.create';
             else if (textoProcessado.startsWith('canc_')) nlpResult.intent = 'appointment.cancel';
@@ -101,8 +109,7 @@ async function processarMensagemEntrante(message) {
         }
 
     } catch (error) {
-        // ESCUDO CONTRA O SILÊNCIO: Se der qualquer erro crasso, ele avisa!
-        console.error("❌ ERRO CRÍTICO NO MOTOR DA CLÍNICA:", error.message);
+        console.error("❌ ERRO CRÍTICO NO MOTOR DA CLÍNICA:", error);
         await whatsappService.sendText(senderNumber, "Desculpe, meu sistema passou por uma instabilidade técnica agorinha. Você poderia repetir a mensagem?");
     }
 }

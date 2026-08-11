@@ -13,21 +13,31 @@ const verificarWebhook = (req, res) => {
         console.log('✅ Webhook autorizado pela Meta!');
         res.status(200).send(challenge);
     } else {
+        console.log('❌ Falha na verificação do Webhook. Token incorreto.');
         res.sendStatus(403);
     }
 };
 
 const processarWebhook = (req, res) => {
+    // Sempre responda 200 OK imediatamente para a Meta, ou ela bloqueará seu webhook!
     res.sendStatus(200); 
 
     (async () => {
         try {
             const body = req.body;
-            if (!body.object) return;
+            
+            if (!body) {
+                console.log('⚠️ [WEBHOOK] Requisição recebida, mas o corpo está vazio.');
+                return;
+            }
+
+            if (!body.object) {
+                console.log('⚠️ [WEBHOOK] Objeto inválido recebido:', JSON.stringify(body).substring(0, 100));
+                return;
+            }
 
             let changes = body.entry?.[0]?.changes?.[0]?.value;
             
-            // 🚨 RASTREADOR DE SILÊNCIO: Captura as rejeições assíncronas da Meta!
             if (changes?.statuses) {
                 let statusObj = changes.statuses[0];
                 if (statusObj.status === 'failed') {
@@ -38,7 +48,14 @@ const processarWebhook = (req, res) => {
             
             if (changes?.messages?.[0]) {
                 const message = changes.messages[0];
-                console.log(`\n📩 [WEBHOOK] Mensagem do paciente ${message.from} recebida no servidor.`);
+                
+                // Captura o nome do contato diretamente do Webhook e injeta no objeto message
+                const contact = changes.contacts?.[0];
+                if (contact?.profile?.name) {
+                    message.profile = { name: contact.profile.name };
+                }
+                
+                console.log(`\n📩 [WEBHOOK] Mensagem do paciente ${message.from} recebida no servidor. Tipo: ${message.type}`);
 
                 const configDb = await prisma.configSistema.findUnique({ where: { id: 1 } });
                 const modoAtivo = configDb?.modoAtivo || 'BARBEARIA';
@@ -53,7 +70,7 @@ const processarWebhook = (req, res) => {
                 console.log(`🏁 [FIM] Processo concluído com sucesso para: ${message.from}\n`);
             } 
         } catch (error) {
-            console.error('❌ [ERRO CRÍTICO INTERNO]:', error);
+            console.error('❌ [ERRO CRÍTICO INTERNO NO HUB WEBHOOK]:', error);
         }
     })();
 };

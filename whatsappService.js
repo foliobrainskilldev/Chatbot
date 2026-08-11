@@ -33,7 +33,7 @@ async function markAsReadAndTyping(messageId, to) {
             console.log(`✍️ [META API] Indicador "Digitando..." disparado para ${to}.`);
         }
     } catch (error) {
-        console.log("⚠️ Aviso: Este número não suportou o indicador de digitando, ignorando e avançando.");
+        console.log(`⚠️ [AVISO META API] Este número (${to}) não suportou o indicador de lido/digitando, ignorando e avançando. (Normal em testes)`);
     }
 }
 
@@ -101,7 +101,7 @@ async function sendInteractiveMenu(to, text, options) {
         });
         console.log(`✅ [META API] SUCESSO! Menu aceite pelo WhatsApp. ID:`, response.data?.messages?.[0]?.id);
     } catch (error) {
-        console.error("⚠️ [ERRO META MENU] A Meta rejeitou o menu. Acionando Fallback em Texto.");
+        console.error("⚠️ [ERRO META MENU] A Meta rejeitou o menu. Acionando Fallback em Texto.", JSON.stringify(error?.response?.data || error.message, null, 2));
         let txtFallback = text + "\n\n";
         options.forEach((opt, index) => {
             txtFallback += `*${index + 1}.* ${opt.title}\n`;
@@ -113,6 +113,7 @@ async function sendInteractiveMenu(to, text, options) {
 
 async function sendMediaUrl(to, type, url, caption = "") {
     try {
+        console.log(`📤 [META API] A enviar Mídia (${type}) para ${to}...`);
         const payload = {
             messaging_product: 'whatsapp',
             recipient_type: 'individual',
@@ -124,8 +125,9 @@ async function sendMediaUrl(to, type, url, caption = "") {
             payload[type].caption = caption;
         }
         await api.post('/messages', payload);
+        console.log(`✅ [META API] SUCESSO! Mídia enviada.`);
     } catch (error) {
-        console.error(`❌ [ERRO META MÍDIA]`, error?.response?.data || error.message);
+        console.error(`❌ [ERRO META MÍDIA]`, JSON.stringify(error?.response?.data || error.message, null, 2));
     }
 }
 
@@ -144,6 +146,7 @@ async function downloadMetaMediaToCloudinary(mediaId, mimeType) {
         const cloudResult = await cloudinaryService.uploadStream(buffer, 'clinica/recebidos', resourceType);
         return cloudResult.secure_url;
     } catch (error) {
+        console.error("❌ [ERRO DOWNLOAD META MEDIA]", error.message);
         return null;
     }
 }

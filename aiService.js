@@ -11,10 +11,15 @@ const groq = new OpenAI({
 });
 
 async function transcreverAudioPorUrl(audioUrl) {
-    if (!process.env.GROQ_API_KEY || !audioUrl) return "";
+    if (!process.env.GROQ_API_KEY || process.env.GROQ_API_KEY === 'chave_ausente' || !audioUrl) {
+        console.warn("⚠️ [AI SERVICE] Transcrição ignorada: Chave da GROQ ausente.");
+        return "";
+    }
+    
     const tempFilePath = path.join(os.tmpdir(), `audio_${Date.now()}.ogg`);
     
     try {
+        console.log("🎙️ [AI SERVICE] Baixando áudio para transcrição...");
         const response = await axios.get(audioUrl, { responseType: 'stream' });
         const writer = fs.createWriteStream(tempFilePath);
         response.data.pipe(writer);
@@ -24,6 +29,7 @@ async function transcreverAudioPorUrl(audioUrl) {
             writer.on('error', reject);
         });
 
+        console.log("🧠 [AI SERVICE] Enviando áudio para Whisper (Groq)...");
         const transcricao = await groq.audio.transcriptions.create({
             file: fs.createReadStream(tempFilePath),
             model: "whisper-large-v3-turbo", 
@@ -31,7 +37,7 @@ async function transcreverAudioPorUrl(audioUrl) {
         });
         return transcricao.text;
     } catch (erro) {
-        console.error("Erro na transcrição de áudio:", erro);
+        console.error("❌ [ERRO AI TRANSCRIÇÃO]:", erro.message);
         return "[Áudio inaudível]";
     } finally {
         if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
@@ -39,7 +45,10 @@ async function transcreverAudioPorUrl(audioUrl) {
 }
 
 async function analisarMensagemNLP(textoCliente, historico, estadoAtual) {
-    if (!process.env.GROQ_API_KEY) return { intent: "unknown", confidence: 0, entities: {} };
+    if (!process.env.GROQ_API_KEY || process.env.GROQ_API_KEY === 'chave_ausente') {
+        console.warn("⚠️ [AI SERVICE] Chave GROQ ausente. NLP bypassado.");
+        return { intent: "unknown", confidence: 0, entities: {} };
+    }
 
     const hoje = format(new Date(), 'dd/MM/yyyy');
     const prompt = `Você é o analisador NLP de um HealthCRM. 
@@ -48,11 +57,11 @@ Hoje é ${hoje}. Responda APENAS com um JSON válido.
 Intenções: clinic.hours, clinic.location, treatment.list, appointment.create, appointment.cancel, human.transfer, greeting, unknown.`;
 
     try {
+        console.log("🧠 [AI SERVICE] Analisando Intenção (NLP)...");
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-8b-instant",
             messages: [
                 { role: "system", content: prompt },
-                // CORREÇÃO CRÍTICA: O Groq exige que exista uma mensagem de 'user'
                 { role: "user", content: textoCliente || "[Mensagem de mídia/vazia]" }
             ],
             temperature: 0.1,
@@ -61,13 +70,16 @@ Intenções: clinic.hours, clinic.location, treatment.list, appointment.create, 
         
         return JSON.parse(resposta.choices[0]?.message?.content || "{}");
     } catch (erro) {
-        console.error("Erro NLP Groq (Bad Request/JSON):", erro.message);
+        console.error("❌ [ERRO AI NLP Groq]:", erro.message);
         return { intent: "unknown", confidence: 0, entities: {} };
     }
 }
 
 async function gerarRespostaNatural(textoCliente, historico, dadosContexto, configSistema) {
-    if (!process.env.GROQ_API_KEY) return "Sistemas de IA indisponíveis no momento.";
+    if (!process.env.GROQ_API_KEY || process.env.GROQ_API_KEY === 'chave_ausente') {
+        console.error("❌ [ERRO AI SERVICE] Tentativa de gerar resposta sem API Key configurada!");
+        return "Desculpe, o motor de Inteligência Artificial está desconectado no momento.";
+    }
 
     const assistenteNome = configSistema?.nomeAssistente || "Assistente";
     const clinicaNome = configSistema?.nomeClinica || "Clínica";
@@ -79,7 +91,6 @@ REGRA: Use EXATAMENTE os dados fornecidos no contexto: ${JSON.stringify(dadosCon
         const msgs = [{ role: "system", content: systemInstrucoes }];
         let lastRole = "system";
 
-        // Organiza o histórico agrupando mensagens consecutivas do mesmo papel (Evita crash do Llama 3)
         if (historico && historico.length > 0) {
             historico.forEach(linha => {
                 let content = linha.content || "[Mídia Recebida]";
@@ -96,12 +107,11 @@ REGRA: Use EXATAMENTE os dados fornecidos no contexto: ${JSON.stringify(dadosCon
         }
         
         let textoFinal = textoCliente || "[Mídia]";
-        
-        // Se a última mensagem da array não for 'user', adicionamos para manter a lógica exigida
         if (lastRole !== "user") {
             msgs.push({ role: "user", content: textoFinal });
         }
 
+        console.log("🧠 [AI SERVICE] Gerando resposta humanizada...");
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-70b-versatile",
             messages: msgs,
@@ -111,7 +121,7 @@ REGRA: Use EXATAMENTE os dados fornecidos no contexto: ${JSON.stringify(dadosCon
         
         return resposta.choices[0]?.message?.content || "Desculpe, não consegui formular a resposta.";
     } catch (erro) {
-        console.error("Erro na Geração de Resposta:", erro.message);
+        console.error("❌ [ERRO AI GERAÇÃO DE RESPOSTA]:", erro.response ? erro.response.data : erro.message);
         return "Desculpe, meus servidores estão muito ocupados agora. Pode repetir a mensagem?"; 
     }
 }

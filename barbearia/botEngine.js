@@ -37,14 +37,24 @@ async function processarMensagemEntrante(message) {
     const jid = senderNumber;
     
     try {
+        console.log(`💈 [MOTOR BARBEARIA] Processando mensagem de ${senderNumber}`);
+
         let textMessage = message.text?.body || "";
         if (message.type === 'interactive') {
             textMessage = message.interactive.button_reply?.id || message.interactive.list_reply?.id;
         }
 
         let cliente = await getOrCreateCliente(senderNumber);
-        if (cliente.falarHumano) return; 
-        if (!textMessage) return;
+        
+        if (cliente.falarHumano) {
+            console.log(`🛑 [MOTOR BARBEARIA] Cliente em atendimento humano. Ignorando bot.`);
+            return; 
+        }
+        
+        if (!textMessage) {
+            console.log(`⚠️ [MOTOR BARBEARIA] Mensagem sem texto ignorada.`);
+            return;
+        }
 
         await whatsappService.markAsReadAndTyping(message.id, senderNumber);
 
@@ -74,11 +84,11 @@ async function processarMensagemEntrante(message) {
             return;
         }
 
-        // Se for um "Oi", envia o menu.
+        // Se não reconheceu comando, envia o menu.
         await enviarMenuGeral(jid);
         
     } catch (error) {
-        console.error('❌ ERRO NO MOTOR DA BARBEARIA:', error.message);
+        console.error('❌ ERRO CRÍTICO NO MOTOR DA BARBEARIA:', error);
         await whatsappService.sendText(senderNumber, "Desculpe, a nossa IA teve uma pequena falha. Diga 'Oi' para recomeçarmos!");
     }
 }
