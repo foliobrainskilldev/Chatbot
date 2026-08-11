@@ -1,5 +1,40 @@
 const axios = require('axios');
 
+async function transcreverAudio(audioBuffer) {
+    const GROQ_API_KEY = process.env.GROQ_API_KEY ? process.env.GROQ_API_KEY.trim() : null;
+    if (!GROQ_API_KEY) {
+        console.warn("⚠️ [WHISPER] GROQ_API_KEY ausente.");
+        return "[Áudio recebido, mas sistema de transcrição offline]";
+    }
+
+    try {
+        // Utilizamos a Fetch API Nativa do Node para construir o Formulário Multiparte (Audio)
+        const blob = new Blob([audioBuffer], { type: 'audio/ogg' });
+        const formData = new FormData();
+        formData.append('file', blob, 'audio.ogg');
+        formData.append('model', 'whisper-large-v3-turbo'); 
+        formData.append('language', 'pt'); 
+        formData.append('response_format', 'json');
+
+        const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${GROQ_API_KEY}` },
+            body: formData
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Groq Error: ${response.status} - ${errText}`);
+        }
+
+        const data = await response.json();
+        return data.text;
+    } catch (error) {
+        console.error("❌ [WHISPER ERRO] Falha ao transcrever áudio:", error.message);
+        return "[Áudio Recebido - Não foi possível compreender as palavras]";
+    }
+}
+
 async function analisarMensagemNLP(mensagem, historico, userState) {
     const GROQ_API_KEY = process.env.GROQ_API_KEY ? process.env.GROQ_API_KEY.trim() : null;
     
@@ -54,7 +89,7 @@ Responda APENAS com um JSON válido no formato exato:
 `;
 
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-            model: "llama-3.3-70b-versatile", // Modelo Atualizado!
+            model: "llama-3.3-70b-versatile",
             messages: [
                 { role: "system", content: prompt },
                 { role: "user", content: mensagem }
@@ -124,7 +159,7 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma natural, amigável e
         ];
 
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-            model: "llama-3.3-70b-versatile", // Modelo Atualizado!
+            model: "llama-3.3-70b-versatile",
             messages: messages,
             temperature: 0.7
         }, {
@@ -140,5 +175,6 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma natural, amigável e
 
 module.exports = {
     analisarMensagemNLP,
-    gerarRespostaNatural
+    gerarRespostaNatural,
+    transcreverAudio // <-- ADICIONADO AQUI
 };

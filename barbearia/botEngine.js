@@ -1,5 +1,6 @@
 const { prisma, getOrCreateCliente } = require('../db');
 const whatsappService = require('../whatsappService');
+const aiService = require('../aiService'); // Importando transcrição
 
 const { iniciarAgendamento, handleAgendamento } = require('./flowAgendamento');
 const { iniciarCancelamento, processarCancelamento } = require('./flowCancelamento');
@@ -33,12 +34,8 @@ async function enviarMenuGeral(jid) {
 }
 
 async function processarMensagemEntrante(message) {
-    // 1. Barreira Anti-Crash da Meta
-    if (!message || !message.from) {
-        return; 
-    }
+    if (!message || !message.from) return; 
 
-    // 2. Isolamento de Processo Assíncrono
     setTimeout(async () => {
         const senderNumber = message.from;
         const msgId = message.id;
@@ -48,16 +45,33 @@ async function processarMensagemEntrante(message) {
             console.log(`💈 [MOTOR BARBEARIA] PROCESSANDO: ${senderNumber}`);
             console.log(`===========================================`);
 
-            let textMessage = message.text?.body || "";
-            if (message.type === 'interactive') {
-                textMessage = message.interactive.button_reply?.id || message.interactive.list_reply?.id;
-            }
-
             let cliente = await getOrCreateCliente(senderNumber);
             
             if (cliente.falarHumano) {
                 console.log(`🛑 [MOTOR BARBEARIA] Cliente em atendimento humano. Ignorando bot.`);
                 return; 
+            }
+
+            await whatsappService.markAsReadAndTyping(msgId, senderNumber);
+
+            let textMessage = "";
+            let isTranscribed = false;
+
+            if (message.type === 'audio') {
+                const mediaId = message.audio.id;
+                console.log(`🎙️ [WHISPER] Baixando áudio do WhatsApp...`);
+                try {
+                    const audioBuffer = await whatsappService.downloadMedia(mediaId);
+                    textMessage = await aiService.transcreverAudio(audioBuffer);
+                    isTranscribed = true;
+                    console.log(`🎙️ [WHISPER] Texto Transcrito (Barbearia): "${textMessage}"`);
+                } catch (e) {
+                    textMessage = "[Áudio Recebido - Falha na Transcrição]";
+                }
+            } else if (message.type === 'text') {
+                textMessage = message.text?.body || "";
+            } else if (message.type === 'interactive') {
+                textMessage = message.interactive.button_reply?.id || message.interactive.list_reply?.id;
             }
             
             if (!textMessage) {
@@ -65,14 +79,12 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // Marca azul e Digitando
-            await whatsappService.markAsReadAndTyping(msgId, senderNumber);
-
             let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {} };
             
-            // Delay natural para leitura
-            const delayMs = Math.floor(Math.random() * (3000 - 1500 + 1)) + 1500;
+            const delayMs = Math.floor(Math.random() * (2000 - 1000 + 1)) + 1000;
             await new Promise(resolve => setTimeout(resolve, delayMs));
+
+            const msgLow = textMessage.toLowerCase();
 
             if (textMessage.startsWith('srv_') || textMessage.startsWith('barb_') || userState.step.startsWith('AGENDAMENTO_')) {
                 await handleAgendamento(senderNumber, textMessage, senderNumber, stateMachine, STEPS);
@@ -84,12 +96,20 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            if (textMessage === 'cmd_agendar' || textMessage.includes('agendar') || textMessage.includes('marcar')) return await iniciarAgendamento(senderNumber, senderNumber, stateMachine, STEPS);
-            if (textMessage === 'cmd_precos') return await verPrecosEServicos(senderNumber);
-            if (textMessage === 'cmd_agenda') return await verMeusAgendamentos(senderNumber, senderNumber);
-            if (textMessage === 'cmd_cancelar') return await iniciarCancelamento(senderNumber, senderNumber, stateMachine, STEPS);
-            
-            if (textMessage === 'cmd_humano') {
+            // Mapeando a voz (ou digitação) para as intenções da barbearia
+            if (textMessage === 'cmd_agendar' || msgLow.includes('agendar') || msgLow.includes('marcar') || msgLow.includes('corte')) {
+                return await iniciarAgendamento(senderNumber, senderNumber, stateMachine, STEPS);
+            }
+            if (textMessage === 'cmd_precos' || msgLow.includes('preço') || msgLow.includes('valor')) {
+                return await verPrecosEServicos(senderNumber);
+            }
+            if (textMessage === 'cmd_agenda' || msgLow.includes('minha agenda')) {
+                return await verMeusAgendamentos(senderNumber, senderNumber);
+            }
+            if (textMessage === 'cmd_cancelar' || msgLow.includes('cancelar')) {
+                return await iniciarCancelamento(senderNumber, senderNumber, stateMachine, STEPS);
+            }
+            if (textMessage === 'cmd_humano' || msgLow.includes('atendente') || msgLow.includes('pessoa')) {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
                 await whatsappService.sendText(senderNumber, 'A transferir para a equipa da Barbearia. Aguarde por favor.');
                 return;

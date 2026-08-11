@@ -26,15 +26,9 @@ async function getOrCreateCliente(numero, nomePushName = null) {
     return cliente;
 }
 
-// ATUALIZAÇÃO CRÍTICA: Função agora roda de forma não-bloqueante para não dar Timeout na Meta
 async function processarMensagemEntrante(message) {
-    // 1. Barreira de Proteção contra Crashes (Status updates da Meta não possuem message.from)
-    if (!message || !message.from) {
-        return; 
-    }
+    if (!message || !message.from) return; 
 
-    // 2. Isolamento de Processo (Fire and Forget)
-    // Isso garante que o servidor responda "200 OK" para a Meta instantaneamente (evitando Tiques Cinzentos)
     setTimeout(async () => {
         const senderNumber = message.from;
         const msgId = message.id;
@@ -54,15 +48,25 @@ async function processarMensagemEntrante(message) {
                 return; 
             }
 
-            // Marca azul e ativa o "Digitando..." no WhatsApp
             await whatsappService.markAsReadAndTyping(msgId, senderNumber);
 
             let textoProcessado = "";
+            let isTranscribed = false;
 
-            if (message.type === 'image' || message.type === 'document') {
+            // NOVO: TRATAMENTO DE ÁUDIO COM WHISPER (GROQ)
+            if (message.type === 'audio') {
+                const mediaId = message.audio.id;
+                console.log(`🎙️ [WHISPER] Baixando áudio do WhatsApp...`);
+                try {
+                    const audioBuffer = await whatsappService.downloadMedia(mediaId);
+                    textoProcessado = await aiService.transcreverAudio(audioBuffer);
+                    isTranscribed = true;
+                    console.log(`🎙️ [WHISPER] Texto Transcrito: "${textoProcessado}"`);
+                } catch (e) {
+                    textoProcessado = "[Áudio Recebido - Falha na Transcrição]";
+                }
+            } else if (message.type === 'image' || message.type === 'document') {
                 textoProcessado = message[message.type].caption || "[Imagem/Documento Recebido]";
-            } else if (message.type === 'audio') {
-                textoProcessado = "[Áudio Recebido]";
             } else if (message.type === 'text') {
                 textoProcessado = message.text.body;
             } else if (message.type === 'interactive') {
@@ -74,7 +78,9 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            await prisma.mensagemIA.create({ data: { role: 'user', content: textoProcessado, clienteId: senderNumber, tipoMidia: message.type } });
+            // Salvamos no banco com uma tag visual de [Áudio Transcrito] para o Painel Web 
+            const msgParaSalvar = isTranscribed ? `[Áudio Transcrito]: ${textoProcessado}` : textoProcessado;
+            await prisma.mensagemIA.create({ data: { role: 'user', content: msgParaSalvar, clienteId: senderNumber, tipoMidia: message.type } });
             
             let isInteractive = message.type === 'interactive';
             let userState = stateMachine.get(senderNumber) || { step: 'IDLE', intent: null, entities: {} };
@@ -89,12 +95,11 @@ async function processarMensagemEntrante(message) {
 
             let nlpResult = { intent: "unknown", confidence: 1, entities: {} };
 
-            // Pipeline NLP
+            // O NLP agora analisa a voz como se o paciente tivesse digitado!
             if (!isInteractive && textoProcessado) {
                 nlpResult = await aiService.analisarMensagemNLP(textoProcessado, historico, userState);
                 console.log(`🧠 [NLP] Intenção: ${nlpResult.intent} | Confiança: ${nlpResult.confidence}`);
                 
-                // Mesclar entidades
                 userState.entities = { ...userState.entities, ...nlpResult.entities };
                 stateMachine.set(senderNumber, userState);
             } else if (isInteractive) {
@@ -104,7 +109,6 @@ async function processarMensagemEntrante(message) {
 
             let activeIntent = nlpResult.intent || 'unknown';
 
-            // Verificação de Baixa Confiança
             if (nlpResult.confidence < 0.4 && !isInteractive) {
                 const resp = "Desculpe, não entendi muito bem. Você gostaria de marcar uma consulta, saber sobre nossos tratamentos ou falar com um atendente?";
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
@@ -120,14 +124,16 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // Roteamento Final
             if (activeIntent === 'appointment.create' || userState.step === 'AGENDAMENTO') {
-                await processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb);
+                const flowAgendamento = require('./flowAgendamento');
+                await flowAgendamento.processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb);
             } else if (activeIntent === 'appointment.cancel' || activeIntent === 'appointment.reschedule' || userState.step === 'CANCELAMENTO') {
                 const isRemarcacao = activeIntent === 'appointment.reschedule';
-                await processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao);
+                const flowCancelamento = require('./flowCancelamento');
+                await flowCancelamento.processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao);
             } else {
-                await processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico);
+                const flowConsultas = require('./flowConsultas');
+                await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico);
             }
 
         } catch (error) {

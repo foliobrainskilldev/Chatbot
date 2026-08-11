@@ -32,8 +32,6 @@ async function sendWhatsAppRequest(data) {
 async function markAsReadAndTyping(msgId, to) {
     try {
         if (msgId) {
-            // Apenas marca a mensagem do usuário como Lida. O typing_on foi removido 
-            // pois a API do WhatsApp Cloud bloqueia envios com formato "sender_action".
             await sendWhatsAppRequest({
                 messaging_product: "whatsapp",
                 message_id: msgId,
@@ -91,9 +89,35 @@ async function sendMediaUrl(to, type, url, caption = "") {
     return await sendWhatsAppRequest(payload);
 }
 
+// NOVO: Função para baixar Mídias (Áudio/Imagem) do WhatsApp API
+async function downloadMedia(mediaId) {
+    const META_TOKEN = process.env.META_TOKEN ? process.env.META_TOKEN.trim() : null;
+    if (!META_TOKEN) throw new Error("META_TOKEN ausente.");
+
+    try {
+        // 1. Pegar URL de download da Mídia
+        const resUrl = await axios.get(`https://graph.facebook.com/${API_VERSION}/${mediaId}`, {
+            headers: { 'Authorization': `Bearer ${META_TOKEN}` }
+        });
+        const mediaUrl = resUrl.data.url;
+
+        // 2. Fazer download do arquivo em Buffer Binário
+        const resBinary = await axios.get(mediaUrl, {
+            headers: { 'Authorization': `Bearer ${META_TOKEN}` },
+            responseType: 'arraybuffer' 
+        });
+
+        return resBinary.data;
+    } catch (error) {
+        console.error("❌ [WhatsApp Media ERRO]: Falha ao baixar arquivo de mídia.");
+        throw error;
+    }
+}
+
 module.exports = {
     sendText,
     sendInteractiveMenu,
     sendMediaUrl,
-    markAsReadAndTyping
+    markAsReadAndTyping,
+    downloadMedia
 };
