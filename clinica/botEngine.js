@@ -3,7 +3,7 @@ const whatsappService = require('../whatsappService');
 const aiService = require('../aiService');
 const webhookService = require('../services/webhookService');
 const automationEngine = require('../services/automationEngine');
-const cloudinaryService = require('../cloudinaryService'); // Adicionado para lidar com as mídias recebidas
+const cloudinaryService = require('../services/cloudinaryService'); // Adicionado para lidar com as mídias recebidas
 
 const stateMachine = new Map();
 
