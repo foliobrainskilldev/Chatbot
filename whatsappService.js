@@ -1,108 +1,155 @@
-const axios = require('axios');
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const http = require('http');
+const { Server } = require('socket.io');
+const path = require('path');
 
-const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
-const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const API_VERSION = 'v18.0';
+const { seedDatabase, prisma } = require('./db');
+const { iniciarAutomaçoes } = require('./cronJobs');
+const routes = require('./routes');
+const security = require('./middlewares/security');
 
-async function sendWhatsAppRequest(data) {
-    if (!WHATSAPP_TOKEN || !PHONE_NUMBER_ID) {
-        console.error("⚠️ [WhatsApp] FALTAM CREDENCIAIS: Verifique o WHATSAPP_TOKEN e PHONE_NUMBER_ID no .env");
-        return null;
+const app = express();
+
+// CORREÇÃO CRÍTICA PARA HOSPEDAGEM (RENDER/HEROKU)
+// Diz ao Express para confiar no Proxy do Render.
+app.set('trust proxy', 1);
+
+const server = http.createServer(app);
+
+// CONFIGURAÇÃO DO WEBSOCKET
+const io = new Server(server, { 
+    cors: { 
+        origin: "*", 
+        methods: ["GET", "POST", "PUT", "DELETE"]
+    } 
+});
+global.io = io; 
+
+// MIDDLEWARES DE SEGURANÇA E PARSERS
+app.use(security.securityHeaders);
+app.use(cors());
+app.use(security.payloadLimit);
+app.use(security.urlEncodedLimit);
+
+// Logger global para diagnosticar requisições da Meta
+app.use((req, res, next) => {
+    if (req.method === 'POST' && req.url.includes('/webhook')) {
+        console.log(`[INCOMING REQUEST] IP: ${req.ip} | Method: ${req.method} | URL: ${req.url}`);
     }
-    
+    next();
+});
+
+// LIMITADORES DE REQUISIÇÃO
+app.use('/api', security.globalLimiter); 
+app.use('/webhook', security.webhookLimiter); 
+
+
+// =========================================================================
+// 🚀 ROTAS CRÍTICAS DO WEBHOOK DA META (WHATSAPP)
+// Estas rotas ficam ANTES do "app.use('/', routes)" para garantir velocidade máxima.
+// =========================================================================
+
+// 1. VERIFICAÇÃO DO WEBHOOK (Usado quando você cadastra a URL no painel da Meta)
+app.get('/webhook', (req, res) => {
+    const verify_token = process.env.VERIFY_TOKEN || "healthcrm_token";
+    let mode = req.query["hub.mode"];
+    let token = req.query["hub.verify_token"];
+    let challenge = req.query["hub.challenge"];
+
+    if (mode && token) {
+        if (mode === "subscribe" && token === verify_token) {
+            console.log("✅ [WEBHOOK] Conexão verificada com sucesso pela Meta!");
+            res.status(200).send(challenge);
+        } else {
+            res.sendStatus(403);
+        }
+    }
+});
+
+// 2. RECEBIMENTO DE MENSAGENS
+app.post('/webhook', async (req, res) => {
+    // 💡 SOLUÇÃO DO TIQUE CINZENTO: Responde 200 OK imediatamente!
+    res.sendStatus(200);
+
     try {
-        const response = await axios({
-            method: 'POST',
-            url: `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`,
-            data: data,
-            headers: {
-                'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
-                'Content-Type': 'application/json'
-            },
-            timeout: 8000 // Timeout de segurança para não travar o bot
-        });
-        return response.data;
+        const body = req.body;
+
+        // FILTRO ANTI-CRASH: Ignora recibos de leitura/entrega. 
+        // A Meta envia isso constantemente e não possui "message.from", o que travava seu bot.
+        if (body.entry?.[0]?.changes?.[0]?.value?.statuses) {
+            return; 
+        }
+
+        if (body.object) {
+            const changeValue = body.entry?.[0]?.changes?.[0]?.value;
+            const message = changeValue?.messages?.[0];
+            const contact = changeValue?.contacts?.[0];
+
+            if (message) {
+                // Adiciona o nome do perfil (se existir) ao objeto da mensagem
+                if (contact) {
+                    message.profile = { name: contact.profile?.name };
+                }
+
+                // Descobrir qual motor está ativo no Hub Global
+                const config = await prisma.configSistema.findFirst();
+                const modoAtivo = config?.modoAtivo || 'CLINICA';
+
+                // Roteamento para o motor correspondente
+                if (modoAtivo === 'BARBEARIA') {
+                    const barbeariaEngine = require('./barbearia/botEngine');
+                    barbeariaEngine.processarMensagemEntrante(message);
+                } else {
+                    const clinicaEngine = require('./clinica/botEngine');
+                    clinicaEngine.processarMensagemEntrante(message);
+                }
+            }
+        }
     } catch (error) {
-        console.error("❌ [WhatsApp API ERRO]:", error.response ? JSON.stringify(error.response.data) : error.message);
-        return null;
+        console.error("❌ [WEBHOOK] Erro crítico ao rotear a mensagem:", error);
     }
-}
+});
+// =========================================================================
 
-async function markAsReadAndTyping(msgId, to) {
+
+// Rotas gerais da aplicação
+app.use('/', routes);
+
+// HEALTH CHECK
+app.get('/health', (req, res) => {
+    res.status(200).json({ 
+        status: "online", 
+        timestamp: new Date().toISOString(),
+        memoryUsage: process.memoryUsage().heapUsed / 1024 / 1024 + " MB"
+    });
+});
+
+const PORT = process.env.PORT || 3000;
+
+async function bootstrap() {
     try {
-        // 1. Marca a mensagem como lida (Tiques azuis)
-        if (msgId) {
-            await sendWhatsAppRequest({
-                messaging_product: "whatsapp",
-                message_id: msgId,
-                status: "read"
-            });
-        }
+        await seedDatabase();
+        iniciarAutomaçoes(); 
         
-        // 2. Ativa o indicador de "Digitando..." (Typing Indicator)
-        if (to) {
-            await sendWhatsAppRequest({
-                messaging_product: "whatsapp",
-                recipient_type: "individual",
-                to: to,
-                type: "sender_action",
-                sender_action: "typing_on"
-            });
-        }
-    } catch (e) {
-        console.error("⚠️ [WhatsApp] Erro não crítico ao tentar marcar como lida/digitando:", e.message);
+        server.listen(PORT, () => {
+            console.log(`[SYSTEM] API Central SaaS operando na porta ${PORT}`);
+            console.log(`[SYSTEM] Proteções ativas: Helmet, Rate-Limit, Memory-Capping`);
+        });
+    } catch (error) {
+        console.error("[ERRO CRÍTICO] Falha ao iniciar servidor:", error);
+        process.exit(1);
     }
 }
 
-async function sendText(to, text) {
-    return await sendWhatsAppRequest({
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to: to,
-        type: "text",
-        text: { preview_url: true, body: text }
+process.on('SIGTERM', async () => {
+    console.log('[SYSTEM] Sinal SIGTERM recebido. Encerrando processos...');
+    await prisma.$disconnect();
+    server.close(() => {
+        console.log('[SYSTEM] Servidor HTTP encerrado com segurança.');
+        process.exit(0);
     });
-}
+});
 
-async function sendInteractiveMenu(to, text, buttons) {
-    const actionButtons = buttons.slice(0, 3).map(btn => ({
-        type: "reply",
-        reply: { id: btn.id, title: btn.title }
-    }));
-
-    return await sendWhatsAppRequest({
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to: to,
-        type: "interactive",
-        interactive: {
-            type: "button",
-            body: { text: text },
-            action: { buttons: actionButtons }
-        }
-    });
-}
-
-async function sendMediaUrl(to, type, url, caption = "") {
-    const mediaObj = { link: url };
-    if (caption && (type === 'image' || type === 'video' || type === 'document')) {
-        mediaObj.caption = caption;
-    }
-    
-    const payload = {
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to: to,
-        type: type
-    };
-    payload[type] = mediaObj;
-
-    return await sendWhatsAppRequest(payload);
-}
-
-module.exports = {
-    sendText,
-    sendInteractiveMenu,
-    sendMediaUrl,
-    markAsReadAndTyping
-};
+bootstrap();
