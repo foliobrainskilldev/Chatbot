@@ -27,6 +27,10 @@ async function getOrCreateCliente(numero, nomePushName = null) {
 async function processarMensagemEntrante(message) {
     const senderNumber = message.from;
     const msgId = message.id;
+    
+    // GATILHO VISUAL 1: Mostra os 2 Ticks Azuis e o status "Digitando..." no celular do paciente
+    await whatsappService.markAsReadAndTyping(msgId);
+
     let pushName = message.profile?.name || null;
     let cliente = await getOrCreateCliente(senderNumber, pushName);
     
@@ -37,7 +41,6 @@ async function processarMensagemEntrante(message) {
         return;
     }
 
-    await whatsappService.markAsReadAndTyping(msgId, senderNumber);
     let textoProcessado = "";
     let mediaCloudinaryUrl = null;
 
@@ -76,7 +79,7 @@ async function processarMensagemEntrante(message) {
 
     let nlpResult = { intent: "unknown", confidence: 1, entities: {} };
 
-    // ORQUESTRAÇÃO DE NLP VS MODO ESTRUTURADO INTERATIVO
+    // ORQUESTRAÇÃO DE NLP VS MODO INTERATIVO
     if (!isInteractive && textoProcessado) {
         nlpResult = await aiService.analisarMensagemNLP(textoProcessado, historico, userState);
     } else if (isInteractive) {
@@ -91,10 +94,8 @@ async function processarMensagemEntrante(message) {
         }
     }
 
-    // Merge nas Entidades Identificadas (Memória Curta)
     userState.entities = { ...userState.entities, ...(nlpResult.entities || {}) };
 
-    // Gestão de Confiança e Fixação de Intenção (Slot Filling)
     let activeIntent = nlpResult.intent;
     if (nlpResult.confidence < 0.3 && userState.step !== 'IDLE') {
         activeIntent = userState.intent; 
@@ -103,6 +104,11 @@ async function processarMensagemEntrante(message) {
     } else {
         activeIntent = userState.intent || 'unknown';
     }
+
+    // GATILHO VISUAL 2: Cria um Delay Aleatório e Humano (2 a 5 Segundos) 
+    // Enquanto o processo aguarda aqui, o paciente está vendo o "digitando..."
+    const delayMs = Math.floor(Math.random() * (5000 - 2000 + 1)) + 2000;
+    await new Promise(resolve => setTimeout(resolve, delayMs));
 
     if (activeIntent === 'human.transfer') {
         await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
@@ -118,7 +124,7 @@ async function processarMensagemEntrante(message) {
         return;
     }
 
-    // ROTEAMENTO PARA AS FERRAMENTAS DO BACKEND
+    // ROTEAMENTO DE AÇÕES
     if (activeIntent === 'appointment.create') {
         await prisma.cliente.update({ where: { id: senderNumber }, data: { leadStatus: 'QUALIFICADO' } });
         await processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb);

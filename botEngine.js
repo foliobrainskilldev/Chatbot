@@ -19,6 +19,8 @@ const verificarWebhook = (req, res) => {
 };
 
 const processarWebhook = (req, res) => {
+    // É CRUCIAL retornar o 200 OK imediatamente para a Meta,
+    // Senão ela acha que o bot caiu e reenvia a mensagem (causando silêncio e loops)
     res.sendStatus(200); 
 
     (async () => {
@@ -28,13 +30,16 @@ const processarWebhook = (req, res) => {
             if (body.object) {
                 let changes = body.entry?.[0]?.changes?.[0]?.value;
                 
+                // PREVENÇÃO DE CRASH: Ignora eventos de status (Entregue, Lido)
+                if (changes?.statuses) {
+                    return; 
+                }
+                
                 if (changes?.messages?.[0]) {
                     const message = changes.messages[0];
                     
                     const configDb = await prisma.configSistema.findUnique({ where: { id: 1 } });
                     const modoAtivo = configDb?.modoAtivo || 'BARBEARIA';
-                    
-                    console.log(`[ROTEAMENTO META] Direcionando mensagem de ${message.from} para o motor: ${modoAtivo}`);
                     
                     if (modoAtivo === 'BARBEARIA') {
                         await botBarbearia.processarMensagemEntrante(message);
@@ -46,7 +51,7 @@ const processarWebhook = (req, res) => {
                 } 
             }
         } catch (error) {
-            console.error('❌ ERRO INTERNO NO PROCESSAMENTO DO WEBHOOK (MOTOR RAIZ):', error);
+            console.error('❌ ERRO INTERNO NO PROCESSAMENTO DO WEBHOOK:', error);
         }
     })();
 };

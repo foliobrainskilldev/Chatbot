@@ -1,6 +1,5 @@
 const { prisma, getOrCreateCliente } = require('../db');
 const whatsappService = require('../whatsappService');
-const aiService = require('../aiService');
 
 // Fluxos exclusivos da Barbearia
 const { iniciarAgendamento, handleAgendamento } = require('./flowAgendamento');
@@ -11,7 +10,6 @@ const stateMachine = new Map();
 
 const STEPS = {
     MENU_PRINCIPAL: 'MENU_PRINCIPAL',
-    PEDIR_NOME: 'PEDIR_NOME',
     AGENDAMENTO_SERVICO: 'AGENDAMENTO_SERVICO',
     AGENDAMENTO_BARBEIRO: 'AGENDAMENTO_BARBEIRO',
     AGENDAMENTO_DATA: 'AGENDAMENTO_DATA',
@@ -38,6 +36,10 @@ async function enviarMenuGeral(jid) {
 async function processarMensagemEntrante(message) {
     const senderNumber = message.from;
     const jid = senderNumber;
+    
+    // GATILHO VISUAL 1: Mostra os 2 Ticks Azuis e o status "Digitando..."
+    await whatsappService.markAsReadAndTyping(message.id);
+
     let textMessage = message.text?.body || "";
     if (message.type === 'interactive') {
         textMessage = message.interactive.button_reply?.id || message.interactive.list_reply?.id;
@@ -49,7 +51,10 @@ async function processarMensagemEntrante(message) {
     if (cliente.falarHumano) return; // Se está no suporte, a IA ignora.
 
     let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {} };
-    const configDb = await prisma.configSistema.findFirst();
+    
+    // GATILHO VISUAL 2: Cria um Delay Aleatório e Humano (2 a 5 Segundos)
+    const delayMs = Math.floor(Math.random() * (5000 - 2000 + 1)) + 2000;
+    await new Promise(resolve => setTimeout(resolve, delayMs));
 
     // ROTEAMENTO BARBEARIA
     if (textMessage.startsWith('srv_') || textMessage.startsWith('barb_') || userState.step.startsWith('AGENDAMENTO_')) {
@@ -66,6 +71,7 @@ async function processarMensagemEntrante(message) {
     if (textMessage === 'cmd_precos') return await verPrecosEServicos(jid);
     if (textMessage === 'cmd_agenda') return await verMeusAgendamentos(jid, senderNumber);
     if (textMessage === 'cmd_cancelar') return await iniciarCancelamento(jid, senderNumber, stateMachine, STEPS);
+    
     if (textMessage === 'cmd_humano') {
         await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true } });
         await whatsappService.sendText(jid, 'Transferido para a equipe da Barbearia. Aguarde.');

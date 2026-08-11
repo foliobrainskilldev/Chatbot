@@ -38,35 +38,6 @@ async function transcreverAudioPorUrl(audioUrl) {
     }
 }
 
-// Mantido apenas para compatibilidade com o bot da Barbearia (Legado)
-async function classificarIntencao(textoCliente) {
-    if (!process.env.GROQ_API_KEY) return "DUVIDA";
-    const prompt = `Analise a mensagem do paciente e classifique a intenção em APENAS UMA das TAGS abaixo. 
-    Responda ESTRITAMENTE com a TAG.
-    TAGS DISPONÍVEIS: AGENDAR, PRECOS, HUMANO, CANCELAR, DUVIDA
-    Mensagem: "${textoCliente}"`;
-
-    try {
-        const resposta = await groq.chat.completions.create({
-            model: "llama-3.1-8b-instant",
-            messages: [{ role: "system", content: prompt }],
-            temperature: 0.1, max_tokens: 10
-        });
-        return resposta.choices[0]?.message?.content.trim().toUpperCase() || "DUVIDA";
-    } catch (erro) { 
-        return "DUVIDA"; 
-    }
-}
-
-// Mantido apenas para compatibilidade com o bot da Barbearia (Legado)
-async function responderComContextoIA(mensagemCliente, historicoAnterior, configSistema, tratamentos) {
-    return await gerarRespostaNatural(mensagemCliente, historicoAnterior, { tratamentos }, configSistema);
-}
-
-// -------------------------------------------------------------
-// NOVO PIPELINE NLP AVANÇADO DA CLÍNICA
-// -------------------------------------------------------------
-
 async function analisarMensagemNLP(textoCliente, historico, estadoAtual) {
     if (!process.env.GROQ_API_KEY) return { intent: "unknown", confidence: 0, entities: {} };
 
@@ -93,7 +64,7 @@ Intenções permitidas:
 - goodbye
 - unknown
 
-Entidades a extrair (apenas se mencionadas explicitamente na mensagem ou contexto claro):
+Entidades a extrair (apenas se mencionadas explicitamente):
 - treatment: nome do tratamento/procedimento
 - professional: nome do médico/doutor
 - date: data no formato exato DD/MM/YYYY
@@ -102,7 +73,7 @@ Entidades a extrair (apenas se mencionadas explicitamente na mensagem ou context
 Estado atual da conversa: ${JSON.stringify(estadoAtual)}
 Mensagem atual do paciente: "${textoCliente}"
 
-Você deve responder APENAS com um objeto JSON válido, sem nenhum markdown, sem explicações extras.`;
+Você deve responder APENAS com um objeto JSON válido.`;
 
     try {
         const resposta = await groq.chat.completions.create({
@@ -112,27 +83,29 @@ Você deve responder APENAS com um objeto JSON válido, sem nenhum markdown, sem
             response_format: { type: "json_object" }
         });
         
-        return JSON.parse(resposta.choices[0]?.message?.content);
+        // Proteção para caso o Llama "alucine" o formato JSON
+        const content = resposta.choices[0]?.message?.content || "{}";
+        return JSON.parse(content);
     } catch (erro) {
-        console.error("Erro no NLP JSON Parse:", erro);
+        console.error("Erro no NLP JSON Parse. Fazendo Fallback Seguro.", erro);
         return { intent: "unknown", confidence: 0, entities: {} };
     }
 }
 
 async function gerarRespostaNatural(textoCliente, historico, dadosContexto, configSistema) {
-    if (!process.env.GROQ_API_KEY) return "Desculpe, sistemas de inteligência indisponíveis.";
+    if (!process.env.GROQ_API_KEY) return "Desculpe, nossos sistemas de IA estão reiniciando ou indisponíveis no momento.";
 
     const systemInstrucoes = `Você é ${configSistema.nomeAssistente}, assistente virtual oficial da ${configSistema.nomeClinica}.
 Idioma: ${configSistema.idioma}. Tom de voz: ${configSistema.tomDeVoz}. Estilo: ${configSistema.estiloComunicacao}.
 
-REGRA DE OURO E PROTEÇÃO INVIOLÁVEL: 
-Use EXATAMENTE os dados fornecidos no contexto abaixo para responder. NÃO INVENTE preços, NÃO INVENTE horários disponíveis, NÃO FAÇA diagnósticos médicos, NÃO PRESCREVA tratamentos.
-Se a informação não estiver no contexto abaixo, diga que não tem essa informação no momento e ofereça transferir para a equipe clínica.
+REGRA DE OURO: 
+Use EXATAMENTE os dados fornecidos no contexto abaixo para responder. NÃO INVENTE preços, NÃO INVENTE horários, NÃO FAÇA diagnósticos.
+Se a informação não estiver no contexto, diga que não sabe no momento.
 
-DADOS REAIS RECUPERADOS DO BANCO DE DADOS DA CLÍNICA (USE ISSO PARA RESPONDER):
+DADOS REAIS RECUPERADOS DO BANCO (USE ISSO):
 ${JSON.stringify(dadosContexto, null, 2)}
 
-Aja de forma natural e responda diretamente à dúvida do paciente considerando o contexto acima.`;
+Responda diretamente à dúvida do paciente.`;
 
     try {
         const msgs = [{ role: "system", content: systemInstrucoes }];
@@ -152,16 +125,14 @@ Aja de forma natural e responda diretamente à dúvida do paciente considerando 
             max_tokens: 400 
         });
         
-        return resposta.choices[0]?.message?.content || "Desculpe, não consegui formular a resposta adequadamente agora.";
+        return resposta.choices[0]?.message?.content || "Desculpe, não consegui processar a informação adequadamente agora.";
     } catch (erro) {
-        return "Desculpe, meus servidores estão sobrecarregados no momento. Volte a tentar em instantes."; 
+        return "Desculpe, meus servidores estão ocupados. Volte a tentar em instantes."; 
     }
 }
 
 module.exports = { 
     transcreverAudioPorUrl, 
-    classificarIntencao, 
-    responderComContextoIA, 
     analisarMensagemNLP, 
     gerarRespostaNatural 
 };

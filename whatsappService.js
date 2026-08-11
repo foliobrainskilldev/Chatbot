@@ -5,25 +5,25 @@ const META_TOKEN = process.env.META_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 
 const api = axios.create({
-    baseURL: `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}`,
+    // Atualizado para a API v20.0 para suportar a feature nativa de Typing Indicator
+    baseURL: `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}`,
     headers: {
         'Authorization': `Bearer ${META_TOKEN}`,
         'Content-Type': 'application/json'
     }
 });
 
-async function markAsReadAndTyping(messageId, to) {
+// Envia os Ticks Azuis e ativa o "Digitando..." no celular do paciente
+async function markAsReadAndTyping(messageId) {
     if (!messageId) return;
     try {
         await api.post('/messages', {
             messaging_product: 'whatsapp',
             status: 'read',
             message_id: messageId,
-        });
-        await api.post('/messages', {
-            messaging_product: 'whatsapp',
-            to: to,
-            typing_indicator: { type: 'text' }
+            typing_indicator: {
+                type: 'text'
+            }
         });
     } catch (error) {
         console.error("Falha ao marcar status lido/digitando Meta:", error?.response?.data || error.message);
@@ -77,8 +77,7 @@ async function sendInteractiveMenu(to, text, options) {
             action: {}
         };
         
-        // CORREÇÃO CRÍTICA: A Meta rejeita botões cujo título ultrapasse 20 caracteres. 
-        // Com o banco de dados dinâmico de tratamentos, a string é rigorosamente aparada aqui para evitar "Quebras silenciosas" de webhook.
+        // CORREÇÃO CRÍTICA: API da Meta rejeita botões > 20 caracteres e listas > 24.
         if (options.length <= 3) {
             interactiveObj.action.buttons = options.map(opt => ({
                 type: "reply",
@@ -93,7 +92,6 @@ async function sendInteractiveMenu(to, text, options) {
                 title: "Selecione uma opção",
                 rows: options.slice(0, 10).map(opt => ({
                     id: String(opt.id).substring(0, 200),
-                    // As listas aguentam até 24 caracteres antes de a API da Meta derrubar o request
                     title: String(opt.title).length > 24 ? String(opt.title).substring(0, 21) + "..." : String(opt.title),
                     description: opt.description ? String(opt.description).substring(0, 72) : ""
                 }))
@@ -114,7 +112,7 @@ async function sendInteractiveMenu(to, text, options) {
 
 async function downloadMetaMediaToCloudinary(mediaId, mimeType) {
     try {
-        const getUrlResponse = await axios.get(`https://graph.facebook.com/v18.0/${mediaId}`, {
+        const getUrlResponse = await axios.get(`https://graph.facebook.com/v20.0/${mediaId}`, {
             headers: { 'Authorization': `Bearer ${META_TOKEN}` }
         });
         
@@ -129,7 +127,7 @@ async function downloadMetaMediaToCloudinary(mediaId, mimeType) {
         const cloudResult = await cloudinaryService.uploadStream(buffer, 'clinica/recebidos', resourceType);
         return cloudResult.secure_url;
     } catch (error) {
-        console.error("Erro download Mídia Meta para Cloudinary:", error?.response?.data || error.message);
+        console.error("Erro download Mídia Meta:", error?.response?.data || error.message);
         return null;
     }
 }
