@@ -3,7 +3,7 @@ const whatsappService = require('../whatsappService');
 const aiService = require('../aiService');
 const webhookService = require('../services/webhookService');
 const automationEngine = require('../services/automationEngine');
-const cloudinaryService = require('../services/cloudinaryService'); // Adicionado para lidar com as mídias recebidas
+const cloudinaryService = require('../services/cloudinaryService');
 
 const stateMachine = new Map();
 
@@ -45,36 +45,46 @@ async function processarMensagemEntrante(message) {
             let tipoMidia = message.type;
             let isTranscribed = false;
 
-            // 1. Processar Mídias e Textos Recebidos do Paciente (Ocorre sempre, mesmo com humano ativo)
+            // 1. Processar Mídias ISOLADAMENTE
             if (message.type === 'audio') {
                 const mediaId = message.audio.id;
                 console.log(`🎙️ [MÍDIA] Baixando áudio do WhatsApp...`);
+                let audioBuffer;
+
                 try {
-                    const audioBuffer = await whatsappService.downloadMedia(mediaId);
-                    
-                    // Salvar no Cloudinary para renderizar no player de áudio do Front-end
-                    const cloudRes = await cloudinaryService.uploadStream(audioBuffer, 'clinica/pacientes/audios', 'video');
-                    midiaUrl = cloudRes.secure_url;
-                    
-                    textoProcessado = await aiService.transcreverAudio(audioBuffer);
-                    isTranscribed = true;
-                    console.log(`🎙️ [WHISPER] Texto Transcrito: "${textoProcessado}"`);
-                } catch (e) {
-                    console.error("Erro ao baixar/transcrever áudio:", e);
-                    textoProcessado = "[Falha na transcrição do áudio]";
+                    audioBuffer = await whatsappService.downloadMedia(mediaId);
+                } catch(e) { console.error("Erro ao baixar áudio do WhatsApp."); }
+
+                if (audioBuffer) {
+                    // Upload Cloudinary Isolado
+                    try {
+                        const cloudRes = await cloudinaryService.uploadStream(audioBuffer, 'clinica/pacientes/audios', 'video');
+                        midiaUrl = cloudRes.secure_url;
+                    } catch (e) { console.error("⚠️ Aviso: Falha ao salvar áudio no Cloudinary.", e.message); }
+
+                    // Transcrição Whisper Isolada
+                    try {
+                        textoProcessado = await aiService.transcreverAudio(audioBuffer);
+                        isTranscribed = true;
+                        console.log(`🎙️ [WHISPER] Texto Transcrito: "${textoProcessado}"`);
+                    } catch (e) {
+                        console.error("⚠️ Erro Whisper:", e.message);
+                        textoProcessado = "[Falha na transcrição do áudio]";
+                    }
                 }
+
             } else if (['image', 'video', 'document'].includes(message.type)) {
                 const mediaId = message[message.type].id;
-                textoProcessado = message[message.type].caption || ""; // Se o paciente mandou foto com legenda
+                textoProcessado = message[message.type].caption || ""; 
                 console.log(`🖼️ [MÍDIA] Baixando ${message.type} do paciente...`);
+                
                 try {
                     const mediaBuffer = await whatsappService.downloadMedia(mediaId);
                     const resourceType = message.type === 'image' ? 'image' : (message.type === 'video' ? 'video' : 'raw');
-                    
                     const cloudRes = await cloudinaryService.uploadStream(mediaBuffer, `clinica/pacientes/${message.type}s`, resourceType);
                     midiaUrl = cloudRes.secure_url;
                 } catch (e) {
-                    console.error(`Erro ao salvar ${message.type}:`, e);
+                    console.error(`⚠️ Aviso: Erro ao salvar ${message.type} no Cloudinary. O Bot continuará executando com texto.`, e.message);
                 }
             } else if (message.type === 'text') {
                 textoProcessado = message.text.body;
@@ -82,15 +92,15 @@ async function processarMensagemEntrante(message) {
                 textoProcessado = message.interactive.button_reply?.id || message.interactive.list_reply?.id;
             }
 
+            // Ignorar apenas se TUDO falhar ou for mensagem em branco
             if (!textoProcessado && !midiaUrl) {
                 console.log(`⚠️ [MOTOR CLÍNICA] Mensagem sem texto e sem mídia ignorada.`);
                 return;
             }
 
-            // 2. Salvar na Base de Dados usando a formatação que o Painel do Atendente exige
+            // 2. Salvar na Base de Dados
             let contentToSave = textoProcessado;
             if (midiaUrl) {
-                // Ex: [MEDIA:image] https://cloudinary... | Texto: Olha meu dente
                 contentToSave = `[MEDIA:${tipoMidia}] ${midiaUrl} | Texto: ${textoProcessado}`;
             } else if (isTranscribed) {
                 contentToSave = `[Áudio Transcrito]: ${textoProcessado}`;
@@ -106,13 +116,13 @@ async function processarMensagemEntrante(message) {
                 } 
             });
 
-            // 3. Se o humano estiver no controle, o motor PARA AQUI. (Mídia já salva)
+            // 3. Se humano está no controle
             if (cliente.falarHumano) {
                 console.log(`🛑 [MOTOR CLÍNICA] Lead em atendimento humano. IA ignorou a mensagem.`);
                 return; 
             }
 
-            // 4. CAPTURA DA PESQUISA DE SATISFAÇÃO (CSAT) APÓS ATENDIMENTO HUMANO
+            // 4. Captura Pesquisa de CSAT após encerramento do chat humano
             const historicoRaw = await prisma.mensagemIA.findMany({ 
                 where: { clienteId: senderNumber }, 
                 take: 8, orderBy: { criadoEm: 'desc' } 
@@ -139,7 +149,7 @@ async function processarMensagemEntrante(message) {
                 }
             }
 
-            // 5. Processamento Padrão de IA (NLP)
+            // 5. NLP IA
             let isInteractive = message.type === 'interactive';
             let userState = stateMachine.get(senderNumber) || { step: 'IDLE', intent: null, entities: {} };
             const configDb = await prisma.configSistema.findFirst();

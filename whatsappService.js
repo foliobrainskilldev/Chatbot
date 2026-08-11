@@ -89,7 +89,6 @@ async function sendMediaUrl(to, type, url, caption = "") {
     return await sendWhatsAppRequest(payload);
 }
 
-// NOVO: Função para baixar Mídias (Áudio/Imagem) do WhatsApp API
 async function downloadMedia(mediaId) {
     const META_TOKEN = process.env.META_TOKEN ? process.env.META_TOKEN.trim() : null;
     if (!META_TOKEN) throw new Error("META_TOKEN ausente.");
@@ -101,13 +100,14 @@ async function downloadMedia(mediaId) {
         });
         const mediaUrl = resUrl.data.url;
 
-        // 2. Fazer download do arquivo em Buffer Binário
+        // 2. Fazer download do arquivo em ArrayBuffer Binário
         const resBinary = await axios.get(mediaUrl, {
             headers: { 'Authorization': `Bearer ${META_TOKEN}` },
             responseType: 'arraybuffer' 
         });
 
-        return resBinary.data;
+        // CORREÇÃO CRÍTICA: Converte para Buffer Nativo do Node para evitar erro 403 no Cloudinary
+        return Buffer.from(resBinary.data);
     } catch (error) {
         console.error("❌ [WhatsApp Media ERRO]: Falha ao baixar arquivo de mídia.");
         throw error;
