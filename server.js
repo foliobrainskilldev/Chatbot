@@ -11,6 +11,14 @@ const routes = require('./routes');
 const security = require('./middlewares/security');
 
 const app = express();
+
+// ==========================================
+// CORREÇÃO CRÍTICA PARA HOSPEDAGEM (RENDER/HEROKU)
+// ==========================================
+// Diz ao Express para confiar no Proxy do Render. 
+// Sem isso, o limitador de requisições bloqueia o Webhook do WhatsApp e causa silêncio total.
+app.set('trust proxy', 1);
+
 const server = http.createServer(app);
 
 // ==========================================
