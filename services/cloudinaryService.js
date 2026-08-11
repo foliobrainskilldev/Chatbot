@@ -1,12 +1,15 @@
 const cloudinary = require('cloudinary').v2;
 const streamifier = require('streamifier');
 
-// Configuração baseada nas variáveis de ambiente (.env)
-cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
-});
+// Função para garantir que a configuração seja lida apenas no momento da execução (lazy-loading)
+function getCloudinary() {
+    cloudinary.config({
+        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+        api_key: process.env.CLOUDINARY_API_KEY,
+        api_secret: process.env.CLOUDINARY_API_SECRET
+    });
+    return cloudinary;
+}
 
 /**
  * Faz o upload de um buffer de arquivo (imagem, áudio, pdf) diretamente para o Cloudinary.
@@ -17,7 +20,8 @@ cloudinary.config({
  */
 const uploadStream = (buffer, folder, resourceType = 'auto') => {
     return new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream(
+        const cld = getCloudinary();
+        const stream = cld.uploader.upload_stream(
             { 
                 folder: folder, 
                 resource_type: resourceType,
@@ -42,7 +46,8 @@ const uploadStream = (buffer, folder, resourceType = 'auto') => {
  */
 const uploadFromUrl = async (url, folder) => {
     try {
-        const result = await cloudinary.uploader.upload(url, {
+        const cld = getCloudinary();
+        const result = await cld.uploader.upload(url, {
             folder: folder,
             resource_type: 'auto'
         });
@@ -59,7 +64,8 @@ const uploadFromUrl = async (url, folder) => {
  */
 const deleteFile = async (publicId) => {
     try {
-        await cloudinary.uploader.destroy(publicId);
+        const cld = getCloudinary();
+        await cld.uploader.destroy(publicId);
         return true;
     } catch (error) {
         console.error("Erro ao deletar do Cloudinary:", error);

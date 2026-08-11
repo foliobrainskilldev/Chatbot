@@ -1,10 +1,12 @@
 const axios = require('axios');
 
-const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
-const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const API_VERSION = 'v18.0';
 
 async function sendWhatsAppRequest(data) {
+    // Avaliação Dinâmica (Garante que nunca retorne undefined mesmo se o dotenv atrasar)
+    const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
+    const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
+
     if (!WHATSAPP_TOKEN || !PHONE_NUMBER_ID) {
         console.error("⚠️ [WhatsApp] FALTAM CREDENCIAIS: Verifique o WHATSAPP_TOKEN e PHONE_NUMBER_ID no .env");
         return null;

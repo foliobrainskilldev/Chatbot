@@ -1,8 +1,9 @@
 const axios = require('axios');
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-
 async function analisarMensagemNLP(mensagem, historico, userState) {
+    // Avaliação Dinâmica
+    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+    
     if (!OPENAI_API_KEY) {
         console.warn("⚠️ [NLP] OPENAI_API_KEY não configurada no .env. Usando fallback básico.");
         return fallbackNLP(mensagem);
@@ -93,6 +94,9 @@ function fallbackNLP(mensagem) {
 }
 
 async function gerarRespostaNatural(mensagem, historico, contexto, configDb) {
+    // Avaliação Dinâmica
+    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
     if (!OPENAI_API_KEY) {
         return "Recebi sua mensagem, mas meu sistema inteligente está offline. Como posso ajudar de forma objetiva?";
     }
