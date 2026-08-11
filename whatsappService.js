@@ -3,12 +3,11 @@ const axios = require('axios');
 const API_VERSION = 'v18.0';
 
 async function sendWhatsAppRequest(data) {
-    // Busca e limpa espaços vazios invisíveis que podem vir do painel do Render
-    const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN ? process.env.WHATSAPP_TOKEN.trim() : null;
+    const META_TOKEN = process.env.META_TOKEN ? process.env.META_TOKEN.trim() : null;
     const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID ? String(process.env.PHONE_NUMBER_ID).trim() : null;
 
-    if (!WHATSAPP_TOKEN || !PHONE_NUMBER_ID) {
-        console.error("⚠️ [WhatsApp] FALTAM CREDENCIAIS: Verifique o WHATSAPP_TOKEN e PHONE_NUMBER_ID no .env");
+    if (!META_TOKEN || !PHONE_NUMBER_ID) {
+        console.error("⚠️ [WhatsApp] FALTAM CREDENCIAIS: Verifique o META_TOKEN e PHONE_NUMBER_ID no .env");
         return null;
     }
     
@@ -18,10 +17,10 @@ async function sendWhatsAppRequest(data) {
             url: `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`,
             data: data,
             headers: {
-                'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
+                'Authorization': `Bearer ${META_TOKEN}`,
                 'Content-Type': 'application/json'
             },
-            timeout: 8000
+            timeout: 8000 
         });
         return response.data;
     } catch (error) {

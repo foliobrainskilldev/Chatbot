@@ -4,7 +4,7 @@ const botClinica = require('./clinica/botEngine');
 const whatsappService = require('./whatsappService'); 
 
 const verificarWebhook = (req, res) => {
-    const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'barbearia_secreta_2024';
+    const VERIFY_TOKEN = process.env.VERIFY_TOKEN ? process.env.VERIFY_TOKEN.trim() : 'barbearia_secreta_2024';
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
@@ -19,7 +19,6 @@ const verificarWebhook = (req, res) => {
 };
 
 const processarWebhook = (req, res) => {
-    // Sempre responda 200 OK imediatamente para a Meta, ou ela bloqueará seu webhook!
     res.sendStatus(200); 
 
     (async () => {
@@ -49,7 +48,6 @@ const processarWebhook = (req, res) => {
             if (changes?.messages?.[0]) {
                 const message = changes.messages[0];
                 
-                // Captura o nome do contato diretamente do Webhook e injeta no objeto message
                 const contact = changes.contacts?.[0];
                 if (contact?.profile?.name) {
                     message.profile = { name: contact.profile.name };

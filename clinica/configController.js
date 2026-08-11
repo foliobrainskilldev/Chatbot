@@ -17,7 +17,6 @@ exports.atualizarConfigCompleta = async (req, res) => {
         let logoNovaUrl = data.logoUrl || null;
         
         if (req.file) {
-            // Usa o buffer em memória para jogar pro Cloudinary direto
             const cloudResult = await cloudinaryService.uploadStream(req.file.buffer, 'clinica/config', 'image');
             logoNovaUrl = cloudResult.secure_url;
         }
@@ -92,7 +91,8 @@ exports.atualizarConfigCompleta = async (req, res) => {
 
 exports.testCloudinary = async (req, res) => {
     try {
-        const hasCloudinary = !!process.env.CLOUDINARY_API_KEY;
+        const cloudinaryKey = process.env.CLOUDINARY_API_KEY ? process.env.CLOUDINARY_API_KEY.trim() : null;
+        const hasCloudinary = !!cloudinaryKey;
         res.status(200).json({ success: hasCloudinary });
     } catch (error) {
         res.status(500).json({ error: "Erro ao testar Cloudinary." });

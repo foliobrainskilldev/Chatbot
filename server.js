@@ -1,9 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 
-// 💡 LEITOR INTELIGENTE DE AMBIENTE (Resolve o problema do Render)
 const envLocal = path.resolve(__dirname, '.env');
-const envRenderSecret = '/etc/secrets/.env'; // Caminho secreto do Render
+const envRenderSecret = '/etc/secrets/.env';
 
 if (fs.existsSync(envLocal)) {
     require('dotenv').config({ path: envLocal });
@@ -12,14 +11,14 @@ if (fs.existsSync(envLocal)) {
     require('dotenv').config({ path: envRenderSecret });
     console.log("⚙️ [SISTEMA] Lendo credenciais do Secret File do Render.");
 } else {
-    console.log("⚙️ [SISTEMA] Nenhum .env encontrado. Usando variáveis puras do Sistema Operacional.");
+    console.log("⚙️ [SISTEMA] Nenhum arquivo .env físico encontrado. Lendo direto das variáveis do Render.");
 }
 
-// 💡 RAIO-X DE DIAGNÓSTICO (Vai aparecer nos logs do Render quando iniciar)
 console.log("\n=== DIAGNÓSTICO DE CREDENCIAIS (RENDER) ===");
-console.log("WHATSAPP_TOKEN: ", process.env.WHATSAPP_TOKEN ? "✅ ENCONTRADO" : "❌ AUSENTE OU VAZIO");
-console.log("PHONE_NUMBER_ID:", process.env.PHONE_NUMBER_ID ? "✅ ENCONTRADO" : "❌ AUSENTE OU VAZIO");
-console.log("OPENAI_API_KEY: ", process.env.OPENAI_API_KEY ? "✅ ENCONTRADO" : "❌ AUSENTE OU VAZIO");
+console.log("META_TOKEN:      ", process.env.META_TOKEN ? "✅ ENCONTRADO" : "❌ AUSENTE OU VAZIO");
+console.log("PHONE_NUMBER_ID: ", process.env.PHONE_NUMBER_ID ? "✅ ENCONTRADO" : "❌ AUSENTE OU VAZIO");
+console.log("GROQ_API_KEY:    ", process.env.GROQ_API_KEY ? "✅ ENCONTRADO" : "❌ AUSENTE OU VAZIO");
+console.log("VERIFY_TOKEN:    ", process.env.VERIFY_TOKEN ? "✅ ENCONTRADO" : "❌ AUSENTE OU VAZIO");
 console.log("===========================================\n");
 
 const express = require('express');
@@ -33,12 +32,10 @@ const security = require('./middlewares/security');
 
 const app = express();
 
-// CORREÇÃO CRÍTICA PARA HOSPEDAGEM (RENDER/HEROKU)
 app.set('trust proxy', 1);
 
 const server = http.createServer(app);
 
-// CONFIGURAÇÃO DO WEBSOCKET
 const io = new Server(server, { 
     cors: { 
         origin: "*", 
@@ -47,13 +44,11 @@ const io = new Server(server, {
 });
 global.io = io; 
 
-// MIDDLEWARES DE SEGURANÇA E PARSERS
 app.use(security.securityHeaders);
 app.use(cors());
 app.use(security.payloadLimit);
 app.use(security.urlEncodedLimit);
 
-// Logger global
 app.use((req, res, next) => {
     if (req.method === 'POST' && req.url.includes('/webhook')) {
         console.log(`[INCOMING REQUEST] IP: ${req.ip} | Method: ${req.method} | URL: ${req.url}`);
@@ -61,15 +56,11 @@ app.use((req, res, next) => {
     next();
 });
 
-// LIMITADORES DE REQUISIÇÃO
 app.use('/api', security.globalLimiter); 
 app.use('/webhook', security.webhookLimiter); 
 
-// =========================================================================
-// 🚀 ROTAS CRÍTICAS DO WEBHOOK DA META (WHATSAPP)
-// =========================================================================
 app.get('/webhook', (req, res) => {
-    const verify_token = process.env.VERIFY_TOKEN || "healthcrm_token";
+    const verify_token = process.env.VERIFY_TOKEN || "barbearia_secreta_2024";
     let mode = req.query["hub.mode"];
     let token = req.query["hub.verify_token"];
     let challenge = req.query["hub.challenge"];
@@ -85,13 +76,11 @@ app.get('/webhook', (req, res) => {
 });
 
 app.post('/webhook', async (req, res) => {
-    // RESPONDE A META IMEDIATAMENTE (EVITA TIQUE CINZENTO)
     res.sendStatus(200);
 
     try {
         const body = req.body;
 
-        // FILTRO ANTI-CRASH: Ignora recibos de leitura/entrega
         if (body.entry?.[0]?.changes?.[0]?.value?.statuses) {
             return; 
         }
@@ -120,7 +109,6 @@ app.post('/webhook', async (req, res) => {
         console.error("❌ [WEBHOOK] Erro crítico ao rotear a mensagem:", error);
     }
 });
-// =========================================================================
 
 app.use('/', routes);
 
@@ -138,14 +126,13 @@ async function bootstrap() {
     try {
         await seedDatabase();
 
-        // 💡 Importação Dinâmica do Cron
         const cronJobs = require('./cronJobs');
         if (cronJobs && typeof cronJobs.iniciarAutomacoes === 'function') {
             cronJobs.iniciarAutomacoes();
         } else if (cronJobs && typeof cronJobs.iniciarAutomaçoes === 'function') {
             cronJobs.iniciarAutomaçoes();
         } else {
-            console.warn("⚠️ Função do Cron Job não encontrada. Ignorando.");
+            console.warn("⚠️ Função do Cron Job não encontrada. Ignorando e seguindo em frente.");
         }
         
         server.listen(PORT, () => {

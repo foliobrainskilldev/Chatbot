@@ -1,10 +1,10 @@
 const axios = require('axios');
 
 async function analisarMensagemNLP(mensagem, historico, userState) {
-    const OPENAI_API_KEY = process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.trim() : null;
+    const GROQ_API_KEY = process.env.GROQ_API_KEY ? process.env.GROQ_API_KEY.trim() : null;
     
-    if (!OPENAI_API_KEY) {
-        console.warn("⚠️ [NLP] OPENAI_API_KEY não configurada no .env. Usando fallback básico.");
+    if (!GROQ_API_KEY) {
+        console.warn("⚠️ [NLP] GROQ_API_KEY não configurada no .env. Usando fallback básico.");
         return fallbackNLP(mensagem);
     }
 
@@ -53,8 +53,8 @@ Responda APENAS com um JSON válido no formato exato:
 }
 `;
 
-        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-            model: "gpt-4o-mini",
+        const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+            model: "llama3-70b-8192",
             messages: [
                 { role: "system", content: prompt },
                 { role: "user", content: mensagem }
@@ -62,7 +62,7 @@ Responda APENAS com um JSON válido no formato exato:
             temperature: 0,
             response_format: { type: "json_object" }
         }, {
-            headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` }
+            headers: { 'Authorization': `Bearer ${GROQ_API_KEY}` }
         });
 
         const rawContent = response.data.choices[0].message.content;
@@ -93,9 +93,9 @@ function fallbackNLP(mensagem) {
 }
 
 async function gerarRespostaNatural(mensagem, historico, contexto, configDb) {
-    const OPENAI_API_KEY = process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.trim() : null;
+    const GROQ_API_KEY = process.env.GROQ_API_KEY ? process.env.GROQ_API_KEY.trim() : null;
 
-    if (!OPENAI_API_KEY) {
+    if (!GROQ_API_KEY) {
         return "Recebi sua mensagem, mas meu sistema inteligente está offline. Como posso ajudar de forma objetiva?";
     }
 
@@ -123,12 +123,12 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma natural, amigável e
             { role: "user", content: mensagem }
         ];
 
-        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-            model: "gpt-4o-mini",
+        const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+            model: "llama3-70b-8192",
             messages: messages,
             temperature: 0.7
         }, {
-            headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` }
+            headers: { 'Authorization': `Bearer ${GROQ_API_KEY}` }
         });
 
         return response.data.choices[0].message.content;
