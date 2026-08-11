@@ -1,16 +1,17 @@
+// clinica/flowConsultas.js
 const { prisma } = require('../db');
 const aiService = require('../aiService');
 const whatsappService = require('../whatsappService');
 
 async function processarDuvidas(jid, textoProcessado, senderNumber, userState, nlpResult, configDb, historico) {
     let dadosContexto = {};
-    const intent = nlpResult.intent;
+    const intent = nlpResult?.intent || "unknown";
 
     // Constrói o contexto baseado unicamente na intenção exata identificada pelo NLP
     if (intent === 'treatment.price' || intent === 'treatment.info' || intent === 'treatment.duration' || intent === 'treatment.faq') {
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' }});
         
-        if (nlpResult.entities.treatment) {
+        if (nlpResult?.entities?.treatment) {
             const search = nlpResult.entities.treatment.toLowerCase();
             const match = tratamentos.find(t => t.nome.toLowerCase().includes(search));
             if (match) {
@@ -30,17 +31,17 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
             include: { tratamento: true, profissionalSaude: true },
             orderBy: { dataHora: 'asc' }
         });
-        dadosContexto.consultas_futuras_encontradas = agendamentos.map(ag => ({ dataHora: ag.dataHora, tratamento: ag.tratamento.nome, medico: ag.profissionalSaude?.nome || "Plantonista" }));
+        dadosContexto.consultas_futuras_encontradas = agendamentos.map(ag => ({ dataHora: ag.dataHora, tratamento: ag.tratamento?.nome, medico: ag.profissionalSaude?.nome || "Plantonista" }));
     } else if (intent === 'clinic.hours' || intent === 'clinic.location' || intent === 'clinic.contact' || intent === 'clinic.payment_methods') {
         dadosContexto.dados_operacionais = {
-            horarios: configDb.horarioFuncionamento,
-            endereco: configDb.endereco,
-            telefone: configDb.telefone,
-            faq: configDb.faq
+            horarios: configDb?.horarioFuncionamento || "Segunda a Sexta",
+            endereco: configDb?.endereco || "Endereço cadastrado",
+            telefone: configDb?.telefone || "",
+            faq: configDb?.faq || ""
         };
     } else {
         // Intenções gerais: greeting, goodbye, unknown. Enviamos apenas os dados básicos para não sobrecarregar tokens.
-        dadosContexto.dados_basicos = { nome_clinica: configDb.nomeClinica, faq: configDb.faq };
+        dadosContexto.dados_basicos = { nome_clinica: configDb?.nomeClinica || "Clínica", faq: configDb?.faq || "" };
     }
 
     // Gera a resposta natural unindo a Pergunta do Paciente + Restrições + Dados DB

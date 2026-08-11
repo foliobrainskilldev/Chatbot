@@ -1,3 +1,4 @@
+// whatsappService.js
 const axios = require('axios');
 const cloudinaryService = require('./services/cloudinaryService');
 
@@ -5,7 +6,6 @@ const META_TOKEN = process.env.META_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 
 const api = axios.create({
-    // Atualizado para a API v20.0 para suportar a feature nativa de Typing Indicator
     baseURL: `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}`,
     headers: {
         'Authorization': `Bearer ${META_TOKEN}`,
@@ -13,18 +13,28 @@ const api = axios.create({
     }
 });
 
-// Envia os Ticks Azuis e ativa o "Digitando..." no celular do paciente
-async function markAsReadAndTyping(messageId) {
+async function markAsReadAndTyping(messageId, to) {
     if (!messageId) return;
     try {
+        // Envio do "Lido" (Ticks Azuis) Isolado
         await api.post('/messages', {
             messaging_product: 'whatsapp',
             status: 'read',
-            message_id: messageId,
-            typing_indicator: {
-                type: 'text'
-            }
+            message_id: messageId
         });
+
+        // Envio do "Digitando..." Isolado
+        if (to) {
+            await api.post('/messages', {
+                messaging_product: 'whatsapp',
+                recipient_type: 'individual',
+                to: to,
+                type: 'typing_indicator',
+                typing_indicator: {
+                    type: 'text'
+                }
+            });
+        }
     } catch (error) {
         console.error("Falha ao marcar status lido/digitando Meta:", error?.response?.data || error.message);
     }
@@ -77,7 +87,6 @@ async function sendInteractiveMenu(to, text, options) {
             action: {}
         };
         
-        // CORREÇÃO CRÍTICA: API da Meta rejeita botões > 20 caracteres e listas > 24.
         if (options.length <= 3) {
             interactiveObj.action.buttons = options.map(opt => ({
                 type: "reply",

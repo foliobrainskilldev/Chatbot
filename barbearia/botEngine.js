@@ -37,18 +37,21 @@ async function processarMensagemEntrante(message) {
     const senderNumber = message.from;
     const jid = senderNumber;
     
-    // GATILHO VISUAL 1: Mostra os 2 Ticks Azuis e o status "Digitando..."
-    await whatsappService.markAsReadAndTyping(message.id);
-
     let textMessage = message.text?.body || "";
     if (message.type === 'interactive') {
         textMessage = message.interactive.button_reply?.id || message.interactive.list_reply?.id;
     }
 
+    let cliente = await getOrCreateCliente(senderNumber);
+    
+    // CORREÇÃO: Verifica se é o humano falando ANTES de mandar a IA mostrar o "digitando..."
+    if (cliente.falarHumano) return; 
+
     if (!textMessage) return;
 
-    let cliente = await getOrCreateCliente(senderNumber);
-    if (cliente.falarHumano) return; // Se está no suporte, a IA ignora.
+    // GATILHO VISUAL 1: Mostra os 2 Ticks Azuis e o status "Digitando..."
+    // CORREÇÃO: O segundo parâmetro "senderNumber" foi adicionado para alinhar com o novo whatsappService.js
+    await whatsappService.markAsReadAndTyping(message.id, senderNumber);
 
     let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {} };
     

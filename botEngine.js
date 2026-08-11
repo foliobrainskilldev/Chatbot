@@ -1,3 +1,4 @@
+// botEngine.js (No diretório Raíz do backend)
 const { prisma } = require('./db');
 const botBarbearia = require('./barbearia/botEngine'); 
 const botClinica = require('./clinica/botEngine');     
@@ -51,7 +52,7 @@ const processarWebhook = (req, res) => {
                 } 
             }
         } catch (error) {
-            console.error('❌ ERRO INTERNO NO PROCESSAMENTO DO WEBHOOK:', error);
+            console.error('❌ ERRO INTERNO NO PROCESSAMENTO DO WEBHOOK:', error.message || error);
         }
     })();
 };

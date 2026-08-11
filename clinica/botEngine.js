@@ -1,3 +1,4 @@
+// clinica/botEngine.js
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
 const aiService = require('../aiService');
@@ -27,19 +28,20 @@ async function getOrCreateCliente(numero, nomePushName = null) {
 async function processarMensagemEntrante(message) {
     const senderNumber = message.from;
     const msgId = message.id;
-    
-    // GATILHO VISUAL 1: Mostra os 2 Ticks Azuis e o status "Digitando..." no celular do paciente
-    await whatsappService.markAsReadAndTyping(msgId);
 
     let pushName = message.profile?.name || null;
     let cliente = await getOrCreateCliente(senderNumber, pushName);
     
+    // Evita enviar visualização (Digitando) e abortar depois causando a ilusão do robô travado
     if (cliente.falarHumano) {
         let textLog = message.text?.body || '[Mídia Recebida]';
         await prisma.mensagemIA.create({ data: { role: 'user', content: textLog, clienteId: senderNumber } });
         await automationEngine.dispararAutomacoes('NOVA_MENSAGEM', { clienteId: senderNumber, cliente, mensagem: textLog });
-        return;
+        return; 
     }
+
+    // GATILHO VISUAL 1: Mostra os 2 Ticks Azuis e o status "Digitando..." no celular do paciente
+    await whatsappService.markAsReadAndTyping(msgId, senderNumber);
 
     let textoProcessado = "";
     let mediaCloudinaryUrl = null;
@@ -116,7 +118,7 @@ async function processarMensagemEntrante(message) {
         await automationEngine.dispararAutomacoes('TRANSFERIDO_HUMANO', leadTransferido);
         await webhookService.dispararEvento('lead.updated', leadTransferido);
 
-        const resp = configDb.msgTransferencia || "Vou encaminhar você para nossa recepção. Um momento, por favor.";
+        const resp = configDb?.msgTransferencia || "Vou encaminhar você para nossa recepção. Um momento, por favor.";
         await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
         await whatsappService.sendText(senderNumber, resp);
         if (global.io) global.io.emit('atualizar_fila');

@@ -1,3 +1,4 @@
+// aiService.js
 const { OpenAI } = require('openai');
 const fs = require('fs');
 const path = require('path');
@@ -83,7 +84,6 @@ Você deve responder APENAS com um objeto JSON válido.`;
             response_format: { type: "json_object" }
         });
         
-        // Proteção para caso o Llama "alucine" o formato JSON
         const content = resposta.choices[0]?.message?.content || "{}";
         return JSON.parse(content);
     } catch (erro) {
@@ -95,8 +95,14 @@ Você deve responder APENAS com um objeto JSON válido.`;
 async function gerarRespostaNatural(textoCliente, historico, dadosContexto, configSistema) {
     if (!process.env.GROQ_API_KEY) return "Desculpe, nossos sistemas de IA estão reiniciando ou indisponíveis no momento.";
 
-    const systemInstrucoes = `Você é ${configSistema.nomeAssistente}, assistente virtual oficial da ${configSistema.nomeClinica}.
-Idioma: ${configSistema.idioma}. Tom de voz: ${configSistema.tomDeVoz}. Estilo: ${configSistema.estiloComunicacao}.
+    const assistenteNome = configSistema?.nomeAssistente || "Assistente";
+    const clinicaNome = configSistema?.nomeClinica || "Clínica";
+    const idioma = configSistema?.idioma || "Português";
+    const tomVoz = configSistema?.tomDeVoz || "Amigável";
+    const estilo = configSistema?.estiloComunicacao || "Objetivo";
+
+    const systemInstrucoes = `Você é ${assistenteNome}, assistente virtual oficial da ${clinicaNome}.
+Idioma: ${idioma}. Tom de voz: ${tomVoz}. Estilo: ${estilo}.
 
 REGRA DE OURO: 
 Use EXATAMENTE os dados fornecidos no contexto abaixo para responder. NÃO INVENTE preços, NÃO INVENTE horários, NÃO FAÇA diagnósticos.
@@ -109,14 +115,32 @@ Responda diretamente à dúvida do paciente.`;
 
     try {
         const msgs = [{ role: "system", content: systemInstrucoes }];
+        
         if (historico && historico.length > 0) {
             historico.forEach(linha => {
                 let contentClean = linha.content || "";
                 if (contentClean.includes('| Texto: ')) contentClean = contentClean.split('| Texto: ')[1].trim();
-                msgs.push({ role: linha.role, content: contentClean });
+                
+                // Evita strings vazias que causam travamento (400 Bad Request) na API do Groq
+                if (contentClean.trim() === "") contentClean = "[Mídia Recebida]";
+                
+                // Evita papéis consecutivos do mesmo tipo (Ex: user seguido de user)
+                if (msgs.length > 0 && msgs[msgs.length - 1].role === linha.role) {
+                    msgs[msgs.length - 1].content += `\n${contentClean}`;
+                } else {
+                    msgs.push({ role: linha.role, content: contentClean });
+                }
             });
         }
-        msgs.push({ role: "user", content: textoCliente });
+        
+        let textoFinal = textoCliente || "[Áudio/Imagem Recebida]";
+        
+        // Se a última mensagem já é o texto enviado pelo usuário salvo pelo banco de dados, não repetimos
+        if (msgs.length > 0 && msgs[msgs.length - 1].role === "user") {
+            // Histórico já atualizado com a última mensagem
+        } else {
+            msgs.push({ role: "user", content: textoFinal });
+        }
 
         const resposta = await groq.chat.completions.create({
             model: "llama-3.1-70b-versatile",
@@ -127,7 +151,8 @@ Responda diretamente à dúvida do paciente.`;
         
         return resposta.choices[0]?.message?.content || "Desculpe, não consegui processar a informação adequadamente agora.";
     } catch (erro) {
-        return "Desculpe, meus servidores estão ocupados. Volte a tentar em instantes."; 
+        console.error("Erro na geração de resposta IA:", erro.message || erro);
+        return "Desculpe, meus servidores estão ocupados no momento. Poderia repetir ou voltar a tentar em alguns instantes?"; 
     }
 }
 
