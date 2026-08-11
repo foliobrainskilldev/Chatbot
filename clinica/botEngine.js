@@ -1,12 +1,8 @@
-const { prisma } = require('../db');
-const whatsappService = require('../whatsappService');
-const aiService = require('../aiService');
-const webhookService = require('../services/webhookService');
-const automationEngine = require('../services/automationEngine');
-
-const { processarAgendamento } = require('./flowAgendamento');
-const { processarCancelamento } = require('./flowCancelamento');
-const { processarDuvidas } = require('./flowConsultas');
+const { prisma } = require('../../db');
+const whatsappService = require('../../whatsappService');
+const aiService = require('../../aiService');
+const webhookService = require('../../services/webhookService');
+const automationEngine = require('../../services/automationEngine');
 
 const stateMachine = new Map();
 
@@ -41,6 +37,7 @@ async function processarMensagemEntrante(message) {
             let pushName = message.profile?.name || null;
             let cliente = await getOrCreateCliente(senderNumber, pushName);
             
+            // 1. Se o Humano está ativamente conversando, a IA apenas observa e salva
             if (cliente.falarHumano) {
                 let textLog = message.text?.body || '[Mídia Recebida]';
                 await prisma.mensagemIA.create({ data: { role: 'user', content: textLog, clienteId: senderNumber } });
@@ -53,7 +50,7 @@ async function processarMensagemEntrante(message) {
             let textoProcessado = "";
             let isTranscribed = false;
 
-            // NOVO: TRATAMENTO DE ÁUDIO COM WHISPER (GROQ)
+            // 2. Extração de Áudio e Mídia
             if (message.type === 'audio') {
                 const mediaId = message.audio.id;
                 console.log(`🎙️ [WHISPER] Baixando áudio do WhatsApp...`);
@@ -78,24 +75,48 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // Salvamos no banco com uma tag visual de [Áudio Transcrito] para o Painel Web 
             const msgParaSalvar = isTranscribed ? `[Áudio Transcrito]: ${textoProcessado}` : textoProcessado;
             await prisma.mensagemIA.create({ data: { role: 'user', content: msgParaSalvar, clienteId: senderNumber, tipoMidia: message.type } });
             
-            let isInteractive = message.type === 'interactive';
-            let userState = stateMachine.get(senderNumber) || { step: 'IDLE', intent: null, entities: {} };
-            const configDb = await prisma.configSistema.findFirst();
-            
+            // 3. CAPTURA DA PESQUISA DE SATISFAÇÃO (CSAT) APÓS ATENDIMENTO HUMANO
             const historicoRaw = await prisma.mensagemIA.findMany({ 
                 where: { clienteId: senderNumber }, 
                 take: 8, orderBy: { criadoEm: 'desc' } 
             });
+            const lastBotMsg = historicoRaw.find(h => h.role === 'assistant');
+            
+            if (lastBotMsg && lastBotMsg.content.includes('(Pesquisa CSAT enviada)')) {
+                const nota = parseInt(textoProcessado.trim());
+                if (!isNaN(nota) && nota >= 1 && nota <= 5) {
+                    console.log(`📊 [CRM] CSAT Recebido de ${senderNumber}: ${nota} Estrelas`);
+                    
+                    // Salva a métrica no CRM como Nota Interna
+                    await prisma.notaInterna.create({
+                        data: {
+                            texto: `📊 Avaliação de Atendimento (CSAT): ${nota} Estrela(s)`,
+                            clienteId: senderNumber,
+                            usuarioId: 1
+                        }
+                    });
+
+                    // Mensagem de agradecimento e retorno à base padrão
+                    const msgAgradecimento = "Obrigado pela sua avaliação! Isso nos ajuda a melhorar sempre. 😊 Se precisar de mais alguma coisa, é só chamar.";
+                    await whatsappService.sendText(senderNumber, msgAgradecimento);
+                    await prisma.mensagemIA.create({ data: { role: 'assistant', content: msgAgradecimento, clienteId: senderNumber } });
+                    return; // Interrompe para o NLP não tentar analisar o número "5"
+                }
+            }
+
+            // 4. Processamento padrão de PNL (Motor IA)
+            let isInteractive = message.type === 'interactive';
+            let userState = stateMachine.get(senderNumber) || { step: 'IDLE', intent: null, entities: {} };
+            const configDb = await prisma.configSistema.findFirst();
+            
             historicoRaw.reverse();
             const historico = historicoRaw.map(h => ({ role: h.role, content: h.content }));
 
             let nlpResult = { intent: "unknown", confidence: 1, entities: {} };
 
-            // O NLP agora analisa a voz como se o paciente tivesse digitado!
             if (!isInteractive && textoProcessado) {
                 nlpResult = await aiService.analisarMensagemNLP(textoProcessado, historico, userState);
                 console.log(`🧠 [NLP] Intenção: ${nlpResult.intent} | Confiança: ${nlpResult.confidence}`);
@@ -116,11 +137,19 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
+            // 5. Roteamento de Intenções
             if (activeIntent === 'human.transfer') {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
                 const resp = configDb?.msgTransferencia || "Vou transferir você para um atendente. Um momento.";
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
                 await whatsappService.sendText(senderNumber, resp);
+                
+                // Grava o motivo da transferência no CRM
+                await prisma.notaInterna.create({
+                    data: { texto: `Transferência solicitada pelo paciente. Motivo extraído pela IA: Dúvida complexa/Humano requerido.`, clienteId: senderNumber, usuarioId: 1 }
+                });
+
+                if (global.io) global.io.emit('atualizar_fila');
                 return;
             }
 

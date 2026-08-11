@@ -2,7 +2,12 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 
-const crmControllerClinica = require('./crmController'); 
+// --- OS 3 NOVOS CONTROLLERS SEPARADOS PARA MELHOR ORGANIZAÇÃO ---
+const crmLeadsController = require('./controllers/crmLeadsController'); 
+const chatController = require('./controllers/chatController');
+const agendaTratamentosController = require('./controllers/agendaTratamentosController');
+
+// Módulos extras já existentes
 const relatoriosController = require('./relatoriosController');
 const webhookController = require('./webhookController');
 const automacoesController = require('./automacoesController'); 
@@ -14,7 +19,7 @@ const upload = multer({ storage });
 // ==========================================
 // ROTAS DE DASHBOARD E RELATÓRIOS
 // ==========================================
-router.get('/dashboard/stats', crmControllerClinica.getDashboardStats);
+router.get('/dashboard/stats', crmLeadsController.getDashboardStats);
 router.get('/relatorios/geral', relatoriosController.getRelatoriosGerais);
 router.get('/relatorios/atendimento', relatoriosController.getRelatoriosAtendimento);
 router.get('/relatorios/exportar', relatoriosController.exportarRelatorioCSV);
@@ -29,43 +34,43 @@ router.post('/config/test-storage', configController.testCloudinary);
 // ==========================================
 // CRM, PIPELINE E LEADS
 // ==========================================
-router.get('/leads', crmControllerClinica.getLeads);
-router.post('/leads', crmControllerClinica.criarLeadManual); 
-router.put('/leads/:id/status', crmControllerClinica.atualizarStatusLead);
-router.put('/leads/:id', crmControllerClinica.atualizarLeadCompleto);
+router.get('/leads', crmLeadsController.getLeads);
+router.post('/leads', crmLeadsController.criarLeadManual); 
+router.put('/leads/:id/status', crmLeadsController.atualizarStatusLead);
+router.put('/leads/:id', crmLeadsController.atualizarLeadCompleto);
 
 // ==========================================
-// CENTRAL DE MENSAGENS (INBOX)
+// CENTRAL DE MENSAGENS (INBOX / CHAT)
 // ==========================================
-router.get('/conversas/pendentes', crmControllerClinica.getConversasPendentes);
-router.get('/conversas/:clienteId', crmControllerClinica.getMensagensConversa);
-router.get('/conversas/:clienteId/notas', crmControllerClinica.getNotasInternas);
-router.post('/conversas/:clienteId/notas', crmControllerClinica.criarNotaInterna);
-router.post('/conversas/:clienteId/enviar', upload.single('arquivo'), crmControllerClinica.enviarMensagemManual);
-router.post('/conversas/:clienteId/assumir', crmControllerClinica.assumirAtendimentoHumano);
-router.post('/conversas/:clienteId/resolver', crmControllerClinica.resolverAtendimentoHumano);
+router.get('/conversas/pendentes', chatController.getConversasPendentes);
+router.get('/conversas/:clienteId', chatController.getMensagensConversa);
+router.get('/conversas/:clienteId/notas', chatController.getNotasInternas);
+router.post('/conversas/:clienteId/notas', chatController.criarNotaInterna);
+router.post('/conversas/:clienteId/enviar', upload.single('arquivo'), chatController.enviarMensagemManual);
+router.post('/conversas/:clienteId/assumir', chatController.assumirAtendimentoHumano);
+router.post('/conversas/:clienteId/resolver', chatController.resolverAtendimentoHumano);
 
 // ==========================================
 // AGENDAMENTOS E CALENDÁRIO
 // ==========================================
-router.get('/agendamentos/todos', crmControllerClinica.getAgendamentosTodos);
-router.get('/agendamentos/disponiveis', crmControllerClinica.getHorariosLivresApi); 
-router.post('/agendamentos', crmControllerClinica.criarAgendamentoManual);         
-router.put('/agendamentos/:id/status', crmControllerClinica.atualizarStatusAgendamento);
+router.get('/agendamentos/todos', agendaTratamentosController.getAgendamentosTodos);
+router.get('/agendamentos/disponiveis', agendaTratamentosController.getHorariosLivresApi); 
+router.post('/agendamentos', agendaTratamentosController.criarAgendamentoManual);         
+router.put('/agendamentos/:id/status', agendaTratamentosController.atualizarStatusAgendamento);
 
 // ==========================================
 // BASE DE CONHECIMENTO (TRATAMENTOS)
 // ==========================================
-router.get('/tratamentos', crmControllerClinica.getTratamentos);
-router.post('/tratamentos', upload.single('imagem'), crmControllerClinica.salvarTratamento);
-router.delete('/tratamentos/:id', crmControllerClinica.excluirTratamento);
+router.get('/tratamentos', agendaTratamentosController.getTratamentos);
+router.post('/tratamentos', upload.single('imagem'), agendaTratamentosController.salvarTratamento);
+router.delete('/tratamentos/:id', agendaTratamentosController.excluirTratamento);
 
 // ==========================================
 // CONFIGURAÇÃO DO CÉREBRO DA IA 
 // ==========================================
-router.get('/ia/config', crmControllerClinica.getConfigIA);
-router.put('/ia/config', upload.single('avatar'), crmControllerClinica.atualizarConfigIA); 
-router.post('/ia/testar', crmControllerClinica.testarIA); 
+router.get('/ia/config', chatController.getConfigIA);
+router.put('/ia/config', upload.single('avatar'), chatController.atualizarConfigIA); 
+router.post('/ia/testar', chatController.testarIA); 
 
 // ==========================================
 // INTEGRAÇÕES E WEBHOOKS AVANÇADOS
@@ -89,10 +94,10 @@ router.get('/automacoes/historico', automacoesController.getHistoricoExecucao);
 // ==========================================
 // EQUIPE, PERMISSÕES E AUDITORIA
 // ==========================================
-router.get('/equipe/atividades', crmControllerClinica.getAtividadesEquipe);
-router.get('/equipe/:id/perfil', crmControllerClinica.getMembroPerfil);
-router.get('/equipe', crmControllerClinica.getEquipe);
-router.post('/equipe', crmControllerClinica.criarMembroEquipe);
-router.put('/equipe/:id', crmControllerClinica.atualizarMembroEquipe);
+router.get('/equipe/atividades', crmLeadsController.getAtividadesEquipe);
+router.get('/equipe/:id/perfil', crmLeadsController.getMembroPerfil);
+router.get('/equipe', crmLeadsController.getEquipe);
+router.post('/equipe', crmLeadsController.criarMembroEquipe);
+router.put('/equipe/:id', crmLeadsController.atualizarMembroEquipe);
 
 module.exports = router;
