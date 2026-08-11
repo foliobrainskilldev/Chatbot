@@ -1,11 +1,10 @@
-// botEngine.js (No diretório Raíz do backend)
 const { prisma } = require('./db');
 const botBarbearia = require('./barbearia/botEngine'); 
 const botClinica = require('./clinica/botEngine');     
+const whatsappService = require('./whatsappService'); // Importado para mandar avisos de emergência
 
 const verificarWebhook = (req, res) => {
     const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'barbearia_secreta_2024';
-    
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
@@ -14,14 +13,11 @@ const verificarWebhook = (req, res) => {
         console.log('✅ Webhook autorizado com sucesso pela Meta!');
         res.status(200).send(challenge);
     } else {
-        console.warn('❌ Falha na autorização do Webhook. Token incorreto.');
         res.sendStatus(403);
     }
 };
 
 const processarWebhook = (req, res) => {
-    // É CRUCIAL retornar o 200 OK imediatamente para a Meta,
-    // Senão ela acha que o bot caiu e reenvia a mensagem (causando silêncio e loops)
     res.sendStatus(200); 
 
     (async () => {
@@ -30,11 +26,7 @@ const processarWebhook = (req, res) => {
             
             if (body.object) {
                 let changes = body.entry?.[0]?.changes?.[0]?.value;
-                
-                // PREVENÇÃO DE CRASH: Ignora eventos de status (Entregue, Lido)
-                if (changes?.statuses) {
-                    return; 
-                }
+                if (changes?.statuses) return; 
                 
                 if (changes?.messages?.[0]) {
                     const message = changes.messages[0];
@@ -46,13 +38,18 @@ const processarWebhook = (req, res) => {
                         await botBarbearia.processarMensagemEntrante(message);
                     } else if (modoAtivo === 'CLINICA') {
                         await botClinica.processarMensagemEntrante(message);
-                    } else {
-                        console.warn(`[AVISO] Modo ativo desconhecido: ${modoAtivo}`);
                     }
                 } 
             }
         } catch (error) {
-            console.error('❌ ERRO INTERNO NO PROCESSAMENTO DO WEBHOOK:', error.message || error);
+            console.error('❌ ERRO INTERNO NO WEBHOOK ROOT:', error.message);
+            // ESCUDO FINAL: Tenta notificar o utilizador no WhatsApp caso o sistema rebente
+            try {
+                let senderNumber = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from;
+                if (senderNumber) {
+                    await whatsappService.sendText(senderNumber, "⚠️ Olá! O meu sistema está a reiniciar ou com falha de conexão. Volto a estar disponível em breves instantes.");
+                }
+            } catch(e) {}
         }
     })();
 };
@@ -60,7 +57,6 @@ const processarWebhook = (req, res) => {
 function limparMemoriaEstado() {
     if (botBarbearia.limparMemoriaEstado) botBarbearia.limparMemoriaEstado();
     if (botClinica.limparMemoriaEstado) botClinica.limparMemoriaEstado();
-    console.log('🧹 Memória de estado de todos os robôs limpa com sucesso.');
 }
 
 module.exports = {

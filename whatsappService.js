@@ -1,8 +1,9 @@
 const axios = require('axios');
 const cloudinaryService = require('./services/cloudinaryService');
 
-const META_TOKEN = process.env.META_TOKEN;
-const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
+// Remove espaços em branco acidentais nas variáveis de ambiente que causam erro 401/404
+const META_TOKEN = (process.env.META_TOKEN || '').trim();
+const PHONE_NUMBER_ID = (process.env.PHONE_NUMBER_ID || '').trim();
 
 const api = axios.create({
     baseURL: `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}`,
@@ -22,8 +23,6 @@ async function markAsReadAndTyping(messageId, to) {
         });
 
         if (to) {
-            // Se o WhatsApp Business Cloud não aceitar o 'typing_indicator' para seu número, 
-            // a requisição acima do 'read' (ticks azuis) já funcionou. A de baixo cairá no catch discretamente.
             await api.post('/messages', {
                 messaging_product: 'whatsapp',
                 recipient_type: 'individual',
@@ -33,7 +32,7 @@ async function markAsReadAndTyping(messageId, to) {
             });
         }
     } catch (error) {
-        // Falha no indicador de digitação não deve interromper o bot
+        // Ignora silenciosamente se o typing_indicator não for suportado pelo número
     }
 }
 
@@ -43,12 +42,12 @@ async function sendText(to, text) {
         await api.post('/messages', {
             messaging_product: 'whatsapp',
             recipient_type: 'individual',
-            to: String(to), // Garantindo formatação que a API exige
+            to: String(to),
             type: 'text',
-            text: { body: String(text) } // Garantindo que nunca irá como objeto vazio
+            text: { body: String(text) }
         });
     } catch (error) {
-        console.error("Erro envio Texto Meta:", error?.response?.data || error.message);
+        console.error("❌ Erro envio Texto Meta:", error?.response?.data || error.message);
     }
 }
 
@@ -56,6 +55,7 @@ async function sendInteractiveMenu(to, text, options) {
     if (!options || !Array.isArray(options) || options.length === 0) {
         return await sendText(to, text);
     }
+
     try {
         let interactiveObj = {
             type: options.length <= 3 ? "button" : "list",
@@ -75,10 +75,17 @@ async function sendInteractiveMenu(to, text, options) {
             interactiveObj.action.button = "Ver Opções";
             interactiveObj.action.sections = [{
                 title: "Selecione uma opção",
-                rows: options.slice(0, 10).map(opt => ({
-                    id: String(opt.id).substring(0, 200),
-                    title: String(opt.title).length > 24 ? String(opt.title).substring(0, 21) + "..." : String(opt.title)
-                }))
+                rows: options.slice(0, 10).map(opt => {
+                    let row = {
+                        id: String(opt.id).substring(0, 200),
+                        title: String(opt.title).length > 24 ? String(opt.title).substring(0, 21) + "..." : String(opt.title)
+                    };
+                    // CORREÇÃO DA META API: Nunca enviar "description" vazia, senão a mensagem é bloqueada
+                    if (opt.description && String(opt.description).trim() !== "") {
+                        row.description = String(opt.description).substring(0, 72);
+                    }
+                    return row;
+                })
             }];
         }
         
@@ -90,18 +97,58 @@ async function sendInteractiveMenu(to, text, options) {
             interactive: interactiveObj
         });
     } catch (error) {
-        console.error("Erro envio Menu Interativo Meta:", error?.response?.data || error.message);
+        console.error("⚠️ Meta rejeitou o Menu Interativo. Enviando menu como texto puro...");
+        // FALLBACK: Se a Meta rejeitar os botões, envia as opções em formato de texto para NÃO FICAR EM SILÊNCIO
+        let txtFallback = text + "\n\n";
+        options.forEach((opt, index) => {
+            txtFallback += `*${index + 1}.* ${opt.title}\n`;
+        });
+        txtFallback += "\n👉 Responda com o nome da opção desejada.";
+        await sendText(to, txtFallback);
+    }
+}
+
+async function sendMediaUrl(to, type, url, caption = "") {
+    try {
+        const payload = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: String(to),
+            type: type
+        };
+        payload[type] = { link: url };
+        if (caption && (type === 'image' || type === 'video' || type === 'document')) {
+            payload[type].caption = caption;
+        }
+        await api.post('/messages', payload);
+    } catch (error) {
+        console.error(`Erro envio Mídia (${type}) Meta:`, error?.response?.data || error.message);
     }
 }
 
 async function downloadMetaMediaToCloudinary(mediaId, mimeType) {
-    // Mantido intacto
-    return null; 
+    try {
+        const getUrlResponse = await axios.get(`https://graph.facebook.com/v20.0/${mediaId}`, {
+            headers: { 'Authorization': `Bearer ${META_TOKEN}` }
+        });
+        const downloadResponse = await axios.get(getUrlResponse.data.url, {
+            responseType: 'arraybuffer',
+            headers: { 'Authorization': `Bearer ${META_TOKEN}` }
+        });
+        const buffer = Buffer.from(downloadResponse.data, 'binary');
+        const resourceType = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('audio/') ? 'video' : 'raw');
+        
+        const cloudResult = await cloudinaryService.uploadStream(buffer, 'clinica/recebidos', resourceType);
+        return cloudResult.secure_url;
+    } catch (error) {
+        return null;
+    }
 }
 
 module.exports = {
     sendText,
     sendInteractiveMenu,
     markAsReadAndTyping,
+    sendMediaUrl,
     downloadMetaMediaToCloudinary
 };
