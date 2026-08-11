@@ -3,7 +3,7 @@ const whatsappService = require('../whatsappService');
 const aiService = require('../aiService');
 const webhookService = require('../services/webhookService');
 const automationEngine = require('../services/automationEngine');
-const cloudinaryService = require('../services/cloudinaryService');
+const supabaseService = require('../services/supabaseService'); // Substituído
 
 const stateMachine = new Map();
 
@@ -56,11 +56,11 @@ async function processarMensagemEntrante(message) {
                 } catch(e) { console.error("Erro ao baixar áudio do WhatsApp."); }
 
                 if (audioBuffer) {
-                    // Upload Cloudinary Isolado
+                    // Upload Supabase Isolado
                     try {
-                        const cloudRes = await cloudinaryService.uploadStream(audioBuffer, 'clinica/pacientes/audios', 'video');
+                        const cloudRes = await supabaseService.uploadStream(audioBuffer, 'clinica/pacientes/audios', 'video');
                         midiaUrl = cloudRes.secure_url;
-                    } catch (e) { console.error("⚠️ Aviso: Falha ao salvar áudio no Cloudinary.", e.message); }
+                    } catch (e) { console.error("⚠️ Aviso: Falha ao salvar áudio no Supabase.", e.message); }
 
                     // Transcrição Whisper Isolada
                     try {
@@ -81,10 +81,10 @@ async function processarMensagemEntrante(message) {
                 try {
                     const mediaBuffer = await whatsappService.downloadMedia(mediaId);
                     const resourceType = message.type === 'image' ? 'image' : (message.type === 'video' ? 'video' : 'raw');
-                    const cloudRes = await cloudinaryService.uploadStream(mediaBuffer, `clinica/pacientes/${message.type}s`, resourceType);
+                    const cloudRes = await supabaseService.uploadStream(mediaBuffer, `clinica/pacientes/${message.type}s`, resourceType);
                     midiaUrl = cloudRes.secure_url;
                 } catch (e) {
-                    console.error(`⚠️ Aviso: Erro ao salvar ${message.type} no Cloudinary. O Bot continuará executando com texto.`, e.message);
+                    console.error(`⚠️ Aviso: Erro ao salvar ${message.type} no Supabase. O Bot continuará executando com texto.`, e.message);
                 }
             } else if (message.type === 'text') {
                 textoProcessado = message.text.body;

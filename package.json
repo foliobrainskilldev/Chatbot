@@ -1,7 +1,7 @@
 {
   "name": "healthcrm-saas-oficial",
   "version": "1.0.0",
-  "description": "SaaS CRM WhatsApp via API Oficial da Meta com IA Inteligente e Cloudinary",
+  "description": "SaaS CRM WhatsApp via API Oficial da Meta com IA Inteligente e Supabase",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,8 +11,8 @@
   },
   "dependencies": {
     "@prisma/client": "^5.10.0",
+    "@supabase/supabase-js": "^2.39.0",
     "axios": "^1.6.7",
-    "cloudinary": "^2.0.1",
     "cors": "^2.8.5",
     "date-fns": "^3.3.1",
     "dotenv": "^16.4.5",
@@ -22,8 +22,7 @@
     "multer": "^1.4.5-lts.1",
     "node-cron": "^3.0.3",
     "openai": "^4.28.0",
-    "socket.io": "^4.7.4",
-    "streamifier": "^0.1.1"
+    "socket.io": "^4.7.4"
   },
   "devDependencies": {
     "nodemon": "^3.0.3",

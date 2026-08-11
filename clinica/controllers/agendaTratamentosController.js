@@ -1,6 +1,6 @@
 const { prisma } = require('../../db');
 const whatsappService = require('../../whatsappService');
-const cloudinaryService = require('../../services/cloudinaryService');
+const supabaseService = require('../../services/supabaseService'); // Substituído
 const automationEngine = require('../../services/automationEngine');
 const webhookService = require('../../services/webhookService');
 const { getHorariosDisponiveis } = require('../../dateUtils'); 
@@ -129,7 +129,7 @@ exports.salvarTratamento = async (req, res) => {
     try {
         let imageUrl = req.body.imagemAtual || null;
         if (req.file) {
-            const cloudResult = await cloudinaryService.uploadStream(req.file.buffer, 'clinica/tratamentos', 'image');
+            const cloudResult = await supabaseService.uploadStream(req.file.buffer, 'clinica/tratamentos', 'image');
             imageUrl = cloudResult.secure_url;
         }
 

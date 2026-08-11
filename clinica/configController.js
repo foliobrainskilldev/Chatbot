@@ -1,5 +1,5 @@
 const { prisma } = require('../db');
-const cloudinaryService = require('../services/cloudinaryService');
+const supabaseService = require('../services/supabaseService');
 
 exports.getConfigCompleta = async (req, res) => {
     try {
@@ -17,7 +17,7 @@ exports.atualizarConfigCompleta = async (req, res) => {
         let logoNovaUrl = data.logoUrl || null;
         
         if (req.file) {
-            const cloudResult = await cloudinaryService.uploadStream(req.file.buffer, 'clinica/config', 'image');
+            const cloudResult = await supabaseService.uploadStream(req.file.buffer, 'clinica/config', 'image');
             logoNovaUrl = cloudResult.secure_url;
         }
 
@@ -56,7 +56,8 @@ exports.atualizarConfigCompleta = async (req, res) => {
             seguranca2FA: data.seguranca2FA,
             interfaceTema: data.interfaceTema,
             interfaceIdioma: data.interfaceIdioma,
-            cloudinaryFolder: data.cloudinaryFolder
+            // Mapeamos a chave da UI (storageFolder) para a base (cloudinaryFolder) mantendo retrocompatibilidade no Prisma
+            cloudinaryFolder: data.storageFolder || data.cloudinaryFolder
         };
 
         if (data.horarioFuncionamento) updateData.horarioFuncionamento = data.horarioFuncionamento;
@@ -89,12 +90,13 @@ exports.atualizarConfigCompleta = async (req, res) => {
     }
 };
 
-exports.testCloudinary = async (req, res) => {
+exports.testSupabase = async (req, res) => {
     try {
-        const cloudinaryKey = process.env.CLOUDINARY_API_KEY ? process.env.CLOUDINARY_API_KEY.trim() : null;
-        const hasCloudinary = !!cloudinaryKey;
-        res.status(200).json({ success: hasCloudinary });
+        const supabaseUrl = process.env.SUPABASE_URL ? process.env.SUPABASE_URL.trim() : null;
+        const supabaseKey = process.env.SUPABASE_KEY ? process.env.SUPABASE_KEY.trim() : null;
+        const hasSupabase = !!(supabaseUrl && supabaseKey);
+        res.status(200).json({ success: hasSupabase });
     } catch (error) {
-        res.status(500).json({ error: "Erro ao testar Cloudinary." });
+        res.status(500).json({ error: "Erro ao testar Supabase." });
     }
 };

@@ -1,6 +1,6 @@
 const { prisma } = require('../../db');
 const whatsappService = require('../../whatsappService');
-const cloudinaryService = require('../../services/cloudinaryService');
+const supabaseService = require('../../services/supabaseService'); // Substituído
 const automationEngine = require('../../services/automationEngine');
 const webhookService = require('../../services/webhookService');
 const aiService = require('../../aiService');
@@ -94,24 +94,24 @@ exports.enviarMensagemManual = async (req, res) => {
         const { clienteId } = req.params; 
         const texto = req.body.texto || ""; 
         let msgDb = texto;
-        let cloudinaryUrl = null;
+        let supabaseUrl = null;
         let typeMsg = null;
 
         if (req.file) {
             const mimeType = req.file.mimetype;
             const resourceType = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('audio/') || mimeType.startsWith('video/') ? 'video' : 'raw');
-            const cloudResult = await cloudinaryService.uploadStream(req.file.buffer, 'clinica/atendimento', resourceType);
-            cloudinaryUrl = cloudResult.secure_url;
+            const cloudResult = await supabaseService.uploadStream(req.file.buffer, 'clinica/atendimento', resourceType);
+            supabaseUrl = cloudResult.secure_url;
             typeMsg = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('audio/') || mimeType.endsWith('webm') ? 'audio' : 'document');
             
-            await whatsappService.sendMediaUrl(clienteId, typeMsg, cloudinaryUrl, texto);
-            msgDb = `[MEDIA:${typeMsg}] ${cloudinaryUrl} | Texto: ${texto}`;
+            await whatsappService.sendMediaUrl(clienteId, typeMsg, supabaseUrl, texto);
+            msgDb = `[MEDIA:${typeMsg}] ${supabaseUrl} | Texto: ${texto}`;
         } else if (texto) { 
             await whatsappService.sendText(clienteId, texto); 
         }
         
         const novaMsg = await prisma.mensagemIA.create({ 
-            data: { role: 'assistant', content: msgDb, clienteId, midiaUrl: cloudinaryUrl, tipoMidia: typeMsg, atendenteHumano: true } 
+            data: { role: 'assistant', content: msgDb, clienteId, midiaUrl: supabaseUrl, tipoMidia: typeMsg, atendenteHumano: true } 
         });
         
         if (global.io) global.io.emit('nova_mensagem', { clienteId, mensagem: novaMsg });
@@ -132,7 +132,7 @@ exports.atualizarConfigIA = async (req, res) => {
         const p = req.body;
         let avatarNovaUrl = p.avatarUrl || null;
         if (req.file) {
-            const cloudResult = await cloudinaryService.uploadStream(req.file.buffer, 'clinica/ia', 'image');
+            const cloudResult = await supabaseService.uploadStream(req.file.buffer, 'clinica/ia', 'image');
             avatarNovaUrl = cloudResult.secure_url;
         }
 

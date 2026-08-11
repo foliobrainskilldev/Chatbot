@@ -1,57 +1,76 @@
-const cloudinary = require('cloudinary').v2;
-const streamifier = require('streamifier');
+const { createClient } = require('@supabase/supabase-js');
 
-function getCloudinary() {
-    cloudinary.config({
-        cloud_name: process.env.CLOUDINARY_CLOUD_NAME ? process.env.CLOUDINARY_CLOUD_NAME.trim() : null,
-        api_key: process.env.CLOUDINARY_API_KEY ? process.env.CLOUDINARY_API_KEY.trim() : null,
-        api_secret: process.env.CLOUDINARY_API_SECRET ? process.env.CLOUDINARY_API_SECRET.trim() : null
-    });
-    return cloudinary;
+function getSupabase() {
+    const supabaseUrl = process.env.SUPABASE_URL ? process.env.SUPABASE_URL.trim() : null;
+    const supabaseKey = process.env.SUPABASE_KEY ? process.env.SUPABASE_KEY.trim() : null;
+    
+    if (!supabaseUrl || !supabaseKey) {
+        throw new Error("Credenciais do Supabase ausentes no arquivo .env");
+    }
+    
+    return createClient(supabaseUrl, supabaseKey);
 }
 
-const uploadStream = (buffer, folder, resourceType = 'auto') => {
-    return new Promise((resolve, reject) => {
-        const cld = getCloudinary();
-        const stream = cld.uploader.upload_stream(
-            { 
-                folder: folder, 
-                resource_type: resourceType,
-                access_mode: 'public'
-            },
-            (error, result) => {
-                if (result) {
-                    resolve(result);
-                } else {
-                    reject(error);
-                }
-            }
-        );
-        streamifier.createReadStream(buffer).pipe(stream);
-    });
+const uploadStream = async (buffer, folder, resourceType = 'auto') => {
+    const supabase = getSupabase();
+    
+    // Gerar um nome de arquivo único
+    const ext = resourceType === 'image' ? 'jpg' : (resourceType === 'video' ? 'mp4' : 'bin');
+    const filename = `${folder}/${Date.now()}_${Math.floor(Math.random() * 1000)}.${ext}`;
+    
+    // O nome do bucket pode ser puxado do .env ou usa um padrão
+    const bucketName = process.env.SUPABASE_BUCKET || 'healthcrm';
+
+    const { data, error } = await supabase.storage
+        .from(bucketName)
+        .upload(filename, buffer, {
+            contentType: resourceType === 'image' ? 'image/jpeg' : (resourceType === 'video' ? 'video/mp4' : 'application/octet-stream'),
+            upsert: false
+        });
+
+    if (error) {
+        console.error("Erro no upload para Supabase:", error);
+        throw error;
+    }
+
+    // Gerar URL pública 
+    const { data: publicUrlData } = supabase.storage
+        .from(bucketName)
+        .getPublicUrl(filename);
+
+    return {
+        secure_url: publicUrlData.publicUrl,
+        public_id: filename // Usado caso precise deletar depois
+    };
 };
 
 const uploadFromUrl = async (url, folder) => {
     try {
-        const cld = getCloudinary();
-        const result = await cld.uploader.upload(url, {
-            folder: folder,
-            resource_type: 'auto'
-        });
-        return result;
+        // Usa Fetch nativo do Node para fazer download do buffer da URL externa
+        const response = await fetch(url);
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        
+        return await uploadStream(buffer, folder, 'auto');
     } catch (error) {
-        console.error("Erro no upload URL para Cloudinary:", error);
+        console.error("Erro no upload URL para Supabase:", error);
         throw error;
     }
 };
 
 const deleteFile = async (publicId) => {
     try {
-        const cld = getCloudinary();
-        await cld.uploader.destroy(publicId);
+        const supabase = getSupabase();
+        const bucketName = process.env.SUPABASE_BUCKET || 'healthcrm';
+        
+        const { error } = await supabase.storage
+            .from(bucketName)
+            .remove([publicId]);
+            
+        if (error) throw error;
         return true;
     } catch (error) {
-        console.error("Erro ao deletar do Cloudinary:", error);
+        console.error("Erro ao deletar do Supabase:", error);
         return false;
     }
 };

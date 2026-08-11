@@ -29,7 +29,7 @@ router.get('/relatorios/exportar', relatoriosController.exportarRelatorioCSV);
 // ==========================================
 router.get('/config', configController.getConfigCompleta);
 router.put('/config', upload.single('logo'), configController.atualizarConfigCompleta);
-router.post('/config/test-storage', configController.testCloudinary);
+router.post('/config/test-storage', configController.testSupabase);
 
 // ==========================================
 // CRM, PIPELINE E LEADS

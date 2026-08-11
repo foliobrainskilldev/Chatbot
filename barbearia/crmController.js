@@ -1,6 +1,6 @@
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
-const cloudinaryService = require('../services/cloudinaryService'); // Adicionado
+const supabaseService = require('../services/supabaseService'); // Substituído
 const { startOfDay, endOfDay, subDays, format } = require('date-fns');
 const botEngine = require('./botEngine');
 
@@ -104,13 +104,13 @@ exports.criarNotaInterna = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Erro criar nota." }); }
 };
 
-// ATUALIZADO: Suporte a Mídia via Cloudinary e Typing Indicator
+// ATUALIZADO: Suporte a Mídia via Supabase e Typing Indicator
 exports.enviarMensagemManual = async (req, res) => {
     try {
         const { clienteId } = req.params; 
         const texto = req.body.texto || ""; 
         let msgDb = texto;
-        let cloudinaryUrl = null;
+        let supabaseUrl = null;
         let typeMsg = null;
 
         // Dispara o indicador "Digitando..." no WhatsApp
@@ -121,13 +121,13 @@ exports.enviarMensagemManual = async (req, res) => {
             const mimeType = req.file.mimetype; 
             const resourceType = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('video/') ? 'video' : 'raw');
             
-            // Faz upload para o Cloudinary (Substitui o Meta Upload)
-            const cloudResult = await cloudinaryService.uploadStream(req.file.buffer, 'barbearia/atendimento', resourceType);
-            cloudinaryUrl = cloudResult.secure_url;
+            // Faz upload para o Supabase Storage
+            const cloudResult = await supabaseService.uploadStream(req.file.buffer, 'barbearia/atendimento', resourceType);
+            supabaseUrl = cloudResult.secure_url;
             typeMsg = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('video/') ? 'video' : 'document');
             
-            await whatsappService.sendMediaUrl(clienteId, typeMsg, cloudinaryUrl, texto);
-            msgDb = `[MEDIA:${typeMsg}] ${cloudinaryUrl} | Transcrição: ${texto}`; 
+            await whatsappService.sendMediaUrl(clienteId, typeMsg, supabaseUrl, texto);
+            msgDb = `[MEDIA:${typeMsg}] ${supabaseUrl} | Transcrição: ${texto}`; 
         } else if (texto) { 
             await whatsappService.sendText(clienteId, texto); 
         }
