@@ -1,6 +1,6 @@
 const { prisma } = require('../../db');
 const whatsappService = require('../../whatsappService');
-const supabaseService = require('../../services/supabaseService'); // Substituído
+const supabaseService = require('../../services/supabaseService');
 const automationEngine = require('../../services/automationEngine');
 const webhookService = require('../../services/webhookService');
 const { getHorariosDisponiveis } = require('../../dateUtils'); 
@@ -69,6 +69,9 @@ exports.criarAgendamentoManual = async (req, res) => {
         await whatsappService.sendText(clienteId, msg);
         await prisma.mensagemIA.create({ data: { role: 'assistant', content: `[SISTEMA AUTOMÁTICO] ${msg}`, clienteId, atendenteHumano: false } });
         
+        // Se a consulta foi criada manualmente, joga o lead pra etapa "Consulta Marcada"
+        await prisma.cliente.update({ where: { id: clienteId }, data: { leadStatus: 'AGENDADO' } });
+        
         await automationEngine.dispararAutomacoes('CONSULTA_CONFIRMADA', novoAgendamento);
         await webhookService.dispararEvento('appointment.created', novoAgendamento); 
 
@@ -102,6 +105,12 @@ exports.atualizarStatusAgendamento = async (req, res) => {
             await automationEngine.dispararAutomacoes('CONSULTA_CONFIRMADA', att); 
         } 
         else if (status === 'REALIZADA' || status === 'CONCLUIDO') {
+            // FIX CRM: Quando a consulta for realizada, atualiza o Lead no CRM para "Paciente" (CLIENTE)
+            await prisma.cliente.update({
+                where: { id: att.clienteId },
+                data: { leadStatus: 'CLIENTE' }
+            });
+
             await automationEngine.dispararAutomacoes('CONSULTA_REALIZADA', att); 
             await webhookService.dispararEvento('appointment.completed', att); 
         } 
