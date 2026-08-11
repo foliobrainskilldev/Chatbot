@@ -54,7 +54,7 @@ Responda APENAS com um JSON válido no formato exato:
 `;
 
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-            model: "llama3-70b-8192",
+            model: "llama-3.3-70b-versatile", // Modelo Atualizado!
             messages: [
                 { role: "system", content: prompt },
                 { role: "user", content: mensagem }
@@ -124,7 +124,7 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma natural, amigável e
         ];
 
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-            model: "llama3-70b-8192",
+            model: "llama-3.3-70b-versatile", // Modelo Atualizado!
             messages: messages,
             temperature: 0.7
         }, {

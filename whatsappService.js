@@ -32,23 +32,16 @@ async function sendWhatsAppRequest(data) {
 async function markAsReadAndTyping(msgId, to) {
     try {
         if (msgId) {
+            // Apenas marca a mensagem do usuário como Lida. O typing_on foi removido 
+            // pois a API do WhatsApp Cloud bloqueia envios com formato "sender_action".
             await sendWhatsAppRequest({
                 messaging_product: "whatsapp",
                 message_id: msgId,
                 status: "read"
             });
         }
-        if (to) {
-            await sendWhatsAppRequest({
-                messaging_product: "whatsapp",
-                recipient_type: "individual",
-                to: to,
-                type: "sender_action",
-                sender_action: "typing_on"
-            });
-        }
     } catch (e) {
-        console.error("⚠️ [WhatsApp] Erro não crítico ao tentar marcar como lida/digitando:", e.message);
+        console.error("⚠️ [WhatsApp] Erro não crítico ao tentar marcar como lida:", e.message);
     }
 }
 
