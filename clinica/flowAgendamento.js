@@ -10,7 +10,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
     let userState = stateMachine.get(senderNumber) || { step: 'IDLE', intent: 'appointment.create', entities: {} };
     userState.step = 'AGENDAMENTO';
     
-    // Inicializar os controles de paginação se não existirem
     userState.pageData = userState.pageData || 0;
     userState.pageHora = userState.pageHora || 0;
     
@@ -29,7 +28,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         return;
     }
     
-    // SLOT 1: TRATAMENTO
     if (!userState.resolvedTreatment) {
         if (isInteractive && textoProcessado.startsWith('trat_')) {
             const idTrat = parseInt(textoProcessado.replace('trat_', ''));
@@ -51,7 +49,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
                 return;
             }
             
-            // Usar Lista Interativa para exibir os tratamentos (suporta até 10 itens perfeitamente)
             const rows = tratamentos.slice(0, 10).map(t => ({ 
                 id: `trat_${t.id}`, 
                 title: t.nome.substring(0, 24), 
@@ -65,24 +62,21 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
-    // SLOT 2: DATA (Com Paginação 2 botões + 1 Ver Mais)
     if (!userState.resolvedDate) {
-        const diasValidos = await getProximosDiasUteis(14); // Pega 14 dias para termos margem de paginação
+        const diasValidos = await getProximosDiasUteis(14); 
         
-        // Interpreta os Botões/Cliques
         if (isInteractive && textoProcessado.startsWith('data_')) {
             const dataEscolhida = textoProcessado.replace('data_', '');
             if (diasValidos.includes(dataEscolhida)) userState.resolvedDate = dataEscolhida;
             else await whatsappService.sendText(jid, 'A data escolhida está inválida ou a clínica não opera nesse dia.');
         } 
-        // Interpreta Textos Livres e Áudios (NLP)
         else if (userState.entities.date) {
             const matchDia = diasValidos.find(d => d === userState.entities.date || d.includes(userState.entities.date));
             if (matchDia) {
                 userState.resolvedDate = matchDia;
             } else {
                 await whatsappService.sendText(jid, `A data que você pediu (${userState.entities.date}) não está disponível em nossa agenda. Por favor, escolha outra:`);
-                userState.entities.date = null; // Limpa para perguntar de novo
+                userState.entities.date = null; 
             }
         }
         
@@ -94,7 +88,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
             const hasMore = start + 2 < diasValidos.length;
 
             if (chunk.length === 0) {
-                userState.pageData = 0; // Volta para a primeira página se acabar
+                userState.pageData = 0; 
                 return processarAgendamento(jid, null, senderNumber, stateMachine, nlpResult, false, configDb, cliente, isNewPatient);
             }
 
@@ -108,7 +102,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
-    // SLOT 3: HORA (Com Paginação 2 botões + 1 Ver Mais)
     if (!userState.resolvedTime) {
         const horasLivres = await getHorariosDisponiveis(userState.resolvedDate, userState.resolvedTreatment.duracaoMin, null);
         
@@ -142,7 +135,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
             const hasMore = start + 2 < horasLivres.length;
 
             if (chunk.length === 0) {
-                userState.pageHora = 0; // Volta para a primeira página
+                userState.pageHora = 0; 
                 return processarAgendamento(jid, null, senderNumber, stateMachine, nlpResult, false, configDb, cliente, isNewPatient);
             }
 
@@ -156,7 +149,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
-    // CONFIRMAÇÃO FINAL
     if (!userState.confirmed) {
         if (isInteractive && textoProcessado === '1') {
             userState.confirmed = true;
@@ -168,7 +160,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
-    // BACKEND SAVE
     const dataHoraDb = parse(`${userState.resolvedDate} ${userState.resolvedTime}`, 'dd/MM/yyyy HH:mm', new Date());
     const novoAgendamento = await prisma.agendamento.create({
         data: {
@@ -190,8 +181,11 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         dados_crm: { agendamento_realizado: novoAgendamento }
     };
 
+    // Instrução expressa proibindo saudações na confirmação
+    const promptDireto = "Gere uma mensagem confirmando de forma simpática que a consulta foi criada com sucesso com os detalhes que passei. IMPORTANTE: Vá direto ao ponto, NÃO use saudações iniciais (Bom dia/Olá) pois já estamos no meio de uma conversa.";
+    
     const respostaContexto = await aiService.gerarRespostaNatural(
-        "Gere uma mensagem confirmando de forma simpática que a consulta foi criada com sucesso com os detalhes que passei.",
+        promptDireto,
         [],
         contextoIA,
         configDb

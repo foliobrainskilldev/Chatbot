@@ -42,7 +42,6 @@ async function analisarMensagemNLP(mensagem, historico, userState) {
         return fallbackNLP(mensagem);
     }
 
-    // Passar o dia exato para conversão de datas relativas (amanhã, sexta, etc)
     const formatterDia = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit' });
     const diaDeHoje = formatterDia.format(new Date());
 
@@ -139,6 +138,8 @@ async function gerarRespostaNatural(mensagem, historico, contexto, configDb) {
     });
     const dataHoraAtual = formatter.format(new Date());
 
+    const isOngoing = historico && historico.length > 0;
+
     try {
         const prompt = `
 Você é ${configDb?.nomeAssistente || 'o assistente virtual'} da clínica ${configDb?.nomeClinica || 'HealthCRM'}.
@@ -146,13 +147,15 @@ Tom de voz: ${configDb?.tomDeVoz || 'Profissional e acolhedor'}.
 Estilo: ${configDb?.estiloComunicacao || 'Respostas curtas e objetivas'}.
 Formalidade: ${configDb?.formalidade || 'Sempre tratar por Senhor/Senhora'}.
 
-CONSCIÊNCIA TEMPORAL:
-- A data e hora atual no sistema é: ${dataHoraAtual}.
-- Baseie-se nesse horário para responder "Bom dia" (00h-11h59), "Boa tarde" (12h-17h59) ou "Boa noite" (18h-23h59).
+REGRAS DE CONVERSAÇÃO E SAUDAÇÃO (MUITO IMPORTANTE):
+${isOngoing 
+    ? "- Vocês já estão no meio de uma conversa. NUNCA inicie sua resposta com saudações (como 'Bom dia', 'Boa tarde', 'Boa noite', 'Olá', 'Tudo bem?'). Vá DIRETAMENTE ao ponto." 
+    : `- Esta é a primeira mensagem do paciente. Inicie com uma saudação educada baseada no horário local (${dataHoraAtual}): "Bom dia" (00h-11h59), "Boa tarde" (12h-17h59) ou "Boa noite" (18h-23h59).`
+}
 
 INFORMAÇÕES DO PACIENTE:
 - Nome: ${contexto.paciente_nome || 'Paciente'}
-- Tipo: ${contexto.paciente_novo ? 'Novo Paciente (Dê as boas vindas)' : 'Paciente Recorrente (Trate com familiaridade, sem dar boas vindas genéricas)'}.
+- Tipo: ${contexto.paciente_novo ? 'Novo Paciente (Dê as boas vindas apenas se for a primeira mensagem)' : 'Paciente Recorrente'}.
 
 REGRAS OBRIGATÓRIAS DE CONTEXTO:
 1. Você recebe abaixo os DADOS DE CONTEXTO extraídos do CRM. Use EXCLUSIVAMENTE estes dados.
@@ -162,7 +165,7 @@ REGRAS OBRIGATÓRIAS DE CONTEXTO:
 DADOS DE CONTEXTO DO CRM (USE ESTES DADOS PARA RESPONDER):
 ${JSON.stringify(contexto.dados_crm || {}, null, 2)}
 
-Sua tarefa: Leia a mensagem do usuário e responda de forma natural, amigável e conversacional, aplicando as regras.
+Sua tarefa: Leia a mensagem do usuário e responda de forma natural e conversacional, aplicando rigorosamente a regra das saudações e do contexto.
 `;
 
         const messages = [
