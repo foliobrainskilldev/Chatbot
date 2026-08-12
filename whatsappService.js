@@ -89,25 +89,29 @@ async function sendInteractiveList(to, text, buttonText, sections) {
     });
 }
 
-// ATUALIZADO: Agora suporta 'filename' para garantir que os áudios cheguem como documentos executáveis
+// CORREÇÃO CRÍTICA: A Meta rejeita o envio de Áudio se o objeto contiver "caption" (texto) ou "filename".
 async function sendMediaUrl(to, type, url, caption = "", filename = null) {
-    const mediaObj = { link: url };
-    
-    if (caption && (type === 'image' || type === 'video' || type === 'document')) {
-        mediaObj.caption = caption;
-    }
-    
-    if (type === 'document' && filename) {
-        mediaObj.filename = filename;
-    }
-    
     const payload = {
         messaging_product: "whatsapp",
         recipient_type: "individual",
         to: to,
         type: type
     };
-    payload[type] = mediaObj;
+
+    if (type === 'audio') {
+        // Para áudio, enviamos SOMENTE o link.
+        payload.audio = { link: url };
+    } else if (type === 'image') {
+        payload.image = { link: url };
+        if (caption) payload.image.caption = caption;
+    } else if (type === 'video') {
+        payload.video = { link: url };
+        if (caption) payload.video.caption = caption;
+    } else if (type === 'document') {
+        payload.document = { link: url };
+        if (caption) payload.document.caption = caption;
+        if (filename) payload.document.filename = filename;
+    }
 
     return await sendWhatsAppRequest(payload);
 }

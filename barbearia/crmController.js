@@ -125,22 +125,19 @@ exports.enviarMensagemManual = async (req, res) => {
             const cloudResult = await supabaseService.uploadStream(req.file.buffer, 'barbearia/atendimento', resourceType);
             supabaseUrl = cloudResult.secure_url;
             
-            // CORREÇÃO: Tratativa da Meta API.
             let waSendType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'document'));
             typeMsg = waSendType;
             
-            let filename = isBrowserAudio ? "Mensagem_de_Voz.ogg" : null;
-
             if (waSendType === 'audio') {
-                await whatsappService.sendMediaUrl(clienteId, waSendType, supabaseUrl, "", filename);
-                if (texto) {
-                    await whatsappService.sendText(clienteId, texto);
-                }
+                // ENVIA APENAS O ÁUDIO AO CLIENTE (Omissão total de legendas e textos complementares)
+                await whatsappService.sendMediaUrl(clienteId, 'audio', supabaseUrl);
             } else {
+                let filename = isBrowserAudio ? "Mensagem_de_Voz.ogg" : req.file.originalname;
                 await whatsappService.sendMediaUrl(clienteId, waSendType, supabaseUrl, texto, filename);
             }
 
-            msgDb = `[MEDIA:${typeMsg}] ${supabaseUrl} | Transcrição: ${texto}`; 
+            // A Transcrição (texto) é salva exclusivamente no banco para a IA/Equipe poderem consultar depois
+            msgDb = `[MEDIA:${typeMsg}] ${supabaseUrl}${texto ? ` | Transcrição: ${texto}` : ''}`; 
         } else if (texto) { 
             await whatsappService.sendText(clienteId, texto); 
         }

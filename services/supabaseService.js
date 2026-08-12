@@ -14,7 +14,7 @@ function getSupabase() {
 const uploadStream = async (buffer, folder, resourceType = 'auto') => {
     const supabase = getSupabase();
     
-    // CORREÇÃO: Define a extensão e o Content-Type corretos (Essencial para a Meta API aceitar o áudio)
+    // Força o Content-Type oficial para garantir que o WhatsApp baixe como voz
     let ext = 'bin';
     let contentType = 'application/octet-stream';
 
