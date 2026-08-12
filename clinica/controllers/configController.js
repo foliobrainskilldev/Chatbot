@@ -1,5 +1,5 @@
-const { prisma } = require('../db');
-const supabaseService = require('../services/supabaseService');
+const { prisma } = require('../../db');
+const supabaseService = require('../../services/supabaseService');
 const botEngine = require('./botEngine');
 
 exports.getConfigCompleta = async (req, res) => {
