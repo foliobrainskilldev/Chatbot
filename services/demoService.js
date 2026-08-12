@@ -57,10 +57,8 @@ function generateMockData(scenario, country) {
         
         let phone = "";
         if (country === 'BR') {
-            // Gera um número brasileiro: +55 11 9XXXX-XXXX
             phone = `+55119${Math.floor(Math.random() * 90000000) + 10000000}`;
         } else {
-            // Gera um número moçambicano: +258 84 XXXXXXX
             phone = `+25884${Math.floor(Math.random() * 9000000) + 1000000}`;
         }
         
@@ -104,10 +102,9 @@ function generateMockData(scenario, country) {
         { role: 'assistant', content: 'Olá! Claro, nossos preços variam conforme avaliação. Deseja agendar?', atendenteHumano: false, criadoEm: new Date().toISOString() }
     ];
 
-    // 6. Evolução Sinuosa para o Gráfico (Altos e Baixos Realistas com Seno, Cosseno e Ruído)
+    // 6. Evolução Sinuosa para o Gráfico
     for (let i = 30; i >= 0; i--) {
         let dataAlvo = subDays(new Date(), i);
-        // Base lógica: seno para criar onda, random para criar variação diária (ruído)
         let ondaLeads = Math.floor(Math.sin(i * 0.5) * 8) + 12 + Math.floor(Math.random() * 6);
         let ondaAgend = Math.floor(Math.cos(i * 0.5) * 4) + 6 + Math.floor(Math.random() * 3);
         
@@ -162,6 +159,20 @@ exports.middleware = (req, res, next) => {
     const path = req.path;
 
     if (method === 'GET') {
+        // INTERCEPTA A ROTA DE CONFIGURAÇÃO PARA FORÇAR MOEDA E PAÍS NATIVAMENTE PELO BACKEND
+        if (path === '/config') {
+            return res.json({
+                moeda: demoState.country === 'BR' ? 'R$' : 'MT',
+                fusoHorario: demoState.country === 'BR' ? 'America/Sao_Paulo' : 'Africa/Maputo',
+                nomeClinica: "HealthCRM Cloud",
+                nomeComercial: "HealthCRM Oficial",
+                telefone: demoState.country === 'BR' ? "+55 11 99999-9999" : "+258 84 000 0000",
+                pais: demoState.country === 'BR' ? "Brasil" : "Mocambique",
+                interfaceTema: "LIGHT",
+                interfaceIdioma: "pt-BR"
+            });
+        }
+
         if (path === '/dashboard/stats') {
             return res.json({
                 kpis: { conversasTotais: 142, novosLeads: 50, leadsQualificados: 28, agendamentosTotais: 20, taxaConversao: 40.5, consultasHoje: 4, pendentesHoje: 2 },
@@ -175,7 +186,7 @@ exports.middleware = (req, res, next) => {
                     ],
                     servicos: demoState.data.tratamentos.map(t => ({ nome: t.nome, count: Math.floor(Math.random() * 15) + 5 })),
                     origens: [{ origem: 'WhatsApp Meta', count: 30 }, { origem: 'Instagram', count: 15 }, { origem: 'Indicação', count: 5 }],
-                    evolucao: demoState.data.evolucao // Puxa do gráfico sinuoso
+                    evolucao: demoState.data.evolucao
                 }
             });
         }
