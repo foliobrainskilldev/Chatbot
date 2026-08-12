@@ -1,19 +1,21 @@
-const { subDays, addDays } = require('date-fns');
+const { subDays, addDays, format } = require('date-fns');
 
 // Estado mantido exclusivamente na Memória RAM (Mais seguro e à prova de falhas no Render)
 let demoState = {
     active: false,
     scenario: 'ODONTO',
+    country: 'MZ', // BR para Brasil, MZ para Moçambique
     data: null
 };
 
-function generateMockData(scenario) {
+function generateMockData(scenario, country) {
     const data = {
         leads: [],
         agendamentos: [],
         tratamentos: [],
         equipe: [],
-        mensagens: []
+        mensagens: [],
+        evolucao: []
     };
 
     // 1. Equipe Fictícia
@@ -44,7 +46,7 @@ function generateMockData(scenario) {
         ];
     }
 
-    // 3. Leads Fictícios
+    // 3. Leads Fictícios (Com Numeração BR ou MZ)
     const nomes = ["Mariana Costa", "Pedro Alves", "Fernanda Lima", "João Santos", "Beatriz Gomes", "Lucas Rocha", "Juliana Ribeiro", "Rafael Martins", "Camila Sousa", "Diego Carvalho"];
     const statusFunil = ['NOVO', 'EM_CONVERSA', 'QUALIFICADO', 'AGENDADO', 'CLIENTE', 'PERDIDO'];
     const origens = ['WhatsApp Meta', 'Instagram', 'Indicação'];
@@ -53,8 +55,17 @@ function generateMockData(scenario) {
         const isFalarHumano = Math.random() > 0.8;
         const randomStatus = statusFunil[Math.floor(Math.random() * statusFunil.length)];
         
+        let phone = "";
+        if (country === 'BR') {
+            // Gera um número brasileiro: +55 11 9XXXX-XXXX
+            phone = `+55119${Math.floor(Math.random() * 90000000) + 10000000}`;
+        } else {
+            // Gera um número moçambicano: +258 84 XXXXXXX
+            phone = `+25884${Math.floor(Math.random() * 9000000) + 1000000}`;
+        }
+        
         data.leads.push({
-            id: `+25884${Math.floor(Math.random() * 9000000) + 1000000}`,
+            id: phone,
             nome: nomes[i % nomes.length] + ` ${i}`,
             leadStatus: isFalarHumano ? 'EM_CONVERSA' : randomStatus,
             origem: origens[Math.floor(Math.random() * origens.length)],
@@ -93,22 +104,36 @@ function generateMockData(scenario) {
         { role: 'assistant', content: 'Olá! Claro, nossos preços variam conforme avaliação. Deseja agendar?', atendenteHumano: false, criadoEm: new Date().toISOString() }
     ];
 
+    // 6. Evolução Sinuosa para o Gráfico (Altos e Baixos Realistas com Seno, Cosseno e Ruído)
+    for (let i = 30; i >= 0; i--) {
+        let dataAlvo = subDays(new Date(), i);
+        // Base lógica: seno para criar onda, random para criar variação diária (ruído)
+        let ondaLeads = Math.floor(Math.sin(i * 0.5) * 8) + 12 + Math.floor(Math.random() * 6);
+        let ondaAgend = Math.floor(Math.cos(i * 0.5) * 4) + 6 + Math.floor(Math.random() * 3);
+        
+        data.evolucao.push({
+            data: format(dataAlvo, 'dd/MM'),
+            leads: Math.max(0, ondaLeads), 
+            agendamentos: Math.max(0, ondaAgend)
+        });
+    }
+
     demoState.data = data;
 }
 
 // Controladores Exportados
-exports.getStatus = (req, res) => res.json({ active: demoState.active, scenario: demoState.scenario });
+exports.getStatus = (req, res) => res.json({ active: demoState.active, scenario: demoState.scenario, country: demoState.country });
 
 exports.toggleStatus = (req, res) => {
     try {
-        const { active, scenario } = req.body;
-        console.log(`[DEMO SERVICE] Pedido de ativação: ${active}, Cenário: ${scenario}`);
+        const { active, scenario, country } = req.body;
         
         demoState.active = active;
         if (scenario) demoState.scenario = scenario;
+        if (country) demoState.country = country;
         
         if (active) {
-            generateMockData(demoState.scenario);
+            generateMockData(demoState.scenario, demoState.country);
         }
         
         res.status(200).json({ success: true, message: `Modo demonstração ${active ? 'ativado' : 'desativado'}.` });
@@ -120,7 +145,7 @@ exports.toggleStatus = (req, res) => {
 
 exports.resetData = (req, res) => {
     try {
-        generateMockData(demoState.scenario);
+        generateMockData(demoState.scenario, demoState.country);
         res.status(200).json({ success: true, message: "Dados fictícios restaurados com sucesso." });
     } catch (error) {
         res.status(500).json({ error: "Erro ao resetar demonstração." });
@@ -150,7 +175,7 @@ exports.middleware = (req, res, next) => {
                     ],
                     servicos: demoState.data.tratamentos.map(t => ({ nome: t.nome, count: Math.floor(Math.random() * 15) + 5 })),
                     origens: [{ origem: 'WhatsApp Meta', count: 30 }, { origem: 'Instagram', count: 15 }, { origem: 'Indicação', count: 5 }],
-                    evolucao: [{ data: '01/08', leads: 5, agendamentos: 2 }, { data: '02/08', leads: 8, agendamentos: 4 }, { data: '03/08', leads: 12, agendamentos: 6 }]
+                    evolucao: demoState.data.evolucao // Puxa do gráfico sinuoso
                 }
             });
         }
@@ -161,7 +186,7 @@ exports.middleware = (req, res, next) => {
         if (path === '/conversas/pendentes') return res.json(demoState.data.leads.filter(l => l.falarHumano));
         if (path.match(/\/conversas\/.*\/notas/)) return res.json([]);
         if (path.match(/\/conversas\/.*/)) return res.json(demoState.data.mensagens);
-        if (path === '/relatorios/geral') return res.json({ cards: { conversas: { total: 150, novas: 50, resolvidas: 100 }, leads: { novos: 50, qualificados: 30, convertidos: 15 }, agendamentos: { solicitados: 25, confirmados: 20, realizados: 15, cancelados: 2, faltas: 3 }, conversao: { qualificacao: 60, agendamento: 80, comparecimento: 90, final: 30 } }, ia: { atendidas: 150, resolvidas: 140, transferidas: 10, taxaResolucao: 93, agendamentos: 20 }, funil: [], origens: [], tratamentos: [], evolucao: [] });
+        if (path === '/relatorios/geral') return res.json({ cards: { conversas: { total: 150, novas: 50, resolvidas: 100 }, leads: { novos: 50, qualificados: 30, convertidos: 15 }, agendamentos: { solicitados: 25, confirmados: 20, realizados: 15, cancelados: 2, faltas: 3 }, conversao: { qualificacao: 60, agendamento: 80, comparecimento: 90, final: 30 } }, ia: { atendidas: 150, resolvidas: 140, transferidas: 10, taxaResolucao: 93, agendamentos: 20 }, funil: [], origens: [], tratamentos: [], evolucao: demoState.data.evolucao });
         
         return res.json([]); 
     }
