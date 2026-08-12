@@ -14,7 +14,7 @@ const webhookController = require('./webhookController');
 const automacoesController = require('./automacoesController'); 
 
 // Serviço de Demonstração (Portfólio)
-const demoService = require('./services/demoService');
+const demoService = require('../../services/demoService');
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
