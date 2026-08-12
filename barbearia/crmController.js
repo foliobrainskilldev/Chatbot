@@ -1,6 +1,6 @@
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
-const supabaseService = require('../services/supabaseService'); // Substituído
+const supabaseService = require('../services/supabaseService');
 const { startOfDay, endOfDay, subDays, format } = require('date-fns');
 const botEngine = require('./botEngine');
 
@@ -104,7 +104,7 @@ exports.criarNotaInterna = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Erro criar nota." }); }
 };
 
-// ATUALIZADO: Suporte a Mídia via Supabase e Typing Indicator
+// CORREÇÃO APLICADA: Suporte de envio de áudios como arquivo OGG (Burla bloqueio da Meta)
 exports.enviarMensagemManual = async (req, res) => {
     try {
         const { clienteId } = req.params; 
@@ -113,21 +113,26 @@ exports.enviarMensagemManual = async (req, res) => {
         let supabaseUrl = null;
         let typeMsg = null;
 
-        // Dispara o indicador "Digitando..." no WhatsApp
         await whatsappService.markAsReadAndTyping(null, clienteId);
-        await new Promise(r => setTimeout(r, 1000)); // Delay sutil
+        await new Promise(r => setTimeout(r, 1000)); 
 
         if (req.file) {
             const mimeType = req.file.mimetype; 
-            const resourceType = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('video/') ? 'video' : 'raw');
+            const isBrowserAudio = req.file.originalname === 'audio_record.ogg';
+            const isAudio = mimeType.startsWith('audio/') || isBrowserAudio;
             
-            // Faz upload para o Supabase Storage
+            const resourceType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'raw' : (mimeType.startsWith('video/') ? 'video' : 'raw'));
+            
             const cloudResult = await supabaseService.uploadStream(req.file.buffer, 'barbearia/atendimento', resourceType);
             supabaseUrl = cloudResult.secure_url;
-            typeMsg = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('video/') ? 'video' : 'document');
             
-            await whatsappService.sendMediaUrl(clienteId, typeMsg, supabaseUrl, texto);
-            msgDb = `[MEDIA:${typeMsg}] ${supabaseUrl} | Transcrição: ${texto}`; 
+            let waSendType = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('video/') ? 'video' : 'document');
+            let dbSaveType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'document'));
+            
+            let filename = isBrowserAudio ? "Mensagem_de_Voz.ogg" : null;
+
+            await whatsappService.sendMediaUrl(clienteId, waSendType, supabaseUrl, texto, filename);
+            msgDb = `[MEDIA:${dbSaveType}] ${supabaseUrl} | Transcrição: ${texto}`; 
         } else if (texto) { 
             await whatsappService.sendText(clienteId, texto); 
         }

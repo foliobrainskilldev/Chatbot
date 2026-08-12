@@ -94,18 +94,23 @@ exports.enviarMensagemManual = async (req, res) => {
 
         if (req.file) {
             const mimeType = req.file.mimetype;
-            const isAudio = mimeType.startsWith('audio/') || req.file.originalname.endsWith('.ogg') || req.file.originalname.endsWith('.webm');
             
-            // CORREÇÃO: Repassa 'audio' para o supabase processar corretamente
-            const resourceType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'raw'));
+            // Verifica se é o áudio nativo do microfone do painel CRM
+            const isBrowserAudio = req.file.originalname === 'audio_record.ogg';
+            const isAudio = mimeType.startsWith('audio/') || isBrowserAudio;
             
+            const resourceType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'raw' : (mimeType.startsWith('video/') ? 'video' : 'raw'));
             const cloudResult = await supabaseService.uploadStream(req.file.buffer, 'clinica/atendimento', resourceType);
             supabaseUrl = cloudResult.secure_url;
             
-            typeMsg = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'document'));
+            // CORREÇÃO CRÍTICA PARA A META: Arquivos de áudio do navegador são enviados como Documento
+            let waSendType = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('video/') ? 'video' : 'document');
+            let dbSaveType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'document'));
             
-            await whatsappService.sendMediaUrl(clienteId, typeMsg, supabaseUrl, texto);
-            msgDb = `[MEDIA:${typeMsg}] ${supabaseUrl} | Texto: ${texto}`;
+            let filename = isBrowserAudio ? "Mensagem_de_Voz.ogg" : null;
+
+            await whatsappService.sendMediaUrl(clienteId, waSendType, supabaseUrl, texto, filename);
+            msgDb = `[MEDIA:${dbSaveType}] ${supabaseUrl} | Texto: ${texto}`;
         } else if (texto) { 
             await whatsappService.sendText(clienteId, texto); 
         }

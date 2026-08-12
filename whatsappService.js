@@ -72,7 +72,6 @@ async function sendInteractiveMenu(to, text, buttons) {
     });
 }
 
-// NOVA FUNÇÃO: Listas Interativas (Para menu de tratamentos)
 async function sendInteractiveList(to, text, buttonText, sections) {
     return await sendWhatsAppRequest({
         messaging_product: "whatsapp",
@@ -90,10 +89,16 @@ async function sendInteractiveList(to, text, buttonText, sections) {
     });
 }
 
-async function sendMediaUrl(to, type, url, caption = "") {
+// ATUALIZADO: Agora suporta 'filename' para garantir que os áudios cheguem como documentos executáveis
+async function sendMediaUrl(to, type, url, caption = "", filename = null) {
     const mediaObj = { link: url };
+    
     if (caption && (type === 'image' || type === 'video' || type === 'document')) {
         mediaObj.caption = caption;
+    }
+    
+    if (type === 'document' && filename) {
+        mediaObj.filename = filename;
     }
     
     const payload = {
