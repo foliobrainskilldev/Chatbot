@@ -42,36 +42,38 @@ async function analisarMensagemNLP(mensagem, historico, userState) {
         return fallbackNLP(mensagem);
     }
 
+    // Passar o dia exato para conversão de datas relativas (amanhã, sexta, etc)
+    const formatterDia = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit' });
+    const diaDeHoje = formatterDia.format(new Date());
+
     try {
         const prompt = `
 Você é o motor de NLP de um HealthCRM (Clínica Médica).
 Sua tarefa é analisar a mensagem do paciente e extrair a intenção (intent) e as entidades (entities).
 
 Intenções permitidas:
-- clinic.hours (horário de funcionamento)
+- clinic.hours (horário)
 - clinic.location (localização)
 - clinic.contact (contato)
 - clinic.payment_methods (pagamento)
 - treatment.list (listar tratamentos)
-- treatment.info (informação de tratamento)
-- treatment.price (preço de tratamento)
+- treatment.info (informação)
+- treatment.price (preço)
 - treatment.duration (duração)
-- treatment.faq (dúvidas gerais sobre tratamento)
 - appointment.create (marcar consulta)
-- appointment.check (verificar consultas futuras)
-- appointment.history (verificar consultas realizadas, passadas ou canceladas)
+- appointment.check (verificar futuras)
+- appointment.history (verificar passadas ou canceladas)
 - appointment.reschedule (remarcar)
 - appointment.cancel (cancelar)
 - human.transfer (falar com atendente)
-- greeting (saudação / oi / olá)
+- greeting (saudação)
 - goodbye (despedida)
 - unknown (não entendi)
 
-Entidades para extrair (se presentes):
-- treatment (nome do tratamento)
-- date (data, ex: "amanhã", "sexta-feira", "15/10")
-- time (horário, ex: "15h", "de manhã")
-- professional (nome do médico/profissional)
+INFORMAÇÃO TEMPORAL IMPORTANTE:
+Hoje é: ${diaDeHoje}.
+Se o usuário mencionar dias relativos ("amanhã", "sexta", "dia 16"), converta a entidade 'date' EXATAMENTE para o formato "DD/MM/YYYY". Ex: "15/08/2026".
+Se mencionar horas ("10h", "às três da tarde"), converta a entidade 'time' EXATAMENTE para "HH:mm". Ex: "10:00", "15:00".
 
 Estado atual da conversa (Contexto): ${JSON.stringify(userState || {})}
 
@@ -81,9 +83,8 @@ Responda APENAS com um JSON válido no formato exato:
   "confidence": 0.95,
   "entities": {
     "treatment": "...",
-    "date": "...",
-    "time": "...",
-    "professional": "..."
+    "date": "DD/MM/YYYY",
+    "time": "HH:mm"
   }
 }
 `;
@@ -112,20 +113,15 @@ Responda APENAS com um JSON válido no formato exato:
 function fallbackNLP(mensagem) {
     const msg = mensagem.toLowerCase();
     let intent = "unknown";
-    if (msg.includes("agendar") || msg.includes("marcar")) intent = "appointment.create";
+    if (msg.includes("agendar") || msg.includes("marcar") || msg.includes("dia ") || msg.includes("às ")) intent = "appointment.create";
     else if (msg.includes("cancelar")) intent = "appointment.cancel";
-    else if (msg.includes("preço") || msg.includes("valor") || msg.includes("custa")) intent = "treatment.price";
+    else if (msg.includes("preço") || msg.includes("valor")) intent = "treatment.price";
     else if (msg.includes("humano") || msg.includes("atendente")) intent = "human.transfer";
-    else if (msg.includes("horário") || msg.includes("horas")) intent = "clinic.hours";
-    else if (msg.includes("onde") || msg.includes("local")) intent = "clinic.location";
-    else if (msg.includes("histórico") || msg.includes("já feita") || msg.includes("realizada")) intent = "appointment.history";
-    else if (msg === "oi" || msg === "olá" || msg === "ola" || msg === "bom dia" || msg === "boa tarde") intent = "greeting";
+    else if (msg.includes("horário")) intent = "clinic.hours";
+    else if (msg.includes("histórico") || msg.includes("já feita")) intent = "appointment.history";
+    else if (msg === "oi" || msg === "olá") intent = "greeting";
     
-    return {
-        intent,
-        confidence: 0.6,
-        entities: {}
-    };
+    return { intent, confidence: 0.6, entities: {} };
 }
 
 async function gerarRespostaNatural(mensagem, historico, contexto, configDb) {
@@ -135,7 +131,6 @@ async function gerarRespostaNatural(mensagem, historico, contexto, configDb) {
         return "Recebi sua mensagem, mas meu sistema inteligente está offline. Como posso ajudar de forma objetiva?";
     }
 
-    // Configurando Fuso Horário e Consciência Temporal
     const fusoHorario = configDb?.fusoHorario || 'Africa/Maputo';
     const formatter = new Intl.DateTimeFormat('pt-BR', { 
         timeZone: fusoHorario,
@@ -159,17 +154,15 @@ INFORMAÇÕES DO PACIENTE:
 - Nome: ${contexto.paciente_nome || 'Paciente'}
 - Tipo: ${contexto.paciente_novo ? 'Novo Paciente (Dê as boas vindas)' : 'Paciente Recorrente (Trate com familiaridade, sem dar boas vindas genéricas)'}.
 
-REGRAS OBRIGATÓRIAS DE CONTEXTO E HISTÓRICO:
-1. Você recebe abaixo os DADOS DE CONTEXTO extraídos diretamente do Banco de Dados (CRM).
-2. NUNCA diga que não tem acesso a consultas ou histórico se a informação estiver presente nos DADOS DE CONTEXTO. 
-3. Se o paciente perguntar sobre uma consulta passada ou cancelada, LEIA a chave "historico_consultas_paciente" do JSON. A resposta está lá.
-4. NUNCA invente preços, horários, histórico ou diagnósticos médicos.
-5. Se a informação não constar estritamente no JSON de contexto, diga que não possui a informação no momento e ofereça transferência para a recepção.
+REGRAS OBRIGATÓRIAS DE CONTEXTO:
+1. Você recebe abaixo os DADOS DE CONTEXTO extraídos do CRM. Use EXCLUSIVAMENTE estes dados.
+2. NUNCA diga que não tem acesso a consultas se a informação estiver no contexto. 
+3. Se a informação não constar no contexto, ofereça transferência para a recepção.
 
 DADOS DE CONTEXTO DO CRM (USE ESTES DADOS PARA RESPONDER):
 ${JSON.stringify(contexto.dados_crm || {}, null, 2)}
 
-Sua tarefa: Leia a mensagem do usuário e responda de forma natural, amigável e conversacional, aplicando rigorosamente as regras acima.
+Sua tarefa: Leia a mensagem do usuário e responda de forma natural, amigável e conversacional, aplicando as regras.
 `;
 
         const messages = [
@@ -181,20 +174,15 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma natural, amigável e
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
             model: "llama-3.3-70b-versatile",
             messages: messages,
-            temperature: 0.6 // Levemente ajustada para ser analítica com JSON e amigável
+            temperature: 0.6
         }, {
             headers: { 'Authorization': `Bearer ${GROQ_API_KEY}` }
         });
 
         return response.data.choices[0].message.content;
     } catch (error) {
-        console.error("❌ [IA ERRO] Falha ao gerar resposta natural:", error.response ? JSON.stringify(error.response.data) : error.message);
         return "Desculpe, tive um pequeno problema ao formular a resposta agora. Você poderia repetir, por favor?";
     }
 }
 
-module.exports = {
-    analisarMensagemNLP,
-    gerarRespostaNatural,
-    transcreverAudio
-};
+module.exports = { analisarMensagemNLP, gerarRespostaNatural, transcreverAudio };

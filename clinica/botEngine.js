@@ -61,13 +61,17 @@ async function processarMensagemEntrante(message) {
 
                 try {
                     audioBuffer = await whatsappService.downloadMedia(mediaId);
-                } catch(e) { console.error("Erro ao baixar áudio do WhatsApp."); }
+                } catch(e) { 
+                    console.error("Erro ao baixar áudio do WhatsApp."); 
+                }
 
                 if (audioBuffer) {
                     try {
                         const cloudRes = await supabaseService.uploadStream(audioBuffer, 'clinica/pacientes/audios', 'video');
                         midiaUrl = cloudRes.secure_url;
-                    } catch (e) { console.error("⚠️ Aviso: Falha ao salvar áudio no Supabase.", e.message); }
+                    } catch (e) { 
+                        console.error("⚠️ Aviso: Falha ao salvar áudio no Supabase.", e.message); 
+                    }
 
                     try {
                         textoProcessado = await aiService.transcreverAudio(audioBuffer);
@@ -167,8 +171,13 @@ async function processarMensagemEntrante(message) {
                 userState.entities = { ...userState.entities, ...nlpResult.entities };
                 stateMachine.set(senderNumber, userState);
             } else if (isInteractive) {
-                if (textoProcessado.startsWith('trat_') || textoProcessado === 'cmd_agendar') nlpResult.intent = 'appointment.create';
-                else if (textoProcessado.startsWith('canc_')) nlpResult.intent = 'appointment.cancel';
+                // Roteamento direto de botões/listas para garantir que o fluxo de agendamento assuma o controle
+                const agendamentoPrefixes = ['trat_', 'data_', 'hora_', 'ver_mais_'];
+                if (agendamentoPrefixes.some(p => textoProcessado.startsWith(p)) || textoProcessado === 'cmd_agendar') {
+                    nlpResult.intent = 'appointment.create';
+                } else if (textoProcessado.startsWith('canc_')) {
+                    nlpResult.intent = 'appointment.cancel';
+                }
             }
 
             let activeIntent = nlpResult.intent || 'unknown';
@@ -208,11 +217,4 @@ async function processarMensagemEntrante(message) {
             }
 
         } catch (error) {
-            console.error("❌ ERRO CRÍTICO NO MOTOR DA CLÍNICA:", error);
-            await whatsappService.sendText(senderNumber, "Desculpe, meu sistema passou por uma instabilidade técnica agorinha. Você poderia repetir a mensagem?");
-        }
-    }, 0);
-}
-
-function limparMemoriaEstado() { stateMachine.clear(); }
-module.exports = { processarMensagemEntrante, limparMemoriaEstado, stateMachine };
+            console.error("❌ ERRO CRÍTICO NO MOTOR DA CLÍ

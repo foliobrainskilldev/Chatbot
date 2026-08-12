@@ -72,6 +72,24 @@ async function sendInteractiveMenu(to, text, buttons) {
     });
 }
 
+// NOVA FUNÇÃO: Listas Interativas (Para menu de tratamentos)
+async function sendInteractiveList(to, text, buttonText, sections) {
+    return await sendWhatsAppRequest({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: to,
+        type: "interactive",
+        interactive: {
+            type: "list",
+            body: { text: text },
+            action: {
+                button: buttonText,
+                sections: sections
+            }
+        }
+    });
+}
+
 async function sendMediaUrl(to, type, url, caption = "") {
     const mediaObj = { link: url };
     if (caption && (type === 'image' || type === 'video' || type === 'document')) {
@@ -94,19 +112,16 @@ async function downloadMedia(mediaId) {
     if (!META_TOKEN) throw new Error("META_TOKEN ausente.");
 
     try {
-        // 1. Pegar URL de download da Mídia
         const resUrl = await axios.get(`https://graph.facebook.com/${API_VERSION}/${mediaId}`, {
             headers: { 'Authorization': `Bearer ${META_TOKEN}` }
         });
         const mediaUrl = resUrl.data.url;
 
-        // 2. Fazer download do arquivo em ArrayBuffer Binário
         const resBinary = await axios.get(mediaUrl, {
             headers: { 'Authorization': `Bearer ${META_TOKEN}` },
             responseType: 'arraybuffer' 
         });
 
-        // CORREÇÃO CRÍTICA: Converte para Buffer Nativo do Node para evitar erro 403 no Cloudinary
         return Buffer.from(resBinary.data);
     } catch (error) {
         console.error("❌ [WhatsApp Media ERRO]: Falha ao baixar arquivo de mídia.");
@@ -117,6 +132,7 @@ async function downloadMedia(mediaId) {
 module.exports = {
     sendText,
     sendInteractiveMenu,
+    sendInteractiveList,
     sendMediaUrl,
     markAsReadAndTyping,
     downloadMedia
