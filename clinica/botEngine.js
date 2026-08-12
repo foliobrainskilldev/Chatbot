@@ -5,6 +5,9 @@ const webhookService = require('../services/webhookService');
 const automationEngine = require('../services/automationEngine');
 const supabaseService = require('../services/supabaseService');
 
+// Importa o gestor de demonstração
+const demoService = require('../services/demoService');
+
 const stateMachine = new Map();
 
 async function getOrCreateCliente(numero, nomePushName = null) {
@@ -22,7 +25,6 @@ async function getOrCreateCliente(numero, nomePushName = null) {
         const updates = { ultimaInteracao: new Date() };
         if (nomePushName && !cliente.nome) updates.nome = nomePushName;
         
-        // Se o lead ainda é "NOVO" no funil, tratamos como novo para a IA
         if (cliente.leadStatus === 'NOVO') {
             isNewPatient = true;
         }
@@ -34,6 +36,12 @@ async function getOrCreateCliente(numero, nomePushName = null) {
 
 async function processarMensagemEntrante(message) {
     if (!message || !message.from) return; 
+
+    // BLOQUEIO DE SEGURANÇA: MODO DEMONSTRAÇÃO
+    if (demoService.isDemoActive()) {
+        console.log(`🛑 [MODO DEMONSTRAÇÃO] Sistema em Demonstração. Ignorando mensagem real do WhatsApp de ${message.from}. Nenhuma resposta será enviada.`);
+        return;
+    }
 
     setTimeout(async () => {
         const senderNumber = message.from;
@@ -171,7 +179,6 @@ async function processarMensagemEntrante(message) {
                 userState.entities = { ...userState.entities, ...nlpResult.entities };
                 stateMachine.set(senderNumber, userState);
             } else if (isInteractive) {
-                // Roteamento direto de botões/listas para garantir que o fluxo de agendamento assuma o controle
                 const agendamentoPrefixes = ['trat_', 'data_', 'hora_', 'ver_mais_'];
                 if (agendamentoPrefixes.some(p => textoProcessado.startsWith(p)) || textoProcessado === 'cmd_agendar') {
                     nlpResult.intent = 'appointment.create';
@@ -203,7 +210,6 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // Passando o 'cliente' e 'isNewPatient' para os fluxos
             if (activeIntent === 'appointment.create' || userState.step === 'AGENDAMENTO') {
                 const flowAgendamento = require('./flowAgendamento');
                 await flowAgendamento.processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, isNewPatient);

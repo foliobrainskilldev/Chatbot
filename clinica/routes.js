@@ -2,19 +2,35 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 
-// CORREÇÃO APLICADA: Ponto e barra (./) colocados corretamente em todos os controllers
+// Controller Imports
 const crmLeadsController = require('./controllers/crmLeadsController'); 
 const chatController = require('./controllers/chatController');
 const agendaTratamentosController = require('./controllers/agendaTratamentosController');
-const configController = require('./controllers/configController'); // <--- AQUI ESTAVA O ERRO (Faltava a barra)
+const configController = require('./controllers/configController');
 
-// Módulos que estão na pasta raiz da clínica (junto com routes.js)
+// Módulos raiz
 const relatoriosController = require('./relatoriosController');
 const webhookController = require('./webhookController');
 const automacoesController = require('./automacoesController'); 
 
+// Serviço de Demonstração (Portfólio)
+const demoService = require('./services/demoService');
+
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
+
+// ==========================================
+// ROTAS DE MODO DEMONSTRAÇÃO (Devem vir antes do Middleware)
+// ==========================================
+router.get('/demo/status', demoService.getStatus);
+router.post('/demo/toggle', demoService.toggleStatus);
+router.post('/demo/reset', demoService.resetData);
+
+// ==========================================
+// MIDDLEWARE DE INTERCEPTAÇÃO DE DEMONSTRAÇÃO
+// Se o modo demo estiver ativo, ele processa a rota aqui e não desce para os controllers reais
+// ==========================================
+router.use(demoService.middleware);
 
 // ==========================================
 // ROTAS DE DASHBOARD E RELATÓRIOS
@@ -25,7 +41,7 @@ router.get('/relatorios/atendimento', relatoriosController.getRelatoriosAtendime
 router.get('/relatorios/exportar', relatoriosController.exportarRelatorioCSV);
 
 // ==========================================
-// CONFIGURAÇÕES GERAIS DA CLÍNICA E ZONA DE PERIGO (RESET)
+// CONFIGURAÇÕES GERAIS E ZONA DE PERIGO
 // ==========================================
 router.get('/config', configController.getConfigCompleta);
 router.put('/config', upload.single('logo'), configController.atualizarConfigCompleta);
@@ -67,14 +83,14 @@ router.post('/tratamentos', upload.single('imagem'), agendaTratamentosController
 router.delete('/tratamentos/:id', agendaTratamentosController.excluirTratamento);
 
 // ==========================================
-// CONFIGURAÇÃO DO CÉREBRO DA IA 
+// CONFIGURAÇÃO DA IA 
 // ==========================================
 router.get('/ia/config', chatController.getConfigIA);
 router.put('/ia/config', upload.single('avatar'), chatController.atualizarConfigIA); 
 router.post('/ia/testar', chatController.testarIA); 
 
 // ==========================================
-// INTEGRAÇÕES E WEBHOOKS AVANÇADOS
+// INTEGRAÇÕES E WEBHOOKS
 // ==========================================
 router.get('/webhooks', webhookController.getWebhooks);
 router.get('/webhooks/logs', webhookController.getWebhookLogs);
