@@ -1,4 +1,4 @@
-const { prisma } = require('../../db');
+const { prisma } = require('../db');
 const supabaseService = require('../services/supabaseService');
 const botEngine = require('./botEngine');
 

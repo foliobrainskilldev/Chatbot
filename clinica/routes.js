@@ -3,7 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 
 const crmLeadsController = require('./controllers/crmLeadsController'); 
-const chatController = require('./controllers/chatController');
+const chatController = require('../../chatController');
 const agendaTratamentosController = require('./controllers/agendaTratamentosController');
 const relatoriosController = require('./relatoriosController');
 const webhookController = require('./webhookController');
