@@ -11,16 +11,23 @@ let demoState = {
     data: null
 };
 
-// Tenta recuperar estado após reinício do servidor
+// Tenta recuperar estado após reinício do servidor (se o disco permitir)
 if (fs.existsSync(stateFile)) {
     try {
         const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
         demoState = saved;
-    } catch (e) {}
+    } catch (e) {
+        console.warn("⚠️ Aviso: Ficheiro demo_state.json corrompido, a iniciar vazio.");
+    }
 }
 
 function saveState() {
-    fs.writeFileSync(stateFile, JSON.stringify({ active: demoState.active, scenario: demoState.scenario }));
+    try {
+        // Tenta guardar o ficheiro. Se o servidor (Render) bloquear, ele falha silenciosamente e mantém na RAM.
+        fs.writeFileSync(stateFile, JSON.stringify({ active: demoState.active, scenario: demoState.scenario }));
+    } catch (e) {
+        console.warn("⚠️ Aviso: Servidor bloqueou gravação em disco (Read-Only FS). A demonstração ficará ativa apenas na memória RAM.");
+    }
 }
 
 function generateMockData(scenario) {
@@ -116,26 +123,35 @@ function generateMockData(scenario) {
 exports.getStatus = (req, res) => res.json({ active: demoState.active, scenario: demoState.scenario });
 
 exports.toggleStatus = (req, res) => {
-    const { active, scenario } = req.body;
-    demoState.active = active;
-    if (scenario) demoState.scenario = scenario;
-    
-    if (active) generateMockData(demoState.scenario);
-    saveState();
-    
-    res.json({ success: true, message: `Modo demonstração ${active ? 'ativado' : 'desativado'}.` });
+    try {
+        const { active, scenario } = req.body;
+        demoState.active = active;
+        if (scenario) demoState.scenario = scenario;
+        
+        if (active) generateMockData(demoState.scenario);
+        saveState();
+        
+        res.status(200).json({ success: true, message: `Modo demonstração ${active ? 'ativado' : 'desativado'}.` });
+    } catch (error) {
+        console.error("Erro ao ativar demo:", error);
+        res.status(500).json({ error: "Erro interno do servidor ao gerar dados falsos." });
+    }
 };
 
 exports.resetData = (req, res) => {
-    generateMockData(demoState.scenario);
-    res.json({ success: true, message: "Dados fictícios restaurados com sucesso." });
+    try {
+        generateMockData(demoState.scenario);
+        res.status(200).json({ success: true, message: "Dados fictícios restaurados com sucesso." });
+    } catch (error) {
+        res.status(500).json({ error: "Erro ao resetar demonstração." });
+    }
 };
 
 exports.isDemoActive = () => demoState.active;
 
-// O MIDDLEWARE MÁGICO: Intercepta as rotas para não tocar no banco real
+// MIDDLEWARE: Intercepta rotas
 exports.middleware = (req, res, next) => {
-    if (!demoState.active) return next(); // Se não for demo, segue para o banco real.
+    if (!demoState.active) return next();
 
     const method = req.method;
     const path = req.path;
@@ -150,11 +166,11 @@ exports.middleware = (req, res, next) => {
                 desempenhoIA: { conversasIA: 142, transferidas: 5, resolvidas: 137, taxaResolucao: 96.4 },
                 graficos: {
                     funil: [
-                        { etapa: 'Novos', valor: 50 }, { etapa: 'Qualificados', valor: 28 }, { etapa: 'Agendados', valor: 20 }, { etapa: 'Clientes', valor: 15 }
+                        { etapa: 'Conversas', valor: 142 }, { etapa: 'Novos', valor: 50 }, { etapa: 'Qualificados', valor: 28 }, { etapa: 'Agendados', valor: 20 }, { etapa: 'Clientes', valor: 15 }
                     ],
                     servicos: demoState.data.tratamentos.map(t => ({ nome: t.nome, count: Math.floor(Math.random() * 15) + 5 })),
                     origens: [{ origem: 'WhatsApp Meta', count: 30 }, { origem: 'Instagram', count: 15 }, { origem: 'Indicação', count: 5 }],
-                    evolucao: [{ data: '01/08', leads: 5, agendamentos: 2 }, { data: '02/08', leads: 8, agendamentos: 4 }]
+                    evolucao: [{ data: '01/08', leads: 5, agendamentos: 2 }, { data: '02/08', leads: 8, agendamentos: 4 }, { data: '03/08', leads: 12, agendamentos: 6 }]
                 }
             });
         }
@@ -167,11 +183,10 @@ exports.middleware = (req, res, next) => {
         if (path.match(/\/conversas\/.*/)) return res.json(demoState.data.mensagens);
         if (path === '/relatorios/geral') return res.json({ cards: { conversas: { total: 150, novas: 50, resolvidas: 100 }, leads: { novos: 50, qualificados: 30, convertidos: 15 }, agendamentos: { solicitados: 25, confirmados: 20, realizados: 15, cancelados: 2, faltas: 3 }, conversao: { qualificacao: 60, agendamento: 80, comparecimento: 90, final: 30 } }, ia: { atendidas: 150, resolvidas: 140, transferidas: 10, taxaResolucao: 93, agendamentos: 20 }, funil: [], origens: [], tratamentos: [], evolucao: [] });
         
-        return res.json([]); // Fallback GET genérico
+        return res.json([]); 
     }
 
     if (method === 'POST' || method === 'PUT' || method === 'DELETE') {
-        // Simulador de sucesso para ações (Kanban, criar lead, etc)
         if (path.includes('/leads/') && path.includes('/status') && method === 'PUT') {
             const id = req.path.split('/')[2];
             const lead = demoState.data.leads.find(l => l.id === id);
