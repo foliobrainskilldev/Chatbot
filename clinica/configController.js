@@ -1,5 +1,6 @@
 const { prisma } = require('../db');
 const supabaseService = require('../services/supabaseService');
+const botEngine = require('./botEngine');
 
 exports.getConfigCompleta = async (req, res) => {
     try {
@@ -56,7 +57,6 @@ exports.atualizarConfigCompleta = async (req, res) => {
             seguranca2FA: data.seguranca2FA,
             interfaceTema: data.interfaceTema,
             interfaceIdioma: data.interfaceIdioma,
-            // Mapeamos a chave da UI (storageFolder) para a base (cloudinaryFolder) mantendo retrocompatibilidade no Prisma
             cloudinaryFolder: data.storageFolder || data.cloudinaryFolder
         };
 
@@ -98,5 +98,24 @@ exports.testSupabase = async (req, res) => {
         res.status(200).json({ success: hasSupabase });
     } catch (error) {
         res.status(500).json({ error: "Erro ao testar Supabase." });
+    }
+};
+
+// FORMATAÇÃO DO SISTEMA CLÍNICA
+exports.formatarSistemaClinica = async (req, res) => {
+    try {
+        await prisma.automacaoHistorico.deleteMany({});
+        await prisma.filaAutomacao.deleteMany({});
+        await prisma.webhookLog.deleteMany({});
+        await prisma.notaInterna.deleteMany({}); 
+        await prisma.mensagemIA.deleteMany({});
+        await prisma.agendamento.deleteMany({}); 
+        await prisma.cliente.deleteMany({});
+        
+        botEngine.limparMemoriaEstado();
+
+        res.status(200).json({ message: "O banco de dados do CRM foi formatado e reiniciado com sucesso." });
+    } catch (error) {
+        res.status(500).json({ error: "Erro ao formatar os dados." });
     }
 };

@@ -1,5 +1,3 @@
-// --- START OF FILE hubController.js ---
-
 const { prisma } = require('./db');
 const botBarbearia = require('./barbearia/botEngine');
 const botClinica = require('./clinica/botEngine');
@@ -19,7 +17,6 @@ exports.getConfigSistema = async (req, res) => {
     }
 };
 
-// Nova Função ISOLADA apenas para o Motor (Evita apagar outras configs de IA acidentalmente)
 exports.mudarMotorAtivo = async (req, res) => {
     try {
         const { modoAtivo } = req.body;
@@ -91,19 +88,27 @@ exports.getHubStats = async (req, res) => {
     }
 };
 
+// MOTOR DE FORMATAÇÃO GLOBAL
 exports.formatarSistemaCompleto = async (req, res) => {
     try {
+        console.log("⚠️ Iniciando formatação geral do banco de dados...");
+        // A ordem aqui é vital para não quebrar as relações de chaves estrangeiras
+        await prisma.automacaoHistorico.deleteMany({});
+        await prisma.filaAutomacao.deleteMany({});
+        await prisma.webhookLog.deleteMany({});
         await prisma.notaInterna.deleteMany({}); 
         await prisma.mensagemIA.deleteMany({});
         await prisma.agendamento.deleteMany({}); 
         await prisma.cliente.deleteMany({});
         
+        // Limpa a memória RAM de contexto da IA
         if (botBarbearia.limparMemoriaEstado) botBarbearia.limparMemoriaEstado();
         if (botClinica.limparMemoriaEstado) botClinica.limparMemoriaEstado();
 
-        res.status(200).json({ message: "O Sistema foi completamente formatado." });
+        console.log("✅ Sistema formatado com sucesso.");
+        res.status(200).json({ message: "Banco de Dados e Memória da IA formatados com sucesso." });
     } catch (error) {
-        console.error("Erro Hub Formatar:", error);
-        res.status(500).json({ error: "Erro interno crasso ao tentar formatar." });
+        console.error("❌ Erro ao Formatar Sistema:", error);
+        res.status(500).json({ error: "Erro crítico ao tentar formatar." });
     }
 };
