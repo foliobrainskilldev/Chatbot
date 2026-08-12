@@ -2,12 +2,11 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 
-// CORREÇÃO APLICADA: Ponto e barra (./) colocados corretamente.
-// IMPORTANTE: Se a sua pasta se chama "controller" (sem S), remova o "s" nas linhas abaixo.
+// CORREÇÃO APLICADA: Ponto e barra (./) colocados corretamente em todos os controllers
 const crmLeadsController = require('./controllers/crmLeadsController'); 
 const chatController = require('./controllers/chatController');
 const agendaTratamentosController = require('./controllers/agendaTratamentosController');
-const configController = require('.controllers/configController');
+const configController = require('./controllers/configController'); // <--- AQUI ESTAVA O ERRO (Faltava a barra)
 
 // Módulos que estão na pasta raiz da clínica (junto com routes.js)
 const relatoriosController = require('./relatoriosController');
