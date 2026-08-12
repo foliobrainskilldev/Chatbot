@@ -3,12 +3,12 @@ const router = express.Router();
 const multer = require('multer');
 
 const crmLeadsController = require('./controllers/crmLeadsController'); 
-const chatController = require('../../chatController');
+const chatController = require('.controllers/chatController');
 const agendaTratamentosController = require('./controllers/agendaTratamentosController');
 const relatoriosController = require('./relatoriosController');
 const webhookController = require('./webhookController');
 const automacoesController = require('./automacoesController'); 
-const configController = require('./controllers/configController'); // Corrigido path
+const configController = require('../../configController'); // Corrigido path
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
