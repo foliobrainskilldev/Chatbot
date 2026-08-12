@@ -1,6 +1,7 @@
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
 const supabaseService = require('../services/supabaseService');
+const audioConverter = require('../services/audioConverter'); // NOVO CONVERSOR
 const { startOfDay, endOfDay, subDays, format } = require('date-fns');
 const botEngine = require('./botEngine');
 
@@ -116,27 +117,42 @@ exports.enviarMensagemManual = async (req, res) => {
         await new Promise(r => setTimeout(r, 1000)); 
 
         if (req.file) {
+            let fileBuffer = req.file.buffer;
             const mimeType = req.file.mimetype; 
-            const isBrowserAudio = req.file.originalname === 'audio_record.ogg';
+            const isBrowserAudio = req.file.originalname === 'audio_record.webm' || req.file.originalname === 'audio_record.ogg';
             const isAudio = mimeType.startsWith('audio/') || isBrowserAudio;
             
-            const resourceType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'raw'));
+            let dbSaveType = 'raw';
+            let waSendType = 'document';
+
+            if (mimeType.startsWith('image/')) {
+                dbSaveType = 'image'; waSendType = 'image';
+            } else if (mimeType.startsWith('video/')) {
+                dbSaveType = 'video'; waSendType = 'video';
+            } else if (isAudio) {
+                try {
+                    // CONVERSÃO NATIVA PARA OGG/OPUS
+                    fileBuffer = await audioConverter.convertToOggOpus(fileBuffer);
+                    dbSaveType = 'audio';
+                    waSendType = 'audio'; 
+                } catch (err) {
+                    dbSaveType = 'document';
+                    waSendType = 'document';
+                }
+            }
             
-            const cloudResult = await supabaseService.uploadStream(req.file.buffer, 'barbearia/atendimento', resourceType);
+            const cloudResult = await supabaseService.uploadStream(fileBuffer, 'barbearia/atendimento', dbSaveType);
             supabaseUrl = cloudResult.secure_url;
-            
-            let waSendType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'document'));
             typeMsg = waSendType;
             
             if (waSendType === 'audio') {
-                // ENVIA APENAS O ÁUDIO AO CLIENTE (Omissão total de legendas e textos complementares)
                 await whatsappService.sendMediaUrl(clienteId, 'audio', supabaseUrl);
+                if (texto) await whatsappService.sendText(clienteId, texto);
             } else {
                 let filename = isBrowserAudio ? "Mensagem_de_Voz.ogg" : req.file.originalname;
                 await whatsappService.sendMediaUrl(clienteId, waSendType, supabaseUrl, texto, filename);
             }
 
-            // A Transcrição (texto) é salva exclusivamente no banco para a IA/Equipe poderem consultar depois
             msgDb = `[MEDIA:${typeMsg}] ${supabaseUrl}${texto ? ` | Transcrição: ${texto}` : ''}`; 
         } else if (texto) { 
             await whatsappService.sendText(clienteId, texto); 

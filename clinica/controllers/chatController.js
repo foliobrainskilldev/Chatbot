@@ -4,6 +4,7 @@ const supabaseService = require('../../services/supabaseService');
 const automationEngine = require('../../services/automationEngine');
 const webhookService = require('../../services/webhookService');
 const aiService = require('../../aiService');
+const audioConverter = require('../../services/audioConverter'); // NOVO CONVERSOR
 
 exports.getConversasPendentes = async (req, res) => {
     try {
@@ -96,28 +97,44 @@ exports.enviarMensagemManual = async (req, res) => {
         await new Promise(r => setTimeout(r, 1000)); 
 
         if (req.file) {
+            let fileBuffer = req.file.buffer;
             const mimeType = req.file.mimetype; 
-            const isBrowserAudio = req.file.originalname === 'audio_record.ogg';
+            const isBrowserAudio = req.file.originalname === 'audio_record.webm' || req.file.originalname === 'audio_record.ogg' || req.file.originalname === 'audio_record.mp3';
             const isAudio = mimeType.startsWith('audio/') || isBrowserAudio;
             
-            // Define o tipo de recurso para o banco Supabase
-            const resourceType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'raw'));
-            const cloudResult = await supabaseService.uploadStream(req.file.buffer, 'clinica/atendimento', resourceType);
-            supabaseUrl = cloudResult.secure_url;
+            let dbSaveType = 'raw';
+            let waSendType = 'document';
+
+            if (mimeType.startsWith('image/')) {
+                dbSaveType = 'image'; waSendType = 'image';
+            } else if (mimeType.startsWith('video/')) {
+                dbSaveType = 'video'; waSendType = 'video';
+            } else if (isAudio) {
+                try {
+                    // CONVERSÃO NATIVA PARA OGG/OPUS ATIVADA
+                    fileBuffer = await audioConverter.convertToOggOpus(fileBuffer);
+                    dbSaveType = 'audio';
+                    waSendType = 'audio'; 
+                } catch (err) {
+                    console.error("⚠️ Fallback: Conversão OPUS falhou, enviando como documento.");
+                    dbSaveType = 'document';
+                    waSendType = 'document';
+                }
+            }
             
-            // Define o tipo que será comunicado para a Meta API
-            let waSendType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'document'));
+            const cloudResult = await supabaseService.uploadStream(fileBuffer, 'clinica/atendimento', dbSaveType);
+            supabaseUrl = cloudResult.secure_url;
             typeMsg = waSendType;
             
             if (waSendType === 'audio') {
-                // ENVIA APENAS O ÁUDIO AO CLIENTE (Omissão total de legendas e textos complementares)
+                // Envia a Nota de Voz PTT oficial da Meta
                 await whatsappService.sendMediaUrl(clienteId, 'audio', supabaseUrl);
+                if (texto) await whatsappService.sendText(clienteId, texto);
             } else {
                 let filename = isBrowserAudio ? "Mensagem_de_Voz.ogg" : req.file.originalname;
                 await whatsappService.sendMediaUrl(clienteId, waSendType, supabaseUrl, texto, filename);
             }
 
-            // A Transcrição (texto) é salva exclusivamente no banco para a IA/Equipe poderem consultar depois
             msgDb = `[MEDIA:${typeMsg}] ${supabaseUrl}${texto ? ` | Transcrição: ${texto}` : ''}`; 
         } else if (texto) { 
             await whatsappService.sendText(clienteId, texto); 
