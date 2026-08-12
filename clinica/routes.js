@@ -7,7 +7,7 @@ const multer = require('multer');
 const crmLeadsController = require('./controllers/crmLeadsController'); 
 const chatController = require('./controllers/chatController');
 const agendaTratamentosController = require('./controllers/agendaTratamentosController');
-const configController = require('../../configController');
+const configController = require('.controllers/configController');
 
 // Módulos que estão na pasta raiz da clínica (junto com routes.js)
 const relatoriosController = require('./relatoriosController');
