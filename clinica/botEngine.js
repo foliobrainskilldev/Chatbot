@@ -217,4 +217,11 @@ async function processarMensagemEntrante(message) {
             }
 
         } catch (error) {
-            console.error("❌ ERRO CRÍTICO NO MOTOR DA CLÍ
+            console.error("❌ ERRO CRÍTICO NO MOTOR DA CLÍNICA:", error);
+            await whatsappService.sendText(senderNumber, "Desculpe, meu sistema passou por uma instabilidade técnica agorinha. Você poderia repetir a mensagem?");
+        }
+    }, 0);
+}
+
+function limparMemoriaEstado() { stateMachine.clear(); }
+module.exports = { processarMensagemEntrante, limparMemoriaEstado, stateMachine };
