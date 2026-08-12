@@ -92,25 +92,36 @@ exports.enviarMensagemManual = async (req, res) => {
         let supabaseUrl = null;
         let typeMsg = null;
 
+        await whatsappService.markAsReadAndTyping(null, clienteId);
+        await new Promise(r => setTimeout(r, 1000)); 
+
         if (req.file) {
-            const mimeType = req.file.mimetype;
-            
-            // Verifica se é o áudio nativo do microfone do painel CRM
+            const mimeType = req.file.mimetype; 
             const isBrowserAudio = req.file.originalname === 'audio_record.ogg';
             const isAudio = mimeType.startsWith('audio/') || isBrowserAudio;
             
-            const resourceType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'raw' : (mimeType.startsWith('video/') ? 'video' : 'raw'));
+            const resourceType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'raw'));
+            
             const cloudResult = await supabaseService.uploadStream(req.file.buffer, 'clinica/atendimento', resourceType);
             supabaseUrl = cloudResult.secure_url;
             
-            // CORREÇÃO CRÍTICA PARA A META: Arquivos de áudio do navegador são enviados como Documento
-            let waSendType = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('video/') ? 'video' : 'document');
-            let dbSaveType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'document'));
+            // CORREÇÃO: Força estritamente como 'audio'. Se for audio, ele tira as legendas do payload da Meta
+            let waSendType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'document'));
+            typeMsg = waSendType;
             
             let filename = isBrowserAudio ? "Mensagem_de_Voz.ogg" : null;
 
-            await whatsappService.sendMediaUrl(clienteId, waSendType, supabaseUrl, texto, filename);
-            msgDb = `[MEDIA:${dbSaveType}] ${supabaseUrl} | Texto: ${texto}`;
+            // Tratativa dupla: Envia o áudio limpo, depois o texto limpo
+            if (waSendType === 'audio') {
+                await whatsappService.sendMediaUrl(clienteId, waSendType, supabaseUrl, "", filename);
+                if (texto) {
+                    await whatsappService.sendText(clienteId, texto);
+                }
+            } else {
+                await whatsappService.sendMediaUrl(clienteId, waSendType, supabaseUrl, texto, filename);
+            }
+
+            msgDb = `[MEDIA:${typeMsg}] ${supabaseUrl} | Texto: ${texto}`; 
         } else if (texto) { 
             await whatsappService.sendText(clienteId, texto); 
         }

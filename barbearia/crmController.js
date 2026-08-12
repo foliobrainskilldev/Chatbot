@@ -104,7 +104,6 @@ exports.criarNotaInterna = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Erro criar nota." }); }
 };
 
-// CORREÇÃO APLICADA: Suporte de envio de áudios como arquivo OGG (Burla bloqueio da Meta)
 exports.enviarMensagemManual = async (req, res) => {
     try {
         const { clienteId } = req.params; 
@@ -121,18 +120,27 @@ exports.enviarMensagemManual = async (req, res) => {
             const isBrowserAudio = req.file.originalname === 'audio_record.ogg';
             const isAudio = mimeType.startsWith('audio/') || isBrowserAudio;
             
-            const resourceType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'raw' : (mimeType.startsWith('video/') ? 'video' : 'raw'));
+            const resourceType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'raw'));
             
             const cloudResult = await supabaseService.uploadStream(req.file.buffer, 'barbearia/atendimento', resourceType);
             supabaseUrl = cloudResult.secure_url;
             
-            let waSendType = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('video/') ? 'video' : 'document');
-            let dbSaveType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'document'));
+            // CORREÇÃO: Tratativa da Meta API.
+            let waSendType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'document'));
+            typeMsg = waSendType;
             
             let filename = isBrowserAudio ? "Mensagem_de_Voz.ogg" : null;
 
-            await whatsappService.sendMediaUrl(clienteId, waSendType, supabaseUrl, texto, filename);
-            msgDb = `[MEDIA:${dbSaveType}] ${supabaseUrl} | Transcrição: ${texto}`; 
+            if (waSendType === 'audio') {
+                await whatsappService.sendMediaUrl(clienteId, waSendType, supabaseUrl, "", filename);
+                if (texto) {
+                    await whatsappService.sendText(clienteId, texto);
+                }
+            } else {
+                await whatsappService.sendMediaUrl(clienteId, waSendType, supabaseUrl, texto, filename);
+            }
+
+            msgDb = `[MEDIA:${typeMsg}] ${supabaseUrl} | Transcrição: ${texto}`; 
         } else if (texto) { 
             await whatsappService.sendText(clienteId, texto); 
         }
