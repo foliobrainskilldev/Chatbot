@@ -6,7 +6,7 @@ const aiService = require('../aiService');
 const automationEngine = require('../services/automationEngine');
 const webhookService = require('../services/webhookService');
 
-async function processarAgendamento(jid, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb) {
+async function processarAgendamento(jid, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, isNewPatient) {
     let userState = stateMachine.get(senderNumber) || { step: 'IDLE', intent: 'appointment.create', entities: {} };
     userState.step = 'AGENDAMENTO';
     
@@ -16,7 +16,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         return;
     }
 
-    // VERIFICAÇÃO DE LIMITE DE AGENDAMENTOS
     const agendamentosPendentes = await prisma.agendamento.count({
         where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } }
     });
@@ -26,7 +25,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         return;
     }
     
-    // SLOT 1: TRATAMENTO (Consome a Entidade extraída pelo NLP)
     if (!userState.resolvedTreatment) {
         if (isInteractive && textoProcessado.startsWith('trat_')) {
             const idTrat = parseInt(textoProcessado.replace('trat_', ''));
@@ -56,7 +54,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
-    // SLOT 2: DATA
     if (!userState.resolvedDate) {
         const diasValidos = await getProximosDiasUteis(7);
         
@@ -64,7 +61,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
             if (diasValidos.includes(textoProcessado)) userState.resolvedDate = textoProcessado;
             else await whatsappService.sendText(jid, 'Data inválida ou nossa clínica não opera nesse dia.');
         } else if (userState.entities.date) {
-            // Se a entidade de data bater com um dia válido, usamos para pular a pergunta
             const matchDia = diasValidos.find(d => d === userState.entities.date || d.includes(userState.entities.date));
             if (matchDia) {
                 userState.resolvedDate = matchDia;
@@ -80,7 +76,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
-    // SLOT 3: HORÁRIO
     if (!userState.resolvedTime) {
         const horasLivres = await getHorariosDisponiveis(userState.resolvedDate, userState.resolvedTreatment.duracaoMin, null);
         
@@ -88,7 +83,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
             userState.resolvedDate = null; 
             stateMachine.set(senderNumber, userState);
             await whatsappService.sendText(jid, 'Infelizmente nossa agenda está cheia ou sem buracos suficientes para este procedimento nesta data. Por favor, vamos tentar outro dia.');
-            return processarAgendamento(jid, null, senderNumber, stateMachine, nlpResult, false, configDb);
+            return processarAgendamento(jid, null, senderNumber, stateMachine, nlpResult, false, configDb, cliente, isNewPatient);
         }
         
         if (isInteractive && textoProcessado.match(/^\d{2}:\d{2}$/)) {
@@ -108,7 +103,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
-    // CONFIRMAÇÃO FINAL
     if (!userState.confirmed) {
         if (isInteractive && textoProcessado === '1') {
             userState.confirmed = true;
@@ -120,7 +114,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
-    // AÇÃO EXECUTADA PELO BACKEND (CRIAR AGENDAMENTO)
     const dataHoraDb = parse(`${userState.resolvedDate} ${userState.resolvedTime}`, 'dd/MM/yyyy HH:mm', new Date());
     const novoAgendamento = await prisma.agendamento.create({
         data: {
@@ -130,24 +123,26 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         include: { cliente: true, tratamento: true }
     });
     
-    // --- NOVO: Auto-preencher valor potencial pela IA ---
-    const cli = await prisma.cliente.findUnique({ where: { id: senderNumber } });
     let updateData = { leadStatus: 'AGENDADO' };
-    if (cli && (!cli.valorPotencial || cli.valorPotencial === 0) && userState.resolvedTreatment.preco) {
+    if (cliente && (!cliente.valorPotencial || cliente.valorPotencial === 0) && userState.resolvedTreatment.preco) {
         updateData.valorPotencial = userState.resolvedTreatment.preco;
     }
     await prisma.cliente.update({ where: { id: senderNumber }, data: updateData });
-    // ----------------------------------------------------
     
+    const contextoIA = {
+        paciente_nome: cliente.nome,
+        paciente_novo: isNewPatient,
+        dados_crm: { agendamento_realizado: novoAgendamento }
+    };
+
     const respostaContexto = await aiService.gerarRespostaNatural(
         "Gere uma mensagem confirmando de forma simpática que a consulta foi criada com sucesso com os detalhes que passei.",
         [],
-        { agendamento_realizado: novoAgendamento },
+        contextoIA,
         configDb
     );
     await whatsappService.sendText(jid, respostaContexto);
     
-    // Gatilhos e Eventos
     await automationEngine.dispararAutomacoes('CONSULTA_CRIADA', novoAgendamento);
     await webhookService.dispararEvento('appointment.created', novoAgendamento);
     

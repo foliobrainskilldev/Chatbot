@@ -3,13 +3,16 @@ const whatsappService = require('../whatsappService');
 const aiService = require('../aiService');
 const webhookService = require('../services/webhookService');
 const automationEngine = require('../services/automationEngine');
-const supabaseService = require('../services/supabaseService'); // Substituído
+const supabaseService = require('../services/supabaseService');
 
 const stateMachine = new Map();
 
 async function getOrCreateCliente(numero, nomePushName = null) {
     let cliente = await prisma.cliente.findUnique({ where: { id: numero } });
+    let isNewPatient = false;
+
     if (!cliente) {
+        isNewPatient = true;
         cliente = await prisma.cliente.create({ 
             data: { id: numero, nome: nomePushName || 'Paciente', leadStatus: 'NOVO', origem: 'WhatsApp IA' } 
         });
@@ -18,9 +21,15 @@ async function getOrCreateCliente(numero, nomePushName = null) {
     } else {
         const updates = { ultimaInteracao: new Date() };
         if (nomePushName && !cliente.nome) updates.nome = nomePushName;
+        
+        // Se o lead ainda é "NOVO" no funil, tratamos como novo para a IA
+        if (cliente.leadStatus === 'NOVO') {
+            isNewPatient = true;
+        }
+
         await prisma.cliente.update({ where: { id: numero }, data: updates });
     }
-    return cliente;
+    return { cliente, isNewPatient };
 }
 
 async function processarMensagemEntrante(message) {
@@ -36,7 +45,7 @@ async function processarMensagemEntrante(message) {
             console.log(`===========================================`);
             
             let pushName = message.profile?.name || null;
-            let cliente = await getOrCreateCliente(senderNumber, pushName);
+            const { cliente, isNewPatient } = await getOrCreateCliente(senderNumber, pushName);
             
             await whatsappService.markAsReadAndTyping(msgId, senderNumber);
 
@@ -45,7 +54,6 @@ async function processarMensagemEntrante(message) {
             let tipoMidia = message.type;
             let isTranscribed = false;
 
-            // 1. Processar Mídias ISOLADAMENTE
             if (message.type === 'audio') {
                 const mediaId = message.audio.id;
                 console.log(`🎙️ [MÍDIA] Baixando áudio do WhatsApp...`);
@@ -56,13 +64,11 @@ async function processarMensagemEntrante(message) {
                 } catch(e) { console.error("Erro ao baixar áudio do WhatsApp."); }
 
                 if (audioBuffer) {
-                    // Upload Supabase Isolado
                     try {
                         const cloudRes = await supabaseService.uploadStream(audioBuffer, 'clinica/pacientes/audios', 'video');
                         midiaUrl = cloudRes.secure_url;
                     } catch (e) { console.error("⚠️ Aviso: Falha ao salvar áudio no Supabase.", e.message); }
 
-                    // Transcrição Whisper Isolada
                     try {
                         textoProcessado = await aiService.transcreverAudio(audioBuffer);
                         isTranscribed = true;
@@ -92,13 +98,11 @@ async function processarMensagemEntrante(message) {
                 textoProcessado = message.interactive.button_reply?.id || message.interactive.list_reply?.id;
             }
 
-            // Ignorar apenas se TUDO falhar ou for mensagem em branco
             if (!textoProcessado && !midiaUrl) {
                 console.log(`⚠️ [MOTOR CLÍNICA] Mensagem sem texto e sem mídia ignorada.`);
                 return;
             }
 
-            // 2. Salvar na Base de Dados
             let contentToSave = textoProcessado;
             if (midiaUrl) {
                 contentToSave = `[MEDIA:${tipoMidia}] ${midiaUrl} | Texto: ${textoProcessado}`;
@@ -116,13 +120,11 @@ async function processarMensagemEntrante(message) {
                 } 
             });
 
-            // 3. Se humano está no controle
             if (cliente.falarHumano) {
                 console.log(`🛑 [MOTOR CLÍNICA] Lead em atendimento humano. IA ignorou a mensagem.`);
                 return; 
             }
 
-            // 4. Captura Pesquisa de CSAT após encerramento do chat humano
             const historicoRaw = await prisma.mensagemIA.findMany({ 
                 where: { clienteId: senderNumber }, 
                 take: 8, orderBy: { criadoEm: 'desc' } 
@@ -149,7 +151,6 @@ async function processarMensagemEntrante(message) {
                 }
             }
 
-            // 5. NLP IA
             let isInteractive = message.type === 'interactive';
             let userState = stateMachine.get(senderNumber) || { step: 'IDLE', intent: null, entities: {} };
             const configDb = await prisma.configSistema.findFirst();
@@ -179,7 +180,6 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // 6. Roteamento de Intenções
             if (activeIntent === 'human.transfer') {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
                 const resp = configDb?.msgTransferencia || "Vou transferir você para um atendente. Um momento.";
@@ -194,16 +194,17 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
+            // Passando o 'cliente' e 'isNewPatient' para os fluxos
             if (activeIntent === 'appointment.create' || userState.step === 'AGENDAMENTO') {
                 const flowAgendamento = require('./flowAgendamento');
-                await flowAgendamento.processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb);
+                await flowAgendamento.processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, isNewPatient);
             } else if (activeIntent === 'appointment.cancel' || activeIntent === 'appointment.reschedule' || userState.step === 'CANCELAMENTO') {
                 const isRemarcacao = activeIntent === 'appointment.reschedule';
                 const flowCancelamento = require('./flowCancelamento');
-                await flowCancelamento.processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao);
+                await flowCancelamento.processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao, cliente, isNewPatient);
             } else {
                 const flowConsultas = require('./flowConsultas');
-                await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico);
+                await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient);
             }
 
         } catch (error) {

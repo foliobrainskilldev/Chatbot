@@ -2,11 +2,35 @@ const { prisma } = require('../db');
 const aiService = require('../aiService');
 const whatsappService = require('../whatsappService');
 
-async function processarDuvidas(jid, textoProcessado, senderNumber, userState, nlpResult, configDb, historico) {
-    let dadosContexto = {};
+async function processarDuvidas(jid, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient) {
+    let dadosCrmContexto = {};
     const intent = nlpResult?.intent || "unknown";
 
-    // Constrói o contexto baseado unicamente na intenção exata identificada pelo NLP
+    // 1. SEMPRE carregamos o histórico de consultas reais do paciente para a IA ter memória impecável
+    try {
+        const historicoAgendamentos = await prisma.agendamento.findMany({
+            where: { clienteId: senderNumber, tratamentoId: { not: null } },
+            include: { tratamento: true, profissionalSaude: true },
+            orderBy: { dataHora: 'desc' },
+            take: 5 // Traz as 5 últimas (incluindo canceladas, realizadas, e futuras)
+        });
+        
+        if (historicoAgendamentos.length > 0) {
+            dadosCrmContexto.historico_consultas_paciente = historicoAgendamentos.map(ag => ({
+                id_consulta: ag.id,
+                dataHora: ag.dataHora,
+                status: ag.status,
+                tratamento: ag.tratamento?.nome,
+                medico: ag.profissionalSaude?.nome || "Plantonista"
+            }));
+        } else {
+            dadosCrmContexto.historico_consultas_paciente = "O paciente não possui nenhuma consulta (futura ou passada) no sistema.";
+        }
+    } catch (e) {
+        console.error("Aviso: Falha ao carregar histórico de consultas no fluxo de dúvidas.");
+    }
+
+    // 2. Montar contexto complementar baseado na intenção
     if (intent === 'treatment.price' || intent === 'treatment.info' || intent === 'treatment.duration' || intent === 'treatment.faq') {
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' }});
         
@@ -14,39 +38,39 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
             const search = nlpResult.entities.treatment.toLowerCase();
             const match = tratamentos.find(t => t.nome.toLowerCase().includes(search));
             if (match) {
-                dadosContexto.tratamento_solicitado = match;
+                dadosCrmContexto.tratamento_solicitado = match;
             } else {
-                dadosContexto.tratamentos_cadastrados_no_catalogo = tratamentos.map(t => ({ nome: t.nome, preco: t.preco, tipoPreco: t.tipoPreco, info: t.informacoesIA }));
+                dadosCrmContexto.tratamentos_cadastrados_no_catalogo = tratamentos.map(t => ({ nome: t.nome, preco: t.preco, tipoPreco: t.tipoPreco, info: t.informacoesIA }));
             }
         } else {
-            dadosContexto.tratamentos_cadastrados_no_catalogo = tratamentos.map(t => ({ nome: t.nome, preco: t.preco, tipoPreco: t.tipoPreco, info: t.informacoesIA }));
+            dadosCrmContexto.tratamentos_cadastrados_no_catalogo = tratamentos.map(t => ({ nome: t.nome, preco: t.preco, tipoPreco: t.tipoPreco, info: t.informacoesIA }));
         }
     } else if (intent === 'treatment.list') {
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' }});
-        dadosContexto.catologo_servicos = tratamentos.map(t => ({ nome: t.nome, categoria: t.categoria }));
-    } else if (intent === 'appointment.check') {
-        const agendamentos = await prisma.agendamento.findMany({
-            where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() }, tratamentoId: { not: null } },
-            include: { tratamento: true, profissionalSaude: true },
-            orderBy: { dataHora: 'asc' }
-        });
-        dadosContexto.consultas_futuras_encontradas = agendamentos.map(ag => ({ dataHora: ag.dataHora, tratamento: ag.tratamento?.nome, medico: ag.profissionalSaude?.nome || "Plantonista" }));
+        dadosCrmContexto.catologo_servicos = tratamentos.map(t => ({ nome: t.nome, categoria: t.categoria }));
     } else if (intent === 'clinic.hours' || intent === 'clinic.location' || intent === 'clinic.contact' || intent === 'clinic.payment_methods') {
-        dadosContexto.dados_operacionais = {
+        dadosCrmContexto.dados_operacionais = {
             horarios: configDb?.horarioFuncionamento || "Segunda a Sexta",
             endereco: configDb?.endereco || "Endereço cadastrado",
             telefone: configDb?.telefone || "",
             faq: configDb?.faq || ""
         };
     } else {
-        // Intenções gerais: greeting, goodbye, unknown.
-        dadosContexto.dados_basicos = { nome_clinica: configDb?.nomeClinica || "Clínica", faq: configDb?.faq || "" };
+        // greeting, goodbye, unknown...
+        dadosCrmContexto.dados_basicos = { nome_clinica: configDb?.nomeClinica || "Clínica", faq: configDb?.faq || "" };
     }
 
-    // Gera a resposta natural unindo a Pergunta do Paciente + Restrições + Dados DB
-    const respostaIA = await aiService.gerarRespostaNatural(textoProcessado, historico, dadosContexto, configDb);
+    // 3. Montar o envelope de contexto para a IA
+    const contextoIA = {
+        paciente_nome: cliente.nome || 'Paciente',
+        paciente_novo: isNewPatient,
+        dados_crm: dadosCrmContexto
+    };
+
+    // Gera a resposta natural
+    const respostaIA = await aiService.gerarRespostaNatural(textoProcessado, historico, contextoIA, configDb);
     
-    // Grava localmente o histórico do bot para ele não se perder nas próximas mensagens
+    // Grava localmente o histórico
     await prisma.mensagemIA.create({ data: { role: 'assistant', content: respostaIA, clienteId: senderNumber } });
     
     await whatsappService.sendText(jid, respostaIA);

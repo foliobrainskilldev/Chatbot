@@ -8,7 +8,6 @@ async function transcreverAudio(audioBuffer) {
     }
 
     try {
-        // Utilizamos a Fetch API Nativa do Node para construir o Formulário Multiparte (Audio)
         const blob = new Blob([audioBuffer], { type: 'audio/ogg' });
         const formData = new FormData();
         formData.append('file', blob, 'audio.ogg');
@@ -59,7 +58,8 @@ Intenções permitidas:
 - treatment.duration (duração)
 - treatment.faq (dúvidas gerais sobre tratamento)
 - appointment.create (marcar consulta)
-- appointment.check (verificar consultas)
+- appointment.check (verificar consultas futuras)
+- appointment.history (verificar consultas realizadas, passadas ou canceladas)
 - appointment.reschedule (remarcar)
 - appointment.cancel (cancelar)
 - human.transfer (falar com atendente)
@@ -118,6 +118,7 @@ function fallbackNLP(mensagem) {
     else if (msg.includes("humano") || msg.includes("atendente")) intent = "human.transfer";
     else if (msg.includes("horário") || msg.includes("horas")) intent = "clinic.hours";
     else if (msg.includes("onde") || msg.includes("local")) intent = "clinic.location";
+    else if (msg.includes("histórico") || msg.includes("já feita") || msg.includes("realizada")) intent = "appointment.history";
     else if (msg === "oi" || msg === "olá" || msg === "ola" || msg === "bom dia" || msg === "boa tarde") intent = "greeting";
     
     return {
@@ -134,6 +135,15 @@ async function gerarRespostaNatural(mensagem, historico, contexto, configDb) {
         return "Recebi sua mensagem, mas meu sistema inteligente está offline. Como posso ajudar de forma objetiva?";
     }
 
+    // Configurando Fuso Horário e Consciência Temporal
+    const fusoHorario = configDb?.fusoHorario || 'Africa/Maputo';
+    const formatter = new Intl.DateTimeFormat('pt-BR', { 
+        timeZone: fusoHorario,
+        year: 'numeric', month: 'long', day: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+    const dataHoraAtual = formatter.format(new Date());
+
     try {
         const prompt = `
 Você é ${configDb?.nomeAssistente || 'o assistente virtual'} da clínica ${configDb?.nomeClinica || 'HealthCRM'}.
@@ -141,15 +151,25 @@ Tom de voz: ${configDb?.tomDeVoz || 'Profissional e acolhedor'}.
 Estilo: ${configDb?.estiloComunicacao || 'Respostas curtas e objetivas'}.
 Formalidade: ${configDb?.formalidade || 'Sempre tratar por Senhor/Senhora'}.
 
-Regras Obrigatórias:
-1. NUNCA invente preços, horários ou diagnósticos médicos.
-2. Use EXCLUSIVAMENTE os DADOS DE CONTEXTO fornecidos abaixo para basear sua resposta.
-3. Se a informação que o paciente pediu não estiver no contexto, diga gentilmente que não possui essa informação no momento e ofereça transferência para um atendente.
+CONSCIÊNCIA TEMPORAL:
+- A data e hora atual no sistema é: ${dataHoraAtual}.
+- Baseie-se nesse horário para responder "Bom dia" (00h-11h59), "Boa tarde" (12h-17h59) ou "Boa noite" (18h-23h59).
 
-DADOS DE CONTEXTO DA CLÍNICA:
-${JSON.stringify(contexto, null, 2)}
+INFORMAÇÕES DO PACIENTE:
+- Nome: ${contexto.paciente_nome || 'Paciente'}
+- Tipo: ${contexto.paciente_novo ? 'Novo Paciente (Dê as boas vindas)' : 'Paciente Recorrente (Trate com familiaridade, sem dar boas vindas genéricas)'}.
 
-Sua tarefa: Leia a mensagem do usuário e responda de forma natural, amigável e conversacional, aplicando as regras acima.
+REGRAS OBRIGATÓRIAS DE CONTEXTO E HISTÓRICO:
+1. Você recebe abaixo os DADOS DE CONTEXTO extraídos diretamente do Banco de Dados (CRM).
+2. NUNCA diga que não tem acesso a consultas ou histórico se a informação estiver presente nos DADOS DE CONTEXTO. 
+3. Se o paciente perguntar sobre uma consulta passada ou cancelada, LEIA a chave "historico_consultas_paciente" do JSON. A resposta está lá.
+4. NUNCA invente preços, horários, histórico ou diagnósticos médicos.
+5. Se a informação não constar estritamente no JSON de contexto, diga que não possui a informação no momento e ofereça transferência para a recepção.
+
+DADOS DE CONTEXTO DO CRM (USE ESTES DADOS PARA RESPONDER):
+${JSON.stringify(contexto.dados_crm || {}, null, 2)}
+
+Sua tarefa: Leia a mensagem do usuário e responda de forma natural, amigável e conversacional, aplicando rigorosamente as regras acima.
 `;
 
         const messages = [
@@ -161,7 +181,7 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma natural, amigável e
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
             model: "llama-3.3-70b-versatile",
             messages: messages,
-            temperature: 0.7
+            temperature: 0.6 // Levemente ajustada para ser analítica com JSON e amigável
         }, {
             headers: { 'Authorization': `Bearer ${GROQ_API_KEY}` }
         });
@@ -176,5 +196,5 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma natural, amigável e
 module.exports = {
     analisarMensagemNLP,
     gerarRespostaNatural,
-    transcreverAudio // <-- ADICIONADO AQUI
+    transcreverAudio
 };
