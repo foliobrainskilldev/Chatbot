@@ -1,6 +1,6 @@
 const { prisma } = require('../../db');
 const whatsappService = require('../../whatsappService');
-const supabaseService = require('../../services/supabaseService'); // Substituído
+const supabaseService = require('../../services/supabaseService'); 
 const automationEngine = require('../../services/automationEngine');
 const webhookService = require('../../services/webhookService');
 const aiService = require('../../aiService');
@@ -38,16 +38,13 @@ exports.assumirAtendimentoHumano = async (req, res) => {
         const clienteId = req.params.clienteId;
         const lead = await prisma.cliente.update({ where: { id: clienteId }, data: { falarHumano: true, leadStatus: 'EM_CONVERSA' } });
         
-        // Mensagem automática enviada pelo sistema no WhatsApp quando o humano assume
         const msgTexto = `Agora você está falando com um atendente.\nOlá, ${lead.nome || 'paciente'}. A partir deste momento, nossa equipe continuará seu atendimento por aqui.`;
         await whatsappService.sendText(clienteId, msgTexto);
         
-        // Gravar no histórico para o Dashboard não se perder
         await prisma.mensagemIA.create({
             data: { role: 'assistant', content: `[SISTEMA] ${msgTexto}`, clienteId, atendenteHumano: true }
         });
         
-        // Registrar nas notas internas as métricas de transferência
         await prisma.notaInterna.create({
             data: { texto: `Atendimento assumido por humano. Tempo de espera e métricas iniciadas.`, clienteId, usuarioId: 1 }
         });
@@ -65,11 +62,9 @@ exports.resolverAtendimentoHumano = async (req, res) => {
         const clienteId = req.params.clienteId;
         const lead = await prisma.cliente.update({ where: { id: clienteId }, data: { falarHumano: false } });
         
-        // Mensagem de encerramento do Chat
         const msgFim = `Atendimento encerrado.\nObrigado pelo contato. Se precisar de mais alguma coisa, estamos à disposição.`;
         await whatsappService.sendText(clienteId, msgFim);
         
-        // Disparo de CSAT (Pesquisa de Satisfação de 1 a 5 estrelas em texto normal para compatibilidade universal)
         const msgCSAT = `Por favor, avalie seu atendimento respondendo com um número:\n\n1 - Muito ruim\n2 - Ruim\n3 - Regular\n4 - Bom\n5 - Excelente`;
         await whatsappService.sendText(clienteId, msgCSAT);
 
@@ -99,10 +94,14 @@ exports.enviarMensagemManual = async (req, res) => {
 
         if (req.file) {
             const mimeType = req.file.mimetype;
-            const resourceType = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('audio/') || mimeType.startsWith('video/') ? 'video' : 'raw');
+            // Validação estrita para considerar .ogg e .webm como 'audio' na Meta API
+            const isAudio = mimeType.startsWith('audio/') || req.file.originalname.endsWith('.ogg') || req.file.originalname.endsWith('.webm');
+            const resourceType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'raw' : (mimeType.startsWith('video/') ? 'video' : 'raw'));
+            
             const cloudResult = await supabaseService.uploadStream(req.file.buffer, 'clinica/atendimento', resourceType);
             supabaseUrl = cloudResult.secure_url;
-            typeMsg = mimeType.startsWith('image/') ? 'image' : (mimeType.startsWith('audio/') || mimeType.endsWith('webm') ? 'audio' : 'document');
+            
+            typeMsg = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'document'));
             
             await whatsappService.sendMediaUrl(clienteId, typeMsg, supabaseUrl, texto);
             msgDb = `[MEDIA:${typeMsg}] ${supabaseUrl} | Texto: ${texto}`;
