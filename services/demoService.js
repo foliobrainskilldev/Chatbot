@@ -1,34 +1,11 @@
-const fs = require('fs');
-const path = require('path');
-const { format, subDays, addDays } = require('date-fns');
+const { subDays, addDays } = require('date-fns');
 
-const stateFile = path.join(__dirname, 'demo_state.json');
-
-// Estado em memória
+// Estado mantido exclusivamente na Memória RAM (Mais seguro e à prova de falhas no Render)
 let demoState = {
     active: false,
     scenario: 'ODONTO',
     data: null
 };
-
-// Tenta recuperar estado após reinício do servidor (se o disco permitir)
-if (fs.existsSync(stateFile)) {
-    try {
-        const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-        demoState = saved;
-    } catch (e) {
-        console.warn("⚠️ Aviso: Ficheiro demo_state.json corrompido, a iniciar vazio.");
-    }
-}
-
-function saveState() {
-    try {
-        // Tenta guardar o ficheiro. Se o servidor (Render) bloquear, ele falha silenciosamente e mantém na RAM.
-        fs.writeFileSync(stateFile, JSON.stringify({ active: demoState.active, scenario: demoState.scenario }));
-    } catch (e) {
-        console.warn("⚠️ Aviso: Servidor bloqueou gravação em disco (Read-Only FS). A demonstração ficará ativa apenas na memória RAM.");
-    }
-}
 
 function generateMockData(scenario) {
     const data = {
@@ -67,7 +44,7 @@ function generateMockData(scenario) {
         ];
     }
 
-    // 3. Leads Fictícios (50 leads)
+    // 3. Leads Fictícios
     const nomes = ["Mariana Costa", "Pedro Alves", "Fernanda Lima", "João Santos", "Beatriz Gomes", "Lucas Rocha", "Juliana Ribeiro", "Rafael Martins", "Camila Sousa", "Diego Carvalho"];
     const statusFunil = ['NOVO', 'EM_CONVERSA', 'QUALIFICADO', 'AGENDADO', 'CLIENTE', 'PERDIDO'];
     const origens = ['WhatsApp Meta', 'Instagram', 'Indicação'];
@@ -125,16 +102,19 @@ exports.getStatus = (req, res) => res.json({ active: demoState.active, scenario:
 exports.toggleStatus = (req, res) => {
     try {
         const { active, scenario } = req.body;
+        console.log(`[DEMO SERVICE] Pedido de ativação: ${active}, Cenário: ${scenario}`);
+        
         demoState.active = active;
         if (scenario) demoState.scenario = scenario;
         
-        if (active) generateMockData(demoState.scenario);
-        saveState();
+        if (active) {
+            generateMockData(demoState.scenario);
+        }
         
         res.status(200).json({ success: true, message: `Modo demonstração ${active ? 'ativado' : 'desativado'}.` });
     } catch (error) {
-        console.error("Erro ao ativar demo:", error);
-        res.status(500).json({ error: "Erro interno do servidor ao gerar dados falsos." });
+        console.error("[DEMO SERVICE] Erro ao gerar dados:", error);
+        res.status(500).json({ error: "Erro interno do servidor ao gerar dados falsos. Detalhe: " + error.message });
     }
 };
 
@@ -149,9 +129,9 @@ exports.resetData = (req, res) => {
 
 exports.isDemoActive = () => demoState.active;
 
-// MIDDLEWARE: Intercepta rotas
+// MIDDLEWARE: Intercepta rotas e devolve os dados da RAM
 exports.middleware = (req, res, next) => {
-    if (!demoState.active) return next();
+    if (!demoState.active || !demoState.data) return next();
 
     const method = req.method;
     const path = req.path;

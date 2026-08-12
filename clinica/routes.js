@@ -13,7 +13,7 @@ const relatoriosController = require('./relatoriosController');
 const webhookController = require('./webhookController');
 const automacoesController = require('./automacoesController'); 
 
-// Serviço de Demonstração (Portfólio)
+// Serviço de Demonstração (Portfólio) - Caminho Exato
 const demoService = require('../services/demoService');
 
 const storage = multer.memoryStorage();
@@ -28,7 +28,6 @@ router.post('/demo/reset', demoService.resetData);
 
 // ==========================================
 // MIDDLEWARE DE INTERCEPTAÇÃO DE DEMONSTRAÇÃO
-// Se o modo demo estiver ativo, ele processa a rota aqui e não desce para os controllers reais
 // ==========================================
 router.use(demoService.middleware);
 
