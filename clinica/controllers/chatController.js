@@ -94,9 +94,10 @@ exports.enviarMensagemManual = async (req, res) => {
 
         if (req.file) {
             const mimeType = req.file.mimetype;
-            // Validação estrita para considerar .ogg e .webm como 'audio' na Meta API
             const isAudio = mimeType.startsWith('audio/') || req.file.originalname.endsWith('.ogg') || req.file.originalname.endsWith('.webm');
-            const resourceType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'raw' : (mimeType.startsWith('video/') ? 'video' : 'raw'));
+            
+            // CORREÇÃO: Repassa 'audio' para o supabase processar corretamente
+            const resourceType = mimeType.startsWith('image/') ? 'image' : (isAudio ? 'audio' : (mimeType.startsWith('video/') ? 'video' : 'raw'));
             
             const cloudResult = await supabaseService.uploadStream(req.file.buffer, 'clinica/atendimento', resourceType);
             supabaseUrl = cloudResult.secure_url;

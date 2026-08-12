@@ -14,17 +14,21 @@ function getSupabase() {
 const uploadStream = async (buffer, folder, resourceType = 'auto') => {
     const supabase = getSupabase();
     
-    // Gerar um nome de arquivo único
-    const ext = resourceType === 'image' ? 'jpg' : (resourceType === 'video' ? 'mp4' : 'bin');
+    // CORREÇÃO: Define a extensão e o Content-Type corretos (Essencial para a Meta API aceitar o áudio)
+    let ext = 'bin';
+    let contentType = 'application/octet-stream';
+
+    if (resourceType === 'image') { ext = 'jpg'; contentType = 'image/jpeg'; }
+    else if (resourceType === 'video') { ext = 'mp4'; contentType = 'video/mp4'; }
+    else if (resourceType === 'audio') { ext = 'ogg'; contentType = 'audio/ogg'; }
+
     const filename = `${folder}/${Date.now()}_${Math.floor(Math.random() * 1000)}.${ext}`;
-    
-    // O nome do bucket pode ser puxado do .env ou usa um padrão
     const bucketName = process.env.SUPABASE_BUCKET || 'healthcrm';
 
     const { data, error } = await supabase.storage
         .from(bucketName)
         .upload(filename, buffer, {
-            contentType: resourceType === 'image' ? 'image/jpeg' : (resourceType === 'video' ? 'video/mp4' : 'application/octet-stream'),
+            contentType: contentType,
             upsert: false
         });
 
@@ -33,20 +37,18 @@ const uploadStream = async (buffer, folder, resourceType = 'auto') => {
         throw error;
     }
 
-    // Gerar URL pública 
     const { data: publicUrlData } = supabase.storage
         .from(bucketName)
         .getPublicUrl(filename);
 
     return {
         secure_url: publicUrlData.publicUrl,
-        public_id: filename // Usado caso precise deletar depois
+        public_id: filename
     };
 };
 
 const uploadFromUrl = async (url, folder) => {
     try {
-        // Usa Fetch nativo do Node para fazer download do buffer da URL externa
         const response = await fetch(url);
         const arrayBuffer = await response.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
