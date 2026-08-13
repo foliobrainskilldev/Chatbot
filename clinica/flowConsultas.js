@@ -6,13 +6,12 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
     let dadosCrmContexto = {};
     const intent = nlpResult?.intent || "unknown";
 
-    // 1. SEMPRE carregamos o histórico de consultas reais do paciente para a IA ter memória impecável
     try {
         const historicoAgendamentos = await prisma.agendamento.findMany({
             where: { clienteId: senderNumber, tratamentoId: { not: null } },
             include: { tratamento: true, profissionalSaude: true },
             orderBy: { dataHora: 'desc' },
-            take: 5 // Traz as 5 últimas (incluindo canceladas, realizadas, e futuras)
+            take: 5 
         });
         
         if (historicoAgendamentos.length > 0) {
@@ -30,7 +29,6 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         console.error("Aviso: Falha ao carregar histórico de consultas no fluxo de dúvidas.");
     }
 
-    // 2. Montar contexto complementar baseado na intenção
     if (intent === 'treatment.price' || intent === 'treatment.info' || intent === 'treatment.duration' || intent === 'treatment.faq') {
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' }});
         
@@ -56,23 +54,23 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
             faq: configDb?.faq || ""
         };
     } else {
-        // greeting, goodbye, unknown...
         dadosCrmContexto.dados_basicos = { nome_clinica: configDb?.nomeClinica || "Clínica", faq: configDb?.faq || "" };
     }
 
-    // 3. Montar o envelope de contexto para a IA
+    // INJEÇÃO DE CONTEXTO: Avisar a LLM se o paciente pausou um agendamento
+    if (userState && userState.step === 'AGENDAMENTO') {
+        dadosCrmContexto.aviso_sistema_prioridade = "O paciente está atualmente no meio de um fluxo de agendamento que foi pausado para que você respondesse esta dúvida. Responda a dúvida baseada no catálogo e, obrigatoriamente no final, convide-o a continuar com o agendamento enviando a data desejada.";
+    }
+
     const contextoIA = {
         paciente_nome: cliente.nome || 'Paciente',
         paciente_novo: isNewPatient,
         dados_crm: dadosCrmContexto
     };
 
-    // Gera a resposta natural
     const respostaIA = await aiService.gerarRespostaNatural(textoProcessado, historico, contextoIA, configDb);
     
-    // Grava localmente o histórico
     await prisma.mensagemIA.create({ data: { role: 'assistant', content: respostaIA, clienteId: senderNumber } });
-    
     await whatsappService.sendText(jid, respostaIA);
 }
 

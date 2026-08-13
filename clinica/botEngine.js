@@ -53,10 +53,8 @@ async function processarMensagemEntrante(message) {
             let pushName = message.profile?.name || null;
             const { cliente, isNewPatient } = await getOrCreateCliente(senderNumber, pushName);
             
-            // Aqui a mágica do typing indicator e da leitura acontece
             await whatsappService.markAsReadAndTyping(msgId, senderNumber);
 
-            // Delay natural de 2 a 5 segundos (Typing indicator fica rolando no celular do paciente)
             const delayMs = Math.floor(Math.random() * (5000 - 2000 + 1)) + 2000;
             await new Promise(resolve => setTimeout(resolve, delayMs));
 
@@ -192,7 +190,17 @@ async function processarMensagemEntrante(message) {
 
             let activeIntent = nlpResult.intent || 'unknown';
 
-            if (nlpResult.confidence < 0.4 && !isInteractive) {
+            // PROTEÇÃO DE CONTEXTO: Se o paciente está apenas enviando "Sexta" ou "Dez horas" e o NLP retornar unknown, força pra appointment.
+            if (userState.step === 'AGENDAMENTO' && activeIntent === 'unknown') {
+                activeIntent = 'appointment.create';
+            }
+
+            const intentsDeDuvida = [
+                'treatment.price', 'treatment.info', 'treatment.duration', 'treatment.list',
+                'clinic.hours', 'clinic.location', 'clinic.contact', 'clinic.payment_methods'
+            ];
+
+            if (nlpResult.confidence < 0.4 && !isInteractive && userState.step !== 'AGENDAMENTO') {
                 const resp = "Desculpe, não entendi muito bem. Você gostaria de marcar uma consulta, saber sobre nossos tratamentos ou falar com um atendente?";
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
                 await whatsappService.sendText(senderNumber, resp);
@@ -213,14 +221,21 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            if (activeIntent === 'appointment.create' || userState.step === 'AGENDAMENTO') {
+            // ROTEAMENTO DINÂMICO INTELIGENTE: Dúvidas pausarão e sobreporão a máquina de estados.
+            if (intentsDeDuvida.includes(activeIntent)) {
+                const flowConsultas = require('./flowConsultas');
+                await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient);
+            } 
+            else if (activeIntent === 'appointment.create' || userState.step === 'AGENDAMENTO') {
                 const flowAgendamento = require('./flowAgendamento');
                 await flowAgendamento.processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, isNewPatient);
-            } else if (activeIntent === 'appointment.cancel' || activeIntent === 'appointment.reschedule' || userState.step === 'CANCELAMENTO') {
+            } 
+            else if (activeIntent === 'appointment.cancel' || activeIntent === 'appointment.reschedule' || userState.step === 'CANCELAMENTO') {
                 const isRemarcacao = activeIntent === 'appointment.reschedule';
                 const flowCancelamento = require('./flowCancelamento');
                 await flowCancelamento.processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao, cliente, isNewPatient);
-            } else {
+            } 
+            else {
                 const flowConsultas = require('./flowConsultas');
                 await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient);
             }

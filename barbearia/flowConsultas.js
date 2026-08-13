@@ -2,7 +2,7 @@ const { prisma } = require('../db');
 const { format } = require('date-fns');
 const whatsappService = require('../whatsappService');
 
-async function verPrecosEServicos(jid) {
+async function verPrecosEServicos(jid, stateMachine = null) {
     const servicos = await prisma.servico.findMany({ orderBy: { preco: 'asc' } });
     
     if (servicos.length === 0) {
@@ -13,13 +13,25 @@ async function verPrecosEServicos(jid) {
     servicos.forEach(s => {
         textoTabela += `✂️ *${s.nome}* - ${s.preco} MT\n`;
     });
-    textoTabela += "\nPara agendar, basta voltar ao menu e selecionar 'Agendar Corte'.";
 
-    await whatsappService.sendText(jid, textoTabela.trim());
-    await whatsappService.sendInteractiveMenu(jid, "O que deseja fazer agora?", [
-        { id: 'cmd_agendar', title: 'Agendar Corte' },
-        { id: 'cmd_menu', title: 'Voltar ao Menu' }
-    ]);
+    const userState = stateMachine ? stateMachine.get(jid) : null;
+    
+    // Roteamento inteligente que lembra que o usuário estava no meio de um agendamento
+    if (userState && userState.step && userState.step.startsWith('AGENDAMENTO_')) {
+        textoTabela += "\nNotei que você estava no meio de um agendamento. Se quiser continuar e concluir sua reserva, basta selecionar o botão abaixo.";
+        await whatsappService.sendText(jid, textoTabela.trim());
+        await whatsappService.sendInteractiveMenu(jid, "Deseja continuar de onde parou?", [
+            { id: 'cmd_agendar', title: 'Continuar Agendamento' },
+            { id: '0', title: 'Cancelar Tudo' }
+        ]);
+    } else {
+        textoTabela += "\nPara agendar, basta voltar ao menu e selecionar 'Agendar Corte'.";
+        await whatsappService.sendText(jid, textoTabela.trim());
+        await whatsappService.sendInteractiveMenu(jid, "O que deseja fazer agora?", [
+            { id: 'cmd_agendar', title: 'Agendar Corte' },
+            { id: 'cmd_menu', title: 'Voltar ao Menu' }
+        ]);
+    }
 }
 
 async function verMeusAgendamentos(jid, senderNumber) {
@@ -28,7 +40,7 @@ async function verMeusAgendamentos(jid, senderNumber) {
             clienteId: senderNumber,
             status: 'AGENDADO',
             dataHora: { gte: new Date() },
-            servicoId: { not: null } // ISOLAMENTO: Apenas Barbearia
+            servicoId: { not: null } 
         },
         include: { servico: true, barbeiro: true },
         orderBy: { dataHora: 'asc' }

@@ -15,13 +15,14 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
     
     if (textoProcessado === '0') {
         stateMachine.set(senderNumber, { step: 'IDLE', intent: null, entities: {} });
-        await whatsappService.sendText(jid, 'O processo de agendamento foi cancelado.');
+        await whatsappService.sendText(jid, 'O processo de agendamento foi cancelado. Posso ajudar em mais alguma coisa?');
         return;
     }
 
     const agendamentosPendentes = await prisma.agendamento.count({
         where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } }
     });
+    
     if (agendamentosPendentes >= (configDb.agendamentoLimiteSimultaneo || 2)) {
         await whatsappService.sendText(jid, 'Você já atingiu o limite de consultas ativas. Aguarde as atuais ou cancele alguma para prosseguir.');
         stateMachine.set(senderNumber, { step: 'IDLE', intent: null, entities: {} });
@@ -64,6 +65,8 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
     
     if (!userState.resolvedDate) {
         const diasValidos = await getProximosDiasUteis(14); 
+        const txtClean = textoProcessado ? textoProcessado.trim().toLowerCase() : '';
+        const isAffirmative = txtClean === 'sim' || txtClean === 'quero' || txtClean === 'continuar' || txtClean === 'ok';
         
         if (isInteractive && textoProcessado.startsWith('data_')) {
             const dataEscolhida = textoProcessado.replace('data_', '');
@@ -78,6 +81,9 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
                 await whatsappService.sendText(jid, `A data que você pediu (${userState.entities.date}) não está disponível em nossa agenda. Por favor, escolha outra:`);
                 userState.entities.date = null; 
             }
+        }
+        else if (textoProcessado && !isInteractive && !isAffirmative && textoProcessado !== 'ver_mais_data' && textoProcessado.length > 3) {
+            // Caso ele tenha digitado algo mas a NLP não achou a entidade de data, o bot reseta e ajuda o usuário enviando o menu novamente.
         }
         
         if (!userState.resolvedDate) {
@@ -96,7 +102,8 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
             if (hasMore) optDias.push({ id: 'ver_mais_data', title: 'Ver mais datas' });
             else optDias.push({ id: '0', title: 'Cancelar' });
 
-            await whatsappService.sendInteractiveMenu(jid, "Certo! Para qual destas datas disponíveis você prefere? (Você também pode digitar/enviar áudio, ex: 'Sexta que vem')", optDias);
+            const prefixoRetomada = isAffirmative ? "Ótimo! Continuando... " : "";
+            await whatsappService.sendInteractiveMenu(jid, `${prefixoRetomada}Para qual destas datas disponíveis você prefere? (Você também pode digitar/enviar áudio, ex: 'Sexta que vem')`, optDias);
             stateMachine.set(senderNumber, userState);
             return;
         }
@@ -181,7 +188,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         dados_crm: { agendamento_realizado: novoAgendamento }
     };
 
-    // Instrução expressa proibindo repetição do nome e saudações
     const promptDireto = "Gere uma mensagem confirmando de forma simpática que a consulta foi criada com sucesso com os detalhes que passei. IMPORTANTE: Vá direto ao ponto, NÃO use saudações iniciais (Bom dia/Olá) pois já estamos no meio de uma conversa. Evite repetir o nome do paciente para não soar artificial.";
     
     const respostaContexto = await aiService.gerarRespostaNatural(
