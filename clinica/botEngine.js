@@ -5,7 +5,6 @@ const webhookService = require('../services/webhookService');
 const automationEngine = require('../services/automationEngine');
 const supabaseService = require('../services/supabaseService');
 
-// Importa o gestor de demonstração
 const demoService = require('../services/demoService');
 
 const stateMachine = new Map();
@@ -37,7 +36,6 @@ async function getOrCreateCliente(numero, nomePushName = null) {
 async function processarMensagemEntrante(message) {
     if (!message || !message.from) return; 
 
-    // BLOQUEIO DE SEGURANÇA: MODO DEMONSTRAÇÃO
     if (demoService.isDemoActive()) {
         console.log(`🛑 [MODO DEMONSTRAÇÃO] Sistema em Demonstração. Ignorando mensagem real do WhatsApp de ${message.from}. Nenhuma resposta será enviada.`);
         return;
@@ -55,10 +53,10 @@ async function processarMensagemEntrante(message) {
             let pushName = message.profile?.name || null;
             const { cliente, isNewPatient } = await getOrCreateCliente(senderNumber, pushName);
             
+            // Aqui a mágica do typing indicator e da leitura acontece
             await whatsappService.markAsReadAndTyping(msgId, senderNumber);
-            await whatsappService.sendTypingIndicator(senderNumber);
 
-            // Delay natural de 2 a 5 segundos (Typing indicator ativado)
+            // Delay natural de 2 a 5 segundos (Typing indicator fica rolando no celular do paciente)
             const delayMs = Math.floor(Math.random() * (5000 - 2000 + 1)) + 2000;
             await new Promise(resolve => setTimeout(resolve, delayMs));
 

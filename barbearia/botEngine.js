@@ -1,6 +1,6 @@
 const { prisma, getOrCreateCliente } = require('../db');
 const whatsappService = require('../whatsappService');
-const aiService = require('../aiService'); // Importando transcrição
+const aiService = require('../aiService');
 
 const { iniciarAgendamento, handleAgendamento } = require('./flowAgendamento');
 const { iniciarCancelamento, processarCancelamento } = require('./flowCancelamento');
@@ -52,10 +52,10 @@ async function processarMensagemEntrante(message) {
                 return; 
             }
 
+            // Mágica do typing indicator oficial e marcação de leitura acontecendo aqui
             await whatsappService.markAsReadAndTyping(msgId, senderNumber);
-            await whatsappService.sendTypingIndicator(senderNumber);
 
-            // Delay natural de 2 a 5 segundos (Typing indicator ativado)
+            // Delay natural de 2 a 5 segundos (Typing indicator ativado e aparecendo pro usuário)
             const delayMs = Math.floor(Math.random() * (5000 - 2000 + 1)) + 2000;
             await new Promise(resolve => setTimeout(resolve, delayMs));
 
@@ -98,7 +98,6 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // Mapeando a voz (ou digitação) para as intenções da barbearia
             if (textMessage === 'cmd_agendar' || msgLow.includes('agendar') || msgLow.includes('marcar') || msgLow.includes('corte')) {
                 return await iniciarAgendamento(senderNumber, senderNumber, stateMachine, STEPS);
             }

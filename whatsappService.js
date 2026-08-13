@@ -29,33 +29,21 @@ async function sendWhatsAppRequest(data) {
     }
 }
 
+// CORREÇÃO: O typing_indicator deve ser acoplado à requisição de status "read"
 async function markAsReadAndTyping(msgId, to) {
     try {
         if (msgId) {
             await sendWhatsAppRequest({
                 messaging_product: "whatsapp",
                 message_id: msgId,
-                status: "read"
+                status: "read",
+                typing_indicator: {
+                    type: "text"
+                }
             });
         }
     } catch (e) {
-        console.error("⚠️ [WhatsApp] Erro não crítico ao tentar marcar como lida:", e.message);
-    }
-}
-
-async function sendTypingIndicator(to) {
-    try {
-        await sendWhatsAppRequest({
-            messaging_product: "whatsapp",
-            recipient_type: "individual",
-            to: to,
-            type: "typing_indicator",
-            typing_indicator: {
-                type: "text"
-            }
-        });
-    } catch (e) {
-        console.error("⚠️ [WhatsApp] Erro ao enviar status digitando:", e.message);
+        console.error("⚠️ [WhatsApp] Erro não crítico ao tentar marcar como lida e digitando:", e.message);
     }
 }
 
@@ -105,7 +93,6 @@ async function sendInteractiveList(to, text, buttonText, sections) {
     });
 }
 
-// CORREÇÃO CRÍTICA: A Meta rejeita o envio de Áudio se o objeto contiver "caption" (texto) ou "filename".
 async function sendMediaUrl(to, type, url, caption = "", filename = null) {
     const payload = {
         messaging_product: "whatsapp",
@@ -115,7 +102,6 @@ async function sendMediaUrl(to, type, url, caption = "", filename = null) {
     };
 
     if (type === 'audio') {
-        // Para áudio, enviamos SOMENTE o link.
         payload.audio = { link: url };
     } else if (type === 'image') {
         payload.image = { link: url };
@@ -160,6 +146,5 @@ module.exports = {
     sendInteractiveList,
     sendMediaUrl,
     markAsReadAndTyping,
-    sendTypingIndicator,
     downloadMedia
 };
