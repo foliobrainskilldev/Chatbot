@@ -82,6 +82,9 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
+            // BUSCA A CONFIGURAÇÃO GERAL DO SISTEMA (MOEDA, FUSO HORÁRIO)
+            const configDb = await prisma.configSistema.findFirst();
+
             let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {} };
             const msgLow = textMessage.toLowerCase();
 
@@ -92,26 +95,26 @@ async function processarMensagemEntrante(message) {
                 return;
             }
             if (textMessage === 'cmd_precos' || msgLow.includes('preço') || msgLow.includes('valor')) {
-                return await verPrecosEServicos(senderNumber, stateMachine);
+                return await verPrecosEServicos(senderNumber, stateMachine, configDb);
             }
             if (textMessage === 'cmd_agenda' || msgLow.includes('minha agenda')) {
-                return await verMeusAgendamentos(senderNumber, senderNumber);
+                return await verMeusAgendamentos(senderNumber, senderNumber, configDb);
             }
             if (textMessage === 'cmd_cancelar' || msgLow.includes('cancelar')) {
-                return await iniciarCancelamento(senderNumber, senderNumber, stateMachine, STEPS);
+                return await iniciarCancelamento(senderNumber, senderNumber, stateMachine, STEPS, configDb);
             }
             if (textMessage === 'cmd_agendar' || msgLow.includes('agendar') || msgLow.includes('marcar') || msgLow.includes('corte')) {
-                return await iniciarAgendamento(senderNumber, senderNumber, stateMachine, STEPS);
+                return await iniciarAgendamento(senderNumber, senderNumber, stateMachine, STEPS, configDb);
             }
 
             // SE NÃO FOI DÚVIDA/COMANDO, CONTINUA O FLUXO DE MÁQUINA DE ESTADO EXISTENTE
             if (textMessage.startsWith('srv_') || textMessage.startsWith('barb_') || userState.step.startsWith('AGENDAMENTO_')) {
-                await handleAgendamento(senderNumber, textMessage, senderNumber, stateMachine, STEPS);
+                await handleAgendamento(senderNumber, textMessage, senderNumber, stateMachine, STEPS, configDb);
                 return;
             }
 
             if (userState.step === STEPS.CANCELAR_AGENDAMENTO) {
-                await processarCancelamento(senderNumber, textMessage, senderNumber, stateMachine, STEPS);
+                await processarCancelamento(senderNumber, textMessage, senderNumber, stateMachine, STEPS, configDb);
                 return;
             }
 

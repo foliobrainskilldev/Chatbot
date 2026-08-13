@@ -2,8 +2,17 @@ const { prisma } = require('../db');
 const { format } = require('date-fns');
 const whatsappService = require('../whatsappService');
 
-async function verPrecosEServicos(jid, stateMachine = null) {
+function formatarMoeda(valor, moeda) {
+    if (!valor) return '';
+    const v = parseFloat(valor);
+    if (moeda === 'R$') return `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+    if (moeda === '$') return `$ ${v.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+    return `${v.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ${moeda}`;
+}
+
+async function verPrecosEServicos(jid, stateMachine = null, configDb) {
     const servicos = await prisma.servico.findMany({ orderBy: { preco: 'asc' } });
+    const moedaGlobal = configDb?.moeda || 'MT';
     
     if (servicos.length === 0) {
         return await whatsappService.sendText(jid, "Nossa tabela de preços está sendo atualizada. Fale com um atendente.");
@@ -11,7 +20,8 @@ async function verPrecosEServicos(jid, stateMachine = null) {
 
     let textoTabela = "*📋 NOSSA TABELA DE SERVIÇOS E PREÇOS*\n\n";
     servicos.forEach(s => {
-        textoTabela += `✂️ *${s.nome}* - ${s.preco} MT\n`;
+        const precoFormatado = s.preco ? formatarMoeda(s.preco, moedaGlobal) : 'Sob Consulta';
+        textoTabela += `✂️ *${s.nome}* - ${precoFormatado}\n`;
     });
 
     const userState = stateMachine ? stateMachine.get(jid) : null;
@@ -34,7 +44,7 @@ async function verPrecosEServicos(jid, stateMachine = null) {
     }
 }
 
-async function verMeusAgendamentos(jid, senderNumber) {
+async function verMeusAgendamentos(jid, senderNumber, configDb) {
     const agendamentos = await prisma.agendamento.findMany({
         where: {
             clienteId: senderNumber,

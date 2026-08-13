@@ -34,7 +34,7 @@ async function transcreverAudio(audioBuffer) {
     }
 }
 
-async function analisarMensagemNLP(mensagem, historico, userState) {
+async function analisarMensagemNLP(mensagem, historico, userState, configDb) {
     const GROQ_API_KEY = process.env.GROQ_API_KEY ? process.env.GROQ_API_KEY.trim() : null;
     
     if (!GROQ_API_KEY) {
@@ -42,7 +42,9 @@ async function analisarMensagemNLP(mensagem, historico, userState) {
         return fallbackNLP(mensagem);
     }
 
-    const formatterDia = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit' });
+    // Calcula a data local baseado no fuso horário configurado na clínica
+    const fusoHorario = configDb?.fusoHorario || 'Africa/Maputo';
+    const formatterDia = new Intl.DateTimeFormat('pt-BR', { timeZone: fusoHorario, weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit' });
     const diaDeHoje = formatterDia.format(new Date());
 
     try {
@@ -69,9 +71,9 @@ Intenções permitidas:
 - goodbye (despedida)
 - unknown (não entendi)
 
-INFORMAÇÃO TEMPORAL IMPORTANTE:
+INFORMAÇÃO TEMPORAL IMPORTANTE E FUSO HORÁRIO LOCAL:
 Hoje é: ${diaDeHoje}.
-Se o usuário mencionar dias relativos ("amanhã", "sexta", "dia 16"), converta a entidade 'date' EXATAMENTE para o formato "DD/MM/YYYY". Ex: "15/08/2026".
+Se o usuário mencionar dias relativos ("amanhã", "sexta", "dia 16"), converta a entidade 'date' EXATAMENTE para o formato "DD/MM/YYYY" usando como base a data de hoje acima. Ex: "15/08/2026".
 Se mencionar horas ("10h", "às três da tarde"), converta a entidade 'time' EXATAMENTE para "HH:mm". Ex: "10:00", "15:00".
 
 Estado atual da conversa (Contexto): ${JSON.stringify(userState || {})}
@@ -131,6 +133,7 @@ async function gerarRespostaNatural(mensagem, historico, contexto, configDb) {
     }
 
     const fusoHorario = configDb?.fusoHorario || 'Africa/Maputo';
+    const moedaGlobal = configDb?.moeda || 'MT';
     const formatter = new Intl.DateTimeFormat('pt-BR', { 
         timeZone: fusoHorario,
         year: 'numeric', month: 'long', day: 'numeric',
@@ -147,26 +150,30 @@ Tom de voz: ${configDb?.tomDeVoz || 'Profissional e acolhedor'}.
 Estilo: ${configDb?.estiloComunicacao || 'Respostas curtas e objetivas'}.
 Formalidade: ${configDb?.formalidade || 'Sempre tratar por Senhor/Senhora'}.
 
-REGRAS DE CONVERSAÇÃO E SAUDAÇÃO (MUITO IMPORTANTE):
+A MOEDA OFICIAL E ÚNICA DA CLÍNICA É: ${moedaGlobal}.
+REGRA ABSOLUTA DE MOEDA: TODOS os valores financeiros, preços e orçamentos mencionados por você DEVEM ser expressos EXCLUSIVAMENTE nesta moeda (ex: ${moedaGlobal} X.XXX,XX ou X.XXX,XX ${moedaGlobal}). 
+JAMAIS converta, alucine ou utilize Reais (R$), Dólares ($) ou qualquer outra moeda, mesmo que a dúvida do paciente contenha outra moeda ou que nas informações adicionais do CRM haja algum erro de digitação. Assuma SEMPRE que todo e qualquer valor numérico fornecido no contexto é na moeda ${moedaGlobal}.
+
+REGRAS DE CONVERSAÇÃO E SAUDAÇÃO:
 ${isOngoing 
     ? "- Vocês já estão no meio de uma conversa. NUNCA inicie sua resposta com saudações (como 'Bom dia', 'Boa tarde', 'Boa noite', 'Olá', 'Tudo bem?'). Vá DIRETAMENTE ao ponto." 
     : `- Esta é a primeira mensagem do paciente. Inicie com uma saudação educada baseada no horário local (${dataHoraAtual}): "Bom dia" (00h-11h59), "Boa tarde" (12h-17h59) ou "Boa noite" (18h-23h59).`
 }
-- Não utilize o nome do paciente em todas as mensagens. Use o nome naturalmente e apenas quando contribuir para a conversa. Evite repetir o nome em mensagens consecutivas para não soar artificial ou robótico.
+- Não utilize o nome do paciente em todas as mensagens. Evite repetir o nome em mensagens consecutivas para não soar artificial ou robótico.
 
 INFORMAÇÕES DO PACIENTE:
 - Nome: ${contexto.paciente_nome || 'Paciente'}
 - Tipo: ${contexto.paciente_novo ? 'Novo Paciente (Dê as boas vindas apenas se for a primeira mensagem)' : 'Paciente Recorrente'}.
 
 REGRAS OBRIGATÓRIAS DE CONTEXTO:
-1. Você recebe abaixo os DADOS DE CONTEXTO extraídos do CRM. Use EXCLUSIVAMENTE estes dados.
-2. NUNCA diga que não tem acesso a consultas se a informação estiver no contexto. 
+1. Você recebe abaixo os DADOS DE CONTEXTO extraídos do CRM. Use EXCLUSIVAMENTE estes dados para compor sua resposta.
+2. NUNCA diga que não tem acesso a consultas ou preços se a informação estiver no contexto. 
 3. Se a informação não constar no contexto, ofereça transferência para a recepção.
 
 DADOS DE CONTEXTO DO CRM (USE ESTES DADOS PARA RESPONDER):
 ${JSON.stringify(contexto.dados_crm || {}, null, 2)}
 
-Sua tarefa: Leia a mensagem do usuário e responda de forma natural e conversacional, aplicando rigorosamente a regra das saudações, restrição de uso de nome e do contexto.
+Sua tarefa: Leia a mensagem do usuário e responda de forma natural e conversacional, aplicando rigorosamente as regras de moeda (${moedaGlobal}), saudações, restrição de uso de nome e do contexto informado.
 `;
 
         const messages = [

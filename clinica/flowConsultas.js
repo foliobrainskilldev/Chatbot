@@ -7,13 +7,13 @@ function formatarMoeda(valor, moeda) {
     const v = parseFloat(valor);
     if (moeda === 'R$') return `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
     if (moeda === '$') return `$ ${v.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
-    return `${v.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MT`;
+    return `${v.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ${moeda}`;
 }
 
 async function processarDuvidas(jid, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient) {
     let dadosCrmContexto = {};
     const intent = nlpResult?.intent || "unknown";
-    const moedaGlobal = configDb?.moeda || 'MT'; // Pega a moeda configurada no painel
+    const moedaGlobal = configDb?.moeda || 'MT'; 
 
     try {
         const historicoAgendamentos = await prisma.agendamento.findMany({
@@ -41,14 +41,14 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
     if (intent === 'treatment.price' || intent === 'treatment.info' || intent === 'treatment.duration' || intent === 'treatment.faq' || intent === 'treatment.list') {
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' }});
         
-        // Mapeia os tratamentos injetando o PREÇO FORMATADO DA CLÍNICA
+        // Removemos o campo numérico puro "preco_sistema" para não confundir a IA.
+        // Entregamos apenas o preço formatado inquebrável com a sigla correta.
         const mapearTratamento = (t) => ({
             nome: t.nome,
             categoria: t.categoria,
-            preco_sistema: t.preco,
-            preco_formatado: t.preco ? formatarMoeda(t.preco, moedaGlobal) : 'Sob Consulta',
+            preco: t.preco ? formatarMoeda(t.preco, moedaGlobal) : 'Sob Consulta',
             tipoPreco: t.tipoPreco,
-            info: t.informacoesIA
+            informacoes_adicionais: t.informacoesIA
         });
 
         if (nlpResult?.entities?.treatment && intent !== 'treatment.list') {

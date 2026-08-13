@@ -6,6 +6,14 @@ const aiService = require('../aiService');
 const automationEngine = require('../services/automationEngine');
 const webhookService = require('../services/webhookService');
 
+function formatarMoeda(valor, moeda) {
+    if (!valor) return '';
+    const v = parseFloat(valor);
+    if (moeda === 'R$') return `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+    if (moeda === '$') return `$ ${v.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+    return `${v.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ${moeda}`;
+}
+
 async function processarAgendamento(jid, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, isNewPatient) {
     let userState = stateMachine.get(senderNumber) || { step: 'IDLE', intent: 'appointment.create', entities: {} };
     userState.step = 'AGENDAMENTO';
@@ -50,10 +58,11 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
                 return;
             }
             
+            const moedaGlobal = configDb?.moeda || 'MT';
             const rows = tratamentos.slice(0, 10).map(t => ({ 
                 id: `trat_${t.id}`, 
                 title: t.nome.substring(0, 24), 
-                description: t.preco ? `Preço: ${t.preco}` : 'Consulte valor' 
+                description: t.preco ? `Valor: ${formatarMoeda(t.preco, moedaGlobal)}` : 'Consulte valor' 
             }));
             const sections = [{ title: "Especialidades", rows: rows }];
             
@@ -81,9 +90,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
                 await whatsappService.sendText(jid, `A data que você pediu (${userState.entities.date}) não está disponível em nossa agenda. Por favor, escolha outra:`);
                 userState.entities.date = null; 
             }
-        }
-        else if (textoProcessado && !isInteractive && !isAffirmative && textoProcessado !== 'ver_mais_data' && textoProcessado.length > 3) {
-            // Caso ele tenha digitado algo mas a NLP não achou a entidade de data, o bot reseta e ajuda o usuário enviando o menu novamente.
         }
         
         if (!userState.resolvedDate) {

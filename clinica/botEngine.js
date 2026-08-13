@@ -166,6 +166,8 @@ async function processarMensagemEntrante(message) {
 
             let isInteractive = message.type === 'interactive';
             let userState = stateMachine.get(senderNumber) || { step: 'IDLE', intent: null, entities: {} };
+            
+            // BUSCA A CONFIGURAÇÃO GERAL DO SISTEMA (MOEDA, FUSO HORÁRIO, PAÍS)
             const configDb = await prisma.configSistema.findFirst();
             
             historicoRaw.reverse();
@@ -174,7 +176,8 @@ async function processarMensagemEntrante(message) {
             let nlpResult = { intent: "unknown", confidence: 1, entities: {} };
 
             if (!isInteractive && textoProcessado) {
-                nlpResult = await aiService.analisarMensagemNLP(textoProcessado, historico, userState);
+                // Injeta as configurações no NLP para cálculo de timezone e dados locais
+                nlpResult = await aiService.analisarMensagemNLP(textoProcessado, historico, userState, configDb);
                 console.log(`🧠 [NLP] Intenção: ${nlpResult.intent} | Confiança: ${nlpResult.confidence}`);
                 
                 userState.entities = { ...userState.entities, ...nlpResult.entities };
@@ -190,7 +193,6 @@ async function processarMensagemEntrante(message) {
 
             let activeIntent = nlpResult.intent || 'unknown';
 
-            // PROTEÇÃO DE CONTEXTO: Se o paciente está apenas enviando "Sexta" ou "Dez horas" e o NLP retornar unknown, força pra appointment.
             if (userState.step === 'AGENDAMENTO' && activeIntent === 'unknown') {
                 activeIntent = 'appointment.create';
             }
@@ -221,7 +223,6 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // ROTEAMENTO DINÂMICO INTELIGENTE: Dúvidas pausarão e sobreporão a máquina de estados.
             if (intentsDeDuvida.includes(activeIntent)) {
                 const flowConsultas = require('./flowConsultas');
                 await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient);

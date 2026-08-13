@@ -3,7 +3,15 @@ const { getProximosDiasUteis, getHorariosDisponiveis } = require('../dateUtils')
 const { parse } = require('date-fns');
 const whatsappService = require('../whatsappService');
 
-async function iniciarAgendamento(jid, senderNumber, stateMachine, STEPS) {
+function formatarMoeda(valor, moeda) {
+    if (!valor) return '';
+    const v = parseFloat(valor);
+    if (moeda === 'R$') return `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+    if (moeda === '$') return `$ ${v.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+    return `${v.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ${moeda}`;
+}
+
+async function iniciarAgendamento(jid, senderNumber, stateMachine, STEPS, configDb) {
     const agendamentos = await prisma.agendamento.count({
         where: { clienteId: senderNumber, status: 'AGENDADO', dataHora: { gte: new Date() } }
     });
@@ -23,13 +31,19 @@ async function iniciarAgendamento(jid, senderNumber, stateMachine, STEPS) {
         return;
     }
 
-    let optServicos = servicos.map(s => ({ id: `srv_${s.id}`, title: s.nome, description: `${s.preco} MT` }));
+    const moedaGlobal = configDb?.moeda || 'MT';
+    
+    let optServicos = servicos.map(s => ({ 
+        id: `srv_${s.id}`, 
+        title: s.nome.substring(0, 24), 
+        description: s.preco ? formatarMoeda(s.preco, moedaGlobal) : 'Sob Consulta' 
+    }));
     optServicos.push({ id: '0', title: 'Cancelar' });
 
     await whatsappService.sendInteractiveMenu(jid, "Vamos agendar! Escolha o serviço abaixo:", optServicos);
 }
 
-async function handleAgendamento(jid, textMessage, senderNumber, stateMachine, STEPS) {
+async function handleAgendamento(jid, textMessage, senderNumber, stateMachine, STEPS, configDb) {
     const userState = stateMachine.get(senderNumber);
     const step = userState.step;
     let msg = textMessage.trim();
@@ -65,7 +79,7 @@ async function handleAgendamento(jid, textMessage, senderNumber, stateMachine, S
             }
             
             userState.step = STEPS.AGENDAMENTO_DATA;
-            const dias = getProximosDiasUteis(5);
+            const dias = await getProximosDiasUteis(5);
             userState.data.diasDisponiveis = dias;
             
             let optDias = dias.map(d => ({ id: d, title: d }));
@@ -80,7 +94,6 @@ async function handleAgendamento(jid, textMessage, senderNumber, stateMachine, S
             userState.data.dataString = msg;
             userState.step = STEPS.AGENDAMENTO_HORA;
             
-            // Note que aqui passamos o ID do barbeiro (o 3º argumento)
             const horasLivres = await getHorariosDisponiveis(msg, userState.data.servico.duracaoMin, userState.data.barbeiro?.id);
 
             if (horasLivres.length === 0) {
