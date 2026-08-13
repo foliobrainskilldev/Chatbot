@@ -13,7 +13,7 @@ function formatarMoeda(valor, moeda) {
 async function processarDuvidas(jid, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient) {
     let dadosCrmContexto = {};
     const intent = nlpResult?.intent || "unknown";
-    const moedaGlobal = configDb?.moeda || 'MT';
+    const moedaGlobal = configDb?.moeda || 'MT'; // Pega a moeda configurada no painel
 
     try {
         const historicoAgendamentos = await prisma.agendamento.findMany({
@@ -41,6 +41,7 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
     if (intent === 'treatment.price' || intent === 'treatment.info' || intent === 'treatment.duration' || intent === 'treatment.faq' || intent === 'treatment.list') {
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' }});
         
+        // Mapeia os tratamentos injetando o PREÇO FORMATADO DA CLÍNICA
         const mapearTratamento = (t) => ({
             nome: t.nome,
             categoria: t.categoria,
@@ -84,4 +85,8 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
 
     const respostaIA = await aiService.gerarRespostaNatural(textoProcessado, historico, contextoIA, configDb);
     
-    await
+    await prisma.mensagemIA.create({ data: { role: 'assistant', content: respostaIA, clienteId: senderNumber } });
+    await whatsappService.sendText(jid, respostaIA);
+}
+
+module.exports = { processarDuvidas };
