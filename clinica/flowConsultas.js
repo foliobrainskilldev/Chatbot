@@ -2,9 +2,18 @@ const { prisma } = require('../db');
 const aiService = require('../aiService');
 const whatsappService = require('../whatsappService');
 
+function formatarMoeda(valor, moeda) {
+    if (!valor) return '';
+    const v = parseFloat(valor);
+    if (moeda === 'R$') return `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+    if (moeda === '$') return `$ ${v.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+    return `${v.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} MT`;
+}
+
 async function processarDuvidas(jid, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient) {
     let dadosCrmContexto = {};
     const intent = nlpResult?.intent || "unknown";
+    const moedaGlobal = configDb?.moeda || 'MT';
 
     try {
         const historicoAgendamentos = await prisma.agendamento.findMany({
@@ -29,23 +38,29 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         console.error("Aviso: Falha ao carregar histórico de consultas no fluxo de dúvidas.");
     }
 
-    if (intent === 'treatment.price' || intent === 'treatment.info' || intent === 'treatment.duration' || intent === 'treatment.faq') {
+    if (intent === 'treatment.price' || intent === 'treatment.info' || intent === 'treatment.duration' || intent === 'treatment.faq' || intent === 'treatment.list') {
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' }});
         
-        if (nlpResult?.entities?.treatment) {
+        const mapearTratamento = (t) => ({
+            nome: t.nome,
+            categoria: t.categoria,
+            preco_sistema: t.preco,
+            preco_formatado: t.preco ? formatarMoeda(t.preco, moedaGlobal) : 'Sob Consulta',
+            tipoPreco: t.tipoPreco,
+            info: t.informacoesIA
+        });
+
+        if (nlpResult?.entities?.treatment && intent !== 'treatment.list') {
             const search = nlpResult.entities.treatment.toLowerCase();
             const match = tratamentos.find(t => t.nome.toLowerCase().includes(search));
             if (match) {
-                dadosCrmContexto.tratamento_solicitado = match;
+                dadosCrmContexto.tratamento_solicitado = mapearTratamento(match);
             } else {
-                dadosCrmContexto.tratamentos_cadastrados_no_catalogo = tratamentos.map(t => ({ nome: t.nome, preco: t.preco, tipoPreco: t.tipoPreco, info: t.informacoesIA }));
+                dadosCrmContexto.tratamentos_cadastrados_no_catalogo = tratamentos.map(mapearTratamento);
             }
         } else {
-            dadosCrmContexto.tratamentos_cadastrados_no_catalogo = tratamentos.map(t => ({ nome: t.nome, preco: t.preco, tipoPreco: t.tipoPreco, info: t.informacoesIA }));
+            dadosCrmContexto.tratamentos_cadastrados_no_catalogo = tratamentos.map(mapearTratamento);
         }
-    } else if (intent === 'treatment.list') {
-        const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' }});
-        dadosCrmContexto.catologo_servicos = tratamentos.map(t => ({ nome: t.nome, categoria: t.categoria }));
     } else if (intent === 'clinic.hours' || intent === 'clinic.location' || intent === 'clinic.contact' || intent === 'clinic.payment_methods') {
         dadosCrmContexto.dados_operacionais = {
             horarios: configDb?.horarioFuncionamento || "Segunda a Sexta",
@@ -57,7 +72,6 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         dadosCrmContexto.dados_basicos = { nome_clinica: configDb?.nomeClinica || "Clínica", faq: configDb?.faq || "" };
     }
 
-    // INJEÇÃO DE CONTEXTO: Avisar a LLM se o paciente pausou um agendamento
     if (userState && userState.step === 'AGENDAMENTO') {
         dadosCrmContexto.aviso_sistema_prioridade = "O paciente está atualmente no meio de um fluxo de agendamento que foi pausado para que você respondesse esta dúvida. Responda a dúvida baseada no catálogo e, obrigatoriamente no final, convide-o a continuar com o agendamento enviando a data desejada.";
     }
@@ -70,8 +84,4 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
 
     const respostaIA = await aiService.gerarRespostaNatural(textoProcessado, historico, contextoIA, configDb);
     
-    await prisma.mensagemIA.create({ data: { role: 'assistant', content: respostaIA, clienteId: senderNumber } });
-    await whatsappService.sendText(jid, respostaIA);
-}
-
-module.exports = { processarDuvidas };
+    await
