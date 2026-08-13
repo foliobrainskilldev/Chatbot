@@ -181,8 +181,8 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         dados_crm: { agendamento_realizado: novoAgendamento }
     };
 
-    // Instrução expressa proibindo saudações na confirmação
-    const promptDireto = "Gere uma mensagem confirmando de forma simpática que a consulta foi criada com sucesso com os detalhes que passei. IMPORTANTE: Vá direto ao ponto, NÃO use saudações iniciais (Bom dia/Olá) pois já estamos no meio de uma conversa.";
+    // Instrução expressa proibindo repetição do nome e saudações
+    const promptDireto = "Gere uma mensagem confirmando de forma simpática que a consulta foi criada com sucesso com os detalhes que passei. IMPORTANTE: Vá direto ao ponto, NÃO use saudações iniciais (Bom dia/Olá) pois já estamos no meio de uma conversa. Evite repetir o nome do paciente para não soar artificial.";
     
     const respostaContexto = await aiService.gerarRespostaNatural(
         promptDireto,

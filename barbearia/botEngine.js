@@ -53,6 +53,11 @@ async function processarMensagemEntrante(message) {
             }
 
             await whatsappService.markAsReadAndTyping(msgId, senderNumber);
+            await whatsappService.sendTypingIndicator(senderNumber);
+
+            // Delay natural de 2 a 5 segundos (Typing indicator ativado)
+            const delayMs = Math.floor(Math.random() * (5000 - 2000 + 1)) + 2000;
+            await new Promise(resolve => setTimeout(resolve, delayMs));
 
             let textMessage = "";
             let isTranscribed = false;
@@ -80,9 +85,6 @@ async function processarMensagemEntrante(message) {
             }
 
             let userState = stateMachine.get(senderNumber) || { step: STEPS.MENU_PRINCIPAL, data: {} };
-            
-            const delayMs = Math.floor(Math.random() * (2000 - 1000 + 1)) + 1000;
-            await new Promise(resolve => setTimeout(resolve, delayMs));
 
             const msgLow = textMessage.toLowerCase();
 

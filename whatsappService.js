@@ -43,6 +43,22 @@ async function markAsReadAndTyping(msgId, to) {
     }
 }
 
+async function sendTypingIndicator(to) {
+    try {
+        await sendWhatsAppRequest({
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: to,
+            type: "typing_indicator",
+            typing_indicator: {
+                type: "text"
+            }
+        });
+    } catch (e) {
+        console.error("⚠️ [WhatsApp] Erro ao enviar status digitando:", e.message);
+    }
+}
+
 async function sendText(to, text) {
     return await sendWhatsAppRequest({
         messaging_product: "whatsapp",
@@ -144,5 +160,6 @@ module.exports = {
     sendInteractiveList,
     sendMediaUrl,
     markAsReadAndTyping,
+    sendTypingIndicator,
     downloadMedia
 };

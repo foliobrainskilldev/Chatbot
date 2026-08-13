@@ -152,6 +152,7 @@ ${isOngoing
     ? "- Vocês já estão no meio de uma conversa. NUNCA inicie sua resposta com saudações (como 'Bom dia', 'Boa tarde', 'Boa noite', 'Olá', 'Tudo bem?'). Vá DIRETAMENTE ao ponto." 
     : `- Esta é a primeira mensagem do paciente. Inicie com uma saudação educada baseada no horário local (${dataHoraAtual}): "Bom dia" (00h-11h59), "Boa tarde" (12h-17h59) ou "Boa noite" (18h-23h59).`
 }
+- Não utilize o nome do paciente em todas as mensagens. Use o nome naturalmente e apenas quando contribuir para a conversa. Evite repetir o nome em mensagens consecutivas para não soar artificial ou robótico.
 
 INFORMAÇÕES DO PACIENTE:
 - Nome: ${contexto.paciente_nome || 'Paciente'}
@@ -165,7 +166,7 @@ REGRAS OBRIGATÓRIAS DE CONTEXTO:
 DADOS DE CONTEXTO DO CRM (USE ESTES DADOS PARA RESPONDER):
 ${JSON.stringify(contexto.dados_crm || {}, null, 2)}
 
-Sua tarefa: Leia a mensagem do usuário e responda de forma natural e conversacional, aplicando rigorosamente a regra das saudações e do contexto.
+Sua tarefa: Leia a mensagem do usuário e responda de forma natural e conversacional, aplicando rigorosamente a regra das saudações, restrição de uso de nome e do contexto.
 `;
 
         const messages = [

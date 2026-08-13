@@ -56,6 +56,11 @@ async function processarMensagemEntrante(message) {
             const { cliente, isNewPatient } = await getOrCreateCliente(senderNumber, pushName);
             
             await whatsappService.markAsReadAndTyping(msgId, senderNumber);
+            await whatsappService.sendTypingIndicator(senderNumber);
+
+            // Delay natural de 2 a 5 segundos (Typing indicator ativado)
+            const delayMs = Math.floor(Math.random() * (5000 - 2000 + 1)) + 2000;
+            await new Promise(resolve => setTimeout(resolve, delayMs));
 
             let textoProcessado = "";
             let midiaUrl = null;
