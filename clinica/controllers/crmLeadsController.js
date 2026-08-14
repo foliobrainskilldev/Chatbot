@@ -24,15 +24,10 @@ exports.getDashboardStats = async (req, res) => {
         const leadsQualificados = await prisma.cliente.count({ where: { leadStatus: 'QUALIFICADO', criadoEm: { gte: dataCorte } } });
         const agendamentosTotais = await prisma.agendamento.count({ where: { status: 'AGENDADO', tratamentoId: { not: null }, dataHora: { gte: dataCorte } } });
         
-        const consultasRealizadas = await prisma.agendamento.count({ 
-            where: { 
-                status: { in: ['REALIZADA', 'CONCLUIDO'] }, 
-                tratamentoId: { not: null }, 
-                dataHora: { gte: dataCorte } 
-            } 
-        });
-        
-        let taxaConversao = agendamentosTotais > 0 ? ((consultasRealizadas / agendamentosTotais) * 100).toFixed(1) : 0;
+        // NOVA LÓGICA DE CONVERSÃO: Conta a conversão do funil de Leads para Pacientes ('CLIENTE') 
+        const totalLeadsPeriodo = await prisma.cliente.count({ where: { criadoEm: { gte: dataCorte } } });
+        const leadsConvertidos = await prisma.cliente.count({ where: { leadStatus: 'CLIENTE', criadoEm: { gte: dataCorte } } });
+        let taxaConversao = totalLeadsPeriodo > 0 ? ((leadsConvertidos / totalLeadsPeriodo) * 100).toFixed(1) : 0;
 
         const consultasHoje = await prisma.agendamento.count({ where: { tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } } });
         const pendentesHoje = await prisma.agendamento.count({ where: { status: 'AGENDADO', tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } } });
