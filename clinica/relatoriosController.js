@@ -29,7 +29,8 @@ exports.getRelatoriosGerais = async (req, res) => {
     try {
         const { dataInicio, dataFim } = parsePeriodo(req);
         const wherePeriodo = { criadoEm: { gte: dataInicio, lte: dataFim } };
-        const whereAgendaPeriodo = { dataHora: { gte: dataInicio, lte: dataFim }, tratamentoId: { not: null } };
+        // CORREÇÃO: Relatórios devem buscar os agendamentos "CRIADOS NO PERÍODO" para refletir as conversões
+        const whereAgendaPeriodo = { criadoEm: { gte: dataInicio, lte: dataFim }, tratamentoId: { not: null } };
 
         // 1. CARDS: Conversas
         const msgs = await prisma.mensagemIA.findMany({ where: wherePeriodo, select: { clienteId: true, role: true, atendenteHumano: true, tipoMidia: true, criadoEm: true } });
@@ -118,7 +119,7 @@ exports.getRelatoriosGerais = async (req, res) => {
             }
         });
         agendamentosAll.forEach(a => {
-            const fd = format(a.dataHora, 'dd/MM');
+            const fd = format(a.criadoEm, 'dd/MM'); // Corrigido para computar o gráfico pelo dia da venda/agendamento
             if(evolucaoMap[fd]) evolucaoMap[fd].agendamentos++;
         });
 

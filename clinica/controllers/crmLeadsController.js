@@ -19,12 +19,19 @@ exports.getDashboardStats = async (req, res) => {
         const inicioHoje = startOfDay(new Date());
         const fimHoje = endOfDay(new Date());
 
-        const conversasTotais = await prisma.mensagemIA.groupBy({ by: ['clienteId'] });
+        const conversasTotais = await prisma.mensagemIA.groupBy({ 
+            by: ['clienteId'], 
+            where: { criadoEm: { gte: dataCorte } } 
+        });
+
         const novosLeads = await prisma.cliente.count({ where: { leadStatus: 'NOVO', criadoEm: { gte: dataCorte } } });
         const leadsQualificados = await prisma.cliente.count({ where: { leadStatus: 'QUALIFICADO', criadoEm: { gte: dataCorte } } });
-        const agendamentosTotais = await prisma.agendamento.count({ where: { status: 'AGENDADO', tratamentoId: { not: null }, dataHora: { gte: dataCorte } } });
         
-        // NOVA LÓGICA DE CONVERSÃO: Conta a conversão do funil de Leads para Pacientes ('CLIENTE') 
+        // CORREÇÃO: Agendamentos criados no período (criadoEm), e não data da consulta
+        const agendamentosTotais = await prisma.agendamento.count({ 
+            where: { status: 'AGENDADO', tratamentoId: { not: null }, criadoEm: { gte: dataCorte } } 
+        });
+        
         const totalLeadsPeriodo = await prisma.cliente.count({ where: { criadoEm: { gte: dataCorte } } });
         const leadsConvertidos = await prisma.cliente.count({ where: { leadStatus: 'CLIENTE', criadoEm: { gte: dataCorte } } });
         let taxaConversao = totalLeadsPeriodo > 0 ? ((leadsConvertidos / totalLeadsPeriodo) * 100).toFixed(1) : 0;
@@ -32,10 +39,12 @@ exports.getDashboardStats = async (req, res) => {
         const consultasHoje = await prisma.agendamento.count({ where: { tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } } });
         const pendentesHoje = await prisma.agendamento.count({ where: { status: 'AGENDADO', tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } } });
 
+        // CORREÇÃO: Trazer os últimos agendamentos recém-criados para dar feedback imediato
         const agendamentosHojeList = await prisma.agendamento.findMany({
-            where: { tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } },
+            where: { tratamentoId: { not: null } },
             include: { cliente: true, tratamento: true, profissionalSaude: true },
-            orderBy: { dataHora: 'asc' }
+            orderBy: { criadoEm: 'desc' },
+            take: 5
         });
 
         const leadsRecentes = await prisma.cliente.findMany({
@@ -53,16 +62,24 @@ exports.getDashboardStats = async (req, res) => {
             atencaoNecessaria.push({ clienteId: lead.id, clienteNome: lead.nome, motivo: 'Aguardando Atendimento Humano' });
         });
 
-        const totalMensagens = await prisma.mensagemIA.count({ where: { role: 'assistant', criadoEm: { gte: dataCorte } } });
-        const msgsHumano = await prisma.mensagemIA.count({ where: { role: 'assistant', atendenteHumano: true, criadoEm: { gte: dataCorte } } });
-        const msgsIA = totalMensagens - msgsHumano;
+        // CORREÇÃO DESEMPENHO DA IA: Conta conversas únicas por cliente (groupBy) ao invés de mensagens individuais
+        const msgsIAGroup = await prisma.mensagemIA.groupBy({
+            by: ['clienteId'],
+            where: { role: 'assistant', atendenteHumano: false, criadoEm: { gte: dataCorte } }
+        });
+        const conversasIA = msgsIAGroup.length;
+
+        const transferidas = await prisma.cliente.count({
+            where: { falarHumano: true, criadoEm: { gte: dataCorte } }
+        });
         
-        let txRes = totalMensagens > 0 ? ((msgsIA / totalMensagens) * 100).toFixed(1) : 0;
+        const resolvidas = Math.max(0, conversasIA - transferidas);
+        let txRes = conversasIA > 0 ? ((resolvidas / conversasIA) * 100).toFixed(1) : 0;
         
         const desempenhoIA = {
-            conversasIA: msgsIA,
-            transferidas: leadsEsperandoHumano.length,
-            resolvidas: msgsIA > leadsEsperandoHumano.length ? (msgsIA - leadsEsperandoHumano.length) : msgsIA,
+            conversasIA: conversasIA,
+            transferidas: transferidas,
+            resolvidas: resolvidas,
             taxaResolucao: txRes
         };
 
