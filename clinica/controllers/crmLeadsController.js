@@ -19,15 +19,17 @@ exports.getDashboardStats = async (req, res) => {
         const inicioHoje = startOfDay(new Date());
         const fimHoje = endOfDay(new Date());
 
-        const conversasTotais = await prisma.mensagemIA.groupBy({ 
-            by: ['clienteId'], 
-            where: { criadoEm: { gte: dataCorte } } 
+        // CORREÇÃO: Abordagem segura em memória para contar conversas totais e da IA (evita o bug de 0 do groupBy)
+        const msgsPeriodo = await prisma.mensagemIA.findMany({
+            where: { criadoEm: { gte: dataCorte } },
+            select: { clienteId: true, role: true, atendenteHumano: true }
         });
+        const conversasTotais = new Set(msgsPeriodo.map(m => m.clienteId)).size;
 
         const novosLeads = await prisma.cliente.count({ where: { leadStatus: 'NOVO', criadoEm: { gte: dataCorte } } });
         const leadsQualificados = await prisma.cliente.count({ where: { leadStatus: 'QUALIFICADO', criadoEm: { gte: dataCorte } } });
         
-        // CORREÇÃO: Agendamentos criados no período (criadoEm), e não data da consulta
+        // CORREÇÃO: Agendamentos CRIADOS no período (criadoEm), e não data de quando a consulta vai ocorrer
         const agendamentosTotais = await prisma.agendamento.count({ 
             where: { status: 'AGENDADO', tratamentoId: { not: null }, criadoEm: { gte: dataCorte } } 
         });
@@ -36,10 +38,14 @@ exports.getDashboardStats = async (req, res) => {
         const leadsConvertidos = await prisma.cliente.count({ where: { leadStatus: 'CLIENTE', criadoEm: { gte: dataCorte } } });
         let taxaConversao = totalLeadsPeriodo > 0 ? ((leadsConvertidos / totalLeadsPeriodo) * 100).toFixed(1) : 0;
 
-        const consultasHoje = await prisma.agendamento.count({ where: { tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } } });
-        const pendentesHoje = await prisma.agendamento.count({ where: { status: 'AGENDADO', tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } } });
+        // CORREÇÃO KPI HOJE: Consulta as criadas no dia de hoje (feedbacks imediatos ao agendar)
+        const consultasHoje = await prisma.agendamento.count({ 
+            where: { tratamentoId: { not: null }, criadoEm: { gte: inicioHoje, lte: fimHoje } } 
+        });
+        const pendentesHoje = await prisma.agendamento.count({ 
+            where: { status: 'AGENDADO', tratamentoId: { not: null }, criadoEm: { gte: inicioHoje, lte: fimHoje } } 
+        });
 
-        // CORREÇÃO: Trazer os últimos agendamentos recém-criados para dar feedback imediato
         const agendamentosHojeList = await prisma.agendamento.findMany({
             where: { tratamentoId: { not: null } },
             include: { cliente: true, tratamento: true, profissionalSaude: true },
@@ -62,17 +68,18 @@ exports.getDashboardStats = async (req, res) => {
             atencaoNecessaria.push({ clienteId: lead.id, clienteNome: lead.nome, motivo: 'Aguardando Atendimento Humano' });
         });
 
-        // CORREÇÃO DESEMPENHO DA IA: Conta conversas únicas por cliente (groupBy) ao invés de mensagens individuais
-        const msgsIAGroup = await prisma.mensagemIA.groupBy({
-            by: ['clienteId'],
-            where: { role: 'assistant', atendenteHumano: false, criadoEm: { gte: dataCorte } }
-        });
-        const conversasIA = msgsIAGroup.length;
+        // LÓGICA BLINDADA DO DESEMPENHO DA IA
+        const msgsIA = msgsPeriodo.filter(m => m.role === 'assistant' && !m.atendenteHumano);
+        const idsClientesIA = [...new Set(msgsIA.map(m => m.clienteId))];
+        const conversasIA = idsClientesIA.length;
 
-        const transferidas = await prisma.cliente.count({
-            where: { falarHumano: true, criadoEm: { gte: dataCorte } }
+        // Puxar apenas o estado dos pacientes que foram atendidos pela IA
+        const clientesIADB = await prisma.cliente.findMany({
+            where: { id: { in: idsClientesIA } },
+            select: { id: true, falarHumano: true }
         });
-        
+
+        const transferidas = clientesIADB.filter(c => c.falarHumano).length;
         const resolvidas = Math.max(0, conversasIA - transferidas);
         let txRes = conversasIA > 0 ? ((resolvidas / conversasIA) * 100).toFixed(1) : 0;
         
@@ -87,7 +94,7 @@ exports.getDashboardStats = async (req, res) => {
         const getCount = (status) => { const f = contagemFunil.find(c => c.leadStatus === status); return f ? f._count.leadStatus : 0; };
         
         const graficoFunil = [
-            { etapa: 'Conversas', valor: conversasTotais.length },
+            { etapa: 'Conversas', valor: conversasTotais },
             { etapa: 'Novos', valor: getCount('NOVO') },
             { etapa: 'Qualificados', valor: getCount('QUALIFICADO') },
             { etapa: 'Agendados', valor: getCount('AGENDADO') },
@@ -122,7 +129,7 @@ exports.getDashboardStats = async (req, res) => {
         }
 
         res.status(200).json({
-            kpis: { conversasTotais: conversasTotais.length, novosLeads, leadsQualificados, agendamentosTotais, taxaConversao, consultasHoje, pendentesHoje },
+            kpis: { conversasTotais: conversasTotais, novosLeads, leadsQualificados, agendamentosTotais, taxaConversao, consultasHoje, pendentesHoje },
             agendamentosHoje: agendamentosHojeList,
             leadsRecentes: leadsRecentes,
             atencaoNecessaria: atencaoNecessaria.slice(0, 5),

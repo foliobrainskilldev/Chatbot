@@ -29,13 +29,19 @@ exports.getRelatoriosGerais = async (req, res) => {
     try {
         const { dataInicio, dataFim } = parsePeriodo(req);
         const wherePeriodo = { criadoEm: { gte: dataInicio, lte: dataFim } };
-        // CORREÇÃO: Relatórios devem buscar os agendamentos "CRIADOS NO PERÍODO" para refletir as conversões
+        // CORREÇÃO: Relatórios devem buscar os agendamentos "CRIADOS NO PERÍODO"
         const whereAgendaPeriodo = { criadoEm: { gte: dataInicio, lte: dataFim }, tratamentoId: { not: null } };
 
-        // 1. CARDS: Conversas
-        const msgs = await prisma.mensagemIA.findMany({ where: wherePeriodo, select: { clienteId: true, role: true, atendenteHumano: true, tipoMidia: true, criadoEm: true } });
+        // 1. CARDS: Conversas (Lógica em memória anti-bug)
+        const msgs = await prisma.mensagemIA.findMany({ 
+            where: wherePeriodo, 
+            select: { clienteId: true, role: true, atendenteHumano: true, tipoMidia: true, criadoEm: true } 
+        });
+        
         const clientesIdsConversa = [...new Set(msgs.map(m => m.clienteId))];
-        const clientesConversaram = await prisma.cliente.findMany({ where: { id: { in: clientesIdsConversa } } });
+        const clientesConversaram = await prisma.cliente.findMany({ 
+            where: { id: { in: clientesIdsConversa } } 
+        });
         
         const convTotal = clientesConversaram.length;
         const convNovas = clientesConversaram.filter(c => c.criadoEm >= dataInicio).length;
@@ -54,16 +60,18 @@ exports.getRelatoriosGerais = async (req, res) => {
         const agRealizados = agendamentosAll.filter(a => a.status === 'REALIZADA' || a.status === 'CONCLUIDO').length;
         const agCancelados = agendamentosAll.filter(a => a.status === 'CANCELADA').length;
         const agFalta = agendamentosAll.filter(a => a.status === 'FALTA').length;
-        const agRemarcados = agendamentosAll.filter(a => a.status === 'REMARCADA').length;
 
         // 4. CARDS: IA Performance
-        const transferidas = clientesConversaram.filter(c => c.falarHumano).length;
-        const resolvidasIA = convTotal - transferidas;
-        const iaAgendou = agendamentosAll.filter(a => !a.cliente.falarHumano).length;
-        const msgsRec = msgs.filter(m => m.role === 'user').length;
-        const msgsIa = msgs.filter(m => m.role === 'assistant' && !m.atendenteHumano).length;
-        const msgsHum = msgs.filter(m => m.role === 'assistant' && m.atendenteHumano).length;
+        const msgsIaNoPeriodo = msgs.filter(m => m.role === 'assistant' && !m.atendenteHumano);
+        const idsClientesIa = [...new Set(msgsIaNoPeriodo.map(m => m.clienteId))];
+        const conversasAtendidasIA = idsClientesIa.length;
+
+        const clientesTransferidos = clientesConversaram.filter(c => idsClientesIa.includes(c.id) && c.falarHumano).length;
+        const resolvidasIA = Math.max(0, conversasAtendidasIA - clientesTransferidos);
+        const iaTaxa = conversasAtendidasIA > 0 ? ((resolvidasIA / conversasAtendidasIA) * 100).toFixed(1) : 0;
         
+        const iaAgendou = agendamentosAll.filter(a => !a.cliente.falarHumano).length;
+
         // 5. FUNIL COM LOSS
         const stepInteressados = leadsNovos;
         const stepQualificados = leadsQualificados;
@@ -119,7 +127,7 @@ exports.getRelatoriosGerais = async (req, res) => {
             }
         });
         agendamentosAll.forEach(a => {
-            const fd = format(a.criadoEm, 'dd/MM'); // Corrigido para computar o gráfico pelo dia da venda/agendamento
+            const fd = format(a.criadoEm, 'dd/MM'); 
             if(evolucaoMap[fd]) evolucaoMap[fd].agendamentos++;
         });
 
@@ -136,10 +144,10 @@ exports.getRelatoriosGerais = async (req, res) => {
                 }
             },
             ia: {
-                atendidas: convTotal,
+                atendidas: conversasAtendidasIA,
                 resolvidas: resolvidasIA,
-                transferidas: transferidas,
-                taxaResolucao: calcPercent(resolvidasIA, convTotal),
+                transferidas: clientesTransferidos,
+                taxaResolucao: iaTaxa,
                 agendamentos: iaAgendou
             },
             funil: funil,
