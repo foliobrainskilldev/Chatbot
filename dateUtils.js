@@ -1,8 +1,7 @@
-const { addMinutes, isBefore, format, startOfDay, endOfDay, parse, addDays, getDay } = require('date-fns');
+const { addMinutes, format, startOfDay, endOfDay, addDays, getDay } = require('date-fns');
 const { prisma } = require('./db');
 
 function obterDiasTrabalhoGlobais() {
-    // 1=Segunda a 6=Sábado (Domingo=0).
     return [1, 2, 3, 4, 5, 6]; 
 }
 
@@ -15,8 +14,6 @@ async function getFeriadosBloqueados() {
     }
 }
 
-// Essa função precisa ser extremamente rigorosa para garantir que o LLM sempre
-// interaja com o formato "DD/MM/YYYY" de forma imutável (sem fuso horário ou localizações quebras).
 async function getProximosDiasUteis(qtdDias = 7) {
     const diasPermitidos = obterDiasTrabalhoGlobais();
     const feriados = await getFeriadosBloqueados();
@@ -25,7 +22,6 @@ async function getProximosDiasUteis(qtdDias = 7) {
     
     while (dias.length < qtdDias) {
         const diaSemana = getDay(dataAtual); 
-        // Força a string no padrão que a IA (LLM) foi treinada para enxergar (DD/MM/YYYY)
         const dataFormatada = format(dataAtual, 'dd/MM/yyyy');
         
         if (diasPermitidos.includes(diaSemana) && !feriados.includes(dataFormatada)) {
@@ -37,9 +33,10 @@ async function getProximosDiasUteis(qtdDias = 7) {
 }
 
 async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, profissionalSaudeId = null) {
-    // O NLP ou Interface devem passar rigorosamente 'dd/MM/yyyy'. O fallback default garante que o parse não quebre a aplicação.
-    const dataEscolhida = parse(dataString, 'dd/MM/yyyy', new Date());
-    
+    const configDb = await prisma.configSistema.findFirst();
+    const fusoOffset = configDb?.fusoHorario === 'America/Sao_Paulo' ? '-03:00' : '+02:00';
+    const clinicTZ = configDb?.fusoHorario || 'Africa/Maputo';
+
     let horaAbertura = 8; 
     let horaFecho = 18;
 
@@ -51,18 +48,29 @@ async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, prof
         } catch (e) { console.error("Aviso: Configuração de hora do médico não encontrada."); }
     }
 
-    const inicioDia = new Date(dataEscolhida.setHours(horaAbertura, 0, 0, 0)); 
-    const fimDia = new Date(dataEscolhida.setHours(horaFecho, 0, 0, 0));   
+    // CORREÇÃO: Cria a hora exata focada no fuso da clínica
+    const [dia, mes, ano] = dataString.split('/');
+    const hrAStr = horaAbertura.toString().padStart(2, '0');
+    const hrFStr = horaFecho.toString().padStart(2, '0');
+    
+    const inicioDia = new Date(`${ano}-${mes}-${dia}T${hrAStr}:00:00${fusoOffset}`);
+    const fimDia = new Date(`${ano}-${mes}-${dia}T${hrFStr}:00:00${fusoOffset}`);   
 
     const agora = new Date();
-    let horarioAtual = isBefore(inicioDia, agora) && dataString === format(agora, 'dd/MM/yyyy') ? agora : inicioDia;
+    let horarioAtual = inicioDia;
 
-    if (horarioAtual.getMinutes() % 30 !== 0) {
-        horarioAtual = addMinutes(horarioAtual, 30 - (horarioAtual.getMinutes() % 30));
+    if (inicioDia.getDate() === agora.getDate() && inicioDia.getMonth() === agora.getMonth() && agora > inicioDia) {
+        horarioAtual = agora;
+        const diff = 30 - (horarioAtual.getMinutes() % 30);
+        horarioAtual = new Date(horarioAtual.getTime() + diff * 60000);
+        horarioAtual.setSeconds(0, 0);
     }
 
     const whereClause = {
-        dataHora: { gte: startOfDay(dataEscolhida), lte: endOfDay(dataEscolhida) },
+        dataHora: { 
+            gte: new Date(`${ano}-${mes}-${dia}T00:00:00${fusoOffset}`), 
+            lte: new Date(`${ano}-${mes}-${dia}T23:59:59${fusoOffset}`) 
+        },
         status: { in: ['AGENDADO', 'REMARCADO'] }
     };
     
@@ -74,15 +82,16 @@ async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, prof
     });
 
     const horariosLivres = [];
+    const formatterHora = new Intl.DateTimeFormat('pt-BR', { timeZone: clinicTZ, hour: '2-digit', minute: '2-digit', hour12: false });
 
-    while (addMinutes(horarioAtual, tratamentoDuracaoMinutos) <= fimDia) {
-        const fimHorarioAtual = addMinutes(horarioAtual, tratamentoDuracaoMinutos);
+    while (new Date(horarioAtual.getTime() + tratamentoDuracaoMinutos * 60000) <= fimDia) {
+        const fimHorarioAtual = new Date(horarioAtual.getTime() + tratamentoDuracaoMinutos * 60000);
         let conflito = false;
 
         for (let ag of agendamentosDia) {
-            const inicioAg = ag.dataHora;
-            const duracaoDoAgendamentoDb = ag.tratamento ? ag.tratamento.duracaoMin : 30;
-            const fimAg = addMinutes(inicioAg, duracaoDoAgendamentoDb);
+            const inicioAg = new Date(ag.dataHora);
+            const duracaoDb = ag.tratamento ? ag.tratamento.duracaoMin : 30;
+            const fimAg = new Date(inicioAg.getTime() + duracaoDb * 60000);
             
             if ((horarioAtual >= inicioAg && horarioAtual < fimAg) || 
                 (fimHorarioAtual > inicioAg && fimHorarioAtual <= fimAg) ||
@@ -92,8 +101,10 @@ async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, prof
             }
         }
 
-        if (!conflito) horariosLivres.push(format(horarioAtual, 'HH:mm')); // String rígida que o LLM compreende perfeitamente
-        horarioAtual = addMinutes(horarioAtual, 30);
+        if (!conflito) {
+            horariosLivres.push(formatterHora.format(horarioAtual));
+        }
+        horarioAtual = new Date(horarioAtual.getTime() + 30 * 60000);
     }
 
     return horariosLivres;

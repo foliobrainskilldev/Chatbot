@@ -1,7 +1,6 @@
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
 const { getHorariosDisponiveis, getProximosDiasUteis } = require('../dateUtils');
-const { parse } = require('date-fns');
 const aiService = require('../aiService');
 const automationEngine = require('../services/automationEngine');
 const webhookService = require('../services/webhookService');
@@ -173,7 +172,12 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
-    const dataHoraDb = parse(`${userState.resolvedDate} ${userState.resolvedTime}`, 'dd/MM/yyyy HH:mm', new Date());
+    // CORREÇÃO FUSO HORÁRIO NO BOT: Ajusta a data gerada para o timezone correto da clínica
+    const [dia, mes, ano] = userState.resolvedDate.split('/');
+    const [hora, min] = userState.resolvedTime.split(':');
+    const fusoOffset = configDb?.fusoHorario === 'America/Sao_Paulo' ? '-03:00' : '+02:00';
+    const dataHoraDb = new Date(`${ano}-${mes}-${dia}T${hora}:${min}:00${fusoOffset}`);
+
     const novoAgendamento = await prisma.agendamento.create({
         data: {
             dataHora: dataHoraDb, clienteId: senderNumber, status: 'AGENDADO',

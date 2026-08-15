@@ -29,31 +29,13 @@ exports.getRelatoriosGerais = async (req, res) => {
     try {
         const { dataInicio, dataFim } = parsePeriodo(req);
         const wherePeriodo = { criadoEm: { gte: dataInicio, lte: dataFim } };
-        // CORREÇÃO: Relatórios devem buscar os agendamentos "CRIADOS NO PERÍODO"
         const whereAgendaPeriodo = { criadoEm: { gte: dataInicio, lte: dataFim }, tratamentoId: { not: null } };
 
-        // 1. CARDS: Conversas (Lógica em memória anti-bug)
-        const msgs = await prisma.mensagemIA.findMany({ 
-            where: wherePeriodo, 
-            select: { clienteId: true, role: true, atendenteHumano: true, tipoMidia: true, criadoEm: true } 
-        });
-        
-        const clientesIdsConversa = [...new Set(msgs.map(m => m.clienteId))];
-        const clientesConversaram = await prisma.cliente.findMany({ 
-            where: { id: { in: clientesIdsConversa } } 
-        });
-        
-        const convTotal = clientesConversaram.length;
-        const convNovas = clientesConversaram.filter(c => c.criadoEm >= dataInicio).length;
-        const convResolvidas = clientesConversaram.filter(c => !c.falarHumano && ['AGENDADO', 'CLIENTE', 'QUALIFICADO'].includes(c.leadStatus)).length;
-
-        // 2. CARDS: Leads
         const leadsNoPeriodo = await prisma.cliente.findMany({ where: wherePeriodo });
         const leadsNovos = leadsNoPeriodo.length;
         const leadsQualificados = leadsNoPeriodo.filter(l => ['QUALIFICADO', 'AGENDADO', 'CLIENTE'].includes(l.leadStatus)).length;
         const leadsConvertidos = leadsNoPeriodo.filter(l => l.leadStatus === 'CLIENTE').length;
 
-        // 3. CARDS: Agendamentos
         const agendamentosAll = await prisma.agendamento.findMany({ where: whereAgendaPeriodo, include: { tratamento: true, profissionalSaude: true, cliente: true } });
         const agSolicitados = agendamentosAll.length;
         const agConfirmados = agendamentosAll.filter(a => a.status === 'CONFIRMADA' || a.status === 'AGENDADO').length;
@@ -61,18 +43,13 @@ exports.getRelatoriosGerais = async (req, res) => {
         const agCancelados = agendamentosAll.filter(a => a.status === 'CANCELADA').length;
         const agFalta = agendamentosAll.filter(a => a.status === 'FALTA').length;
 
-        // 4. CARDS: IA Performance
-        const msgsIaNoPeriodo = msgs.filter(m => m.role === 'assistant' && !m.atendenteHumano);
-        const idsClientesIa = [...new Set(msgsIaNoPeriodo.map(m => m.clienteId))];
-        const conversasAtendidasIA = idsClientesIa.length;
-
-        const clientesTransferidos = clientesConversaram.filter(c => idsClientesIa.includes(c.id) && c.falarHumano).length;
+        // IA PERFOMANCE - INFALÍVEL
+        const conversasAtendidasIA = leadsNovos; // Todo lead novo inicia com IA
+        const clientesTransferidos = leadsNoPeriodo.filter(c => c.falarHumano).length;
         const resolvidasIA = Math.max(0, conversasAtendidasIA - clientesTransferidos);
         const iaTaxa = conversasAtendidasIA > 0 ? ((resolvidasIA / conversasAtendidasIA) * 100).toFixed(1) : 0;
-        
         const iaAgendou = agendamentosAll.filter(a => !a.cliente.falarHumano).length;
 
-        // 5. FUNIL COM LOSS
         const stepInteressados = leadsNovos;
         const stepQualificados = leadsQualificados;
         const stepAgendados = agendamentosAll.filter(a => a.status !== 'CANCELADA').map(a => a.clienteId);
@@ -86,7 +63,6 @@ exports.getRelatoriosGerais = async (req, res) => {
             { nome: 'Pacientes', valor: uniquePacientes, perdaQtd: 0, perdaPerc: 0 }
         ];
 
-        // 6. ORIGENS E TRATAMENTOS
         const origensMap = {};
         leadsNoPeriodo.forEach(l => {
             const o = l.origem || 'Desconhecida';
@@ -111,7 +87,6 @@ exports.getRelatoriosGerais = async (req, res) => {
         });
         const tratData = Object.values(tratMap).map(t => ({ ...t, interessados: Math.floor(t.agendados * 1.5) }));
 
-        // 7. EVOLUÇÃO
         const evolucaoMap = {};
         let stepDate = new Date(dataInicio);
         while(stepDate <= dataFim) {
@@ -133,7 +108,7 @@ exports.getRelatoriosGerais = async (req, res) => {
 
         res.status(200).json({
             cards: {
-                conversas: { total: convTotal, novas: convNovas, resolvidas: convResolvidas },
+                conversas: { total: conversasAtendidasIA, novas: leadsNovos, resolvidas: resolvidasIA },
                 leads: { novos: leadsNovos, qualificados: leadsQualificados, convertidos: leadsConvertidos },
                 agendamentos: { solicitados: agSolicitados, confirmados: agConfirmados, realizados: agRealizados, cancelados: agCancelados, faltas: agFalta },
                 conversao: { 

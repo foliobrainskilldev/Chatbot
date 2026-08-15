@@ -44,7 +44,11 @@ exports.getAgendamentosTodos = async (req, res) => {
 exports.criarAgendamentoManual = async (req, res) => {
     try {
         const { clienteId, tratamentoId, profissionalSaudeId, dataHora, observacoes } = req.body;
-        const dataOriginal = new Date(dataHora);
+        
+        // CORREÇÃO DO FUSO HORÁRIO NO AGENDAMENTO MANUAL
+        const configDb = await prisma.configSistema.findFirst();
+        const fusoOffset = configDb?.fusoHorario === 'America/Sao_Paulo' ? '-03:00' : '+02:00';
+        const dataOriginal = new Date(`${dataHora}${fusoOffset}`);
         
         const trat = await prisma.tratamento.findUnique({ where: { id: parseInt(tratamentoId) } });
         if (trat && trat.preco) {
@@ -62,14 +66,18 @@ exports.criarAgendamentoManual = async (req, res) => {
             include: { cliente: true, tratamento: true, profissionalSaude: true }
         });
         
-        const dataStr = dataOriginal.toLocaleDateString('pt-BR');
-        const horaStr = dataOriginal.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        // Exibição na moeda / horário local na mensagem do whatsapp
+        const formatterData = new Intl.DateTimeFormat('pt-BR', { timeZone: configDb?.fusoHorario || 'Africa/Maputo', year: 'numeric', month: '2-digit', day: '2-digit' });
+        const formatterHora = new Intl.DateTimeFormat('pt-BR', { timeZone: configDb?.fusoHorario || 'Africa/Maputo', hour: '2-digit', minute: '2-digit', hour12: false });
+        
+        const dataStr = formatterData.format(dataOriginal);
+        const horaStr = formatterHora.format(dataOriginal);
+        
         const msg = `Sua consulta para *${novoAgendamento.tratamento.nome}* foi agendada para ${dataStr} às ${horaStr}.`;
         
         await whatsappService.sendText(clienteId, msg);
         await prisma.mensagemIA.create({ data: { role: 'assistant', content: `[SISTEMA AUTOMÁTICO] ${msg}`, clienteId, atendenteHumano: false } });
         
-        // Se a consulta foi criada manualmente, joga o lead pra etapa "Consulta Marcada"
         await prisma.cliente.update({ where: { id: clienteId }, data: { leadStatus: 'AGENDADO' } });
         
         await automationEngine.dispararAutomacoes('CONSULTA_CONFIRMADA', novoAgendamento);
@@ -105,7 +113,6 @@ exports.atualizarStatusAgendamento = async (req, res) => {
             await automationEngine.dispararAutomacoes('CONSULTA_CONFIRMADA', att); 
         } 
         else if (status === 'REALIZADA' || status === 'CONCLUIDO') {
-            // FIX CRM: Quando a consulta for realizada, atualiza o Lead no CRM para "Paciente" (CLIENTE)
             await prisma.cliente.update({
                 where: { id: att.clienteId },
                 data: { leadStatus: 'CLIENTE' }
