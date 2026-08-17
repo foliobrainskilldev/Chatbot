@@ -1,11 +1,11 @@
-const { prisma } = require('../../db');
-const whatsappService = require('../../whatsappService');
-const aiService = require('../../aiService');
-const webhookService = require('../../services/webhookService');
-const automationEngine = require('../../services/automationEngine');
-const supabaseService = require('../../services/supabaseService');
+const { prisma } = require('../db');
+const whatsappService = require('../whatsappService');
+const aiService = require('../aiService');
+const webhookService = require('../services/webhookService');
+const automationEngine = require('../services/automationEngine');
+const supabaseService = require('../services/supabaseService');
 
-const demoService = require('../../services/demoService');
+const demoService = require('../services/demoService');
 
 const stateMachine = new Map();
 
