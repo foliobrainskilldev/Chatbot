@@ -176,10 +176,41 @@ ${JSON.stringify(contexto.dados_crm || {}, null, 2)}
 Sua tarefa: Leia a mensagem do usuário e responda de forma natural e conversacional, aplicando rigorosamente as regras de moeda (${moedaGlobal}), saudações, restrição de uso de nome e do contexto informado.
 `;
 
+        // ========================================================================
+        // NORMALIZAÇÃO DE HISTÓRICO PARA EVITAR ERROS HTTP 400 DA GROQ / LLAMA
+        // ========================================================================
+        const rawMessages = [
+            ...(historico || []),
+            { role: "user", content: mensagem }
+        ];
+
+        const mergedMessages = [];
+        let lastRole = null;
+
+        for (const msg of rawMessages) {
+            const currentRole = msg.role;
+            const currentContent = msg.content || "";
+            
+            // Ignora mensagens completamente vazias
+            if (currentContent.trim() === "") continue;
+
+            if (currentRole === lastRole) {
+                // Se for a mesma role seguida (Ex: Duas mensagens do user seguidas), fundimos em uma só
+                mergedMessages[mergedMessages.length - 1].content += `\n${currentContent}`;
+            } else {
+                mergedMessages.push({ role: currentRole, content: currentContent });
+                lastRole = currentRole;
+            }
+        }
+
+        // O LLaMA obriga que o primeiro diálogo após o system prompt seja do usuário.
+        if (mergedMessages.length > 0 && mergedMessages[0].role === 'assistant') {
+            mergedMessages.shift(); // Se for do bot, descartamos a primeira para alinhar a fita lógica
+        }
+
         const messages = [
             { role: "system", content: prompt },
-            ...(historico || []).map(h => ({ role: h.role, content: h.content })),
-            { role: "user", content: mensagem }
+            ...mergedMessages
         ];
 
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
@@ -192,6 +223,9 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma natural e conversaci
 
         return response.data.choices[0].message.content;
     } catch (error) {
+        // AGORA O ERRO APARECERÁ NO CONSOLE DO SERVIDOR
+        console.error("❌ [GERAÇÃO DE RESPOSTA ERRO]:", error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
+        
         return "Desculpe, tive um pequeno problema ao formular a resposta agora. Você poderia repetir, por favor?";
     }
 }
