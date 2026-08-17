@@ -91,7 +91,7 @@ Responda APENAS com um JSON válido no formato exato:
 `;
 
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-            model: "llama-3.3-70b-versatile",
+            model: "openai/gpt-oss-120b",
             messages: [
                 { role: "system", content: prompt },
                 { role: "user", content: mensagem }
@@ -177,7 +177,7 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma natural e conversaci
 `;
 
         // ========================================================================
-        // NORMALIZAÇÃO DE HISTÓRICO PARA EVITAR ERROS HTTP 400 DA GROQ / LLAMA
+        // NORMALIZAÇÃO DE HISTÓRICO PARA EVITAR ERROS HTTP 400 
         // ========================================================================
         const rawMessages = [
             ...(historico || []),
@@ -203,9 +203,9 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma natural e conversaci
             }
         }
 
-        // O LLaMA obriga que o primeiro diálogo após o system prompt seja do usuário.
+        // Os LLMs obrigam que o primeiro diálogo após o system prompt seja do usuário.
         if (mergedMessages.length > 0 && mergedMessages[0].role === 'assistant') {
-            mergedMessages.shift(); // Se for do bot, descartamos a primeira para alinhar a fita lógica
+            mergedMessages.shift(); 
         }
 
         const messages = [
@@ -214,7 +214,7 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma natural e conversaci
         ];
 
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-            model: "llama-3.3-70b-versatile",
+            model: "openai/gpt-oss-120b",
             messages: messages,
             temperature: 0.6
         }, {
@@ -223,9 +223,7 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma natural e conversaci
 
         return response.data.choices[0].message.content;
     } catch (error) {
-        // AGORA O ERRO APARECERÁ NO CONSOLE DO SERVIDOR
         console.error("❌ [GERAÇÃO DE RESPOSTA ERRO]:", error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
-        
         return "Desculpe, tive um pequeno problema ao formular a resposta agora. Você poderia repetir, por favor?";
     }
 }
