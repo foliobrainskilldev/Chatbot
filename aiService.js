@@ -1,3 +1,4 @@
+// aiService.js
 const axios = require('axios');
 
 async function transcreverAudio(audioBuffer) {
@@ -52,36 +53,41 @@ Você é o motor de NLP de um HealthCRM (Clínica Médica).
 Sua tarefa é analisar a mensagem do paciente e extrair a intenção (intent) e as entidades (entities).
 
 Intenções permitidas:
-- clinic.hours (horário)
-- clinic.location (localização)
-- clinic.contact (contato)
-- clinic.payment_methods (pagamento)
-- treatment.list (listar tratamentos)
-- treatment.info (informação)
-- treatment.price (preço)
-- treatment.duration (duração)
-- appointment.create (marcar consulta)
-- appointment.check (verificar futuras)
-- appointment.history (verificar passadas ou canceladas)
-- appointment.reschedule (remarcar)
-- appointment.cancel (cancelar)
-- human.transfer (falar com atendente)
-- greeting (saudação)
-- goodbye (despedida)
-- unknown (não entendi)
+- CLINIC_HOURS (horário da clínica)
+- CLINIC_LOCATION (localização)
+- CLINIC_CONTACT (contato)
+- CLINIC_PAYMENT_METHODS (pagamento)
+- TREATMENT_LIST (listar tratamentos)
+- TREATMENT_INFO (informação sobre serviço)
+- TREATMENT_PRICE (preço)
+- TREATMENT_DURATION (duração)
+- BOOK_APPOINTMENT (marcar consulta ou iniciar agendamento)
+- CHECK_UPCOMING_APPOINTMENTS (verificar consultas futuras)
+- CHECK_PAST_APPOINTMENTS (verificar consultas passadas)
+- RESCHEDULE_APPOINTMENT (remarcar)
+- CANCEL_APPOINTMENT (cancelar)
+- HUMAN_TRANSFER (falar com atendente humano)
+- GREETING (saudação genérica)
+- GOODBYE (despedida)
+- CONFIRM_APPOINTMENT (usado ESTRITAMENTE quando o usuário confirma positivamente a marcação, ex: "Sim", "Pode confirmar", "Isso mesmo")
+- REJECT_APPOINTMENT (usado quando o usuário desiste ou recusa, ex: "Não", "Deixa para lá", "Cancelar operação")
+- REQUEST_MORE_TIMES (usado quando o usuário pede mais horários ou opções)
+- REQUEST_MORE_DATES (usado quando o usuário pede mais dias ou outras datas)
+- SELECT_TIME (quando o usuário informa especificamente uma hora durante o processo, ex: "às 9h", "pode ser as 14")
+- SELECT_DATE (quando o usuário informa especificamente uma data, ex: "amanhã", "sexta")
+- UNKNOWN (não entendi)
 
 INFORMAÇÃO TEMPORAL IMPORTANTE E FUSO HORÁRIO LOCAL:
 Hoje é: ${diaDeHoje}.
-Se o usuário mencionar dias relativos ("amanhã", "sexta", "dia 16"), converta a entidade 'date' EXATAMENTE para o formato "DD/MM/YYYY" usando como base a data de hoje acima.
+Se o usuário mencionar dias relativos ("amanhã", "sexta", "dia 16"), converta a entidade 'date' EXATAMENTE para o formato "DD/MM/YYYY" usando como base a data de hoje.
 Se mencionar horas ("10h", "às três da tarde"), converta a entidade 'time' EXATAMENTE para "HH:mm".
 
-MODIFICADORES DE TEMPO (CRÍTICO):
+MODIFICADORES DE TEMPO:
 Se o paciente disser "depois das 10", defina "time": "10:00" e "time_modifier": "after".
 Se o paciente disser "antes das 12h", defina o "time" como a hora limite e "time_modifier": "before".
-Se o paciente pedir mais opções, "tem outros?", "quais mais?", ou "mostra mais", defina "time_modifier": "more".
-Se for uma hora exata, defina "time_modifier": "exact".
+Se o paciente apenas passar a hora, defina "time_modifier": "exact".
 
-Estado atual da conversa (Contexto): ${JSON.stringify(userState || {})}
+Estado atual da conversa (Contexto do Funil): ${JSON.stringify(userState || {})}
 
 Responda APENAS com um JSON válido no formato exato:
 {
@@ -91,13 +97,13 @@ Responda APENAS com um JSON válido no formato exato:
     "treatment": "...",
     "date": "DD/MM/YYYY",
     "time": "HH:mm",
-    "time_modifier": "after|before|exact|more"
+    "time_modifier": "after|before|exact"
   }
 }
 `;
 
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-            model: "openai/gpt-oss-120b",
+            model: "llama3-8b-8192", // Modelo leve para classificação de intenção
             messages: [
                 { role: "system", content: prompt },
                 { role: "user", content: mensagem }
@@ -119,14 +125,19 @@ Responda APENAS com um JSON válido no formato exato:
 
 function fallbackNLP(mensagem) {
     const msg = mensagem.toLowerCase();
-    let intent = "unknown";
-    if (msg.includes("agendar") || msg.includes("marcar") || msg.includes("dia ") || msg.includes("às ")) intent = "appointment.create";
-    else if (msg.includes("cancelar")) intent = "appointment.cancel";
-    else if (msg.includes("preço") || msg.includes("valor")) intent = "treatment.price";
-    else if (msg.includes("humano") || msg.includes("atendente")) intent = "human.transfer";
-    else if (msg.includes("horário")) intent = "clinic.hours";
-    else if (msg.includes("histórico") || msg.includes("já feita")) intent = "appointment.history";
-    else if (msg === "oi" || msg === "olá") intent = "greeting";
+    let intent = "UNKNOWN";
+    
+    if (msg === "sim" || msg.includes("pode confirmar") || msg.includes("confirmo") || msg === "ok") intent = "CONFIRM_APPOINTMENT";
+    else if (msg === "não" || msg.includes("desisto")) intent = "REJECT_APPOINTMENT";
+    else if (msg.includes("mais") || msg.includes("outros horários") || msg.includes("tem outro")) intent = "REQUEST_MORE_TIMES";
+    else if (msg.includes("agendar") || msg.includes("marcar") || msg.includes("dia ") || msg.includes("às ")) intent = "BOOK_APPOINTMENT";
+    else if (msg.includes("cancelar consulta") || msg.includes("desmarcar")) intent = "CANCEL_APPOINTMENT";
+    else if (msg.includes("remarcar")) intent = "RESCHEDULE_APPOINTMENT";
+    else if (msg.includes("preço") || msg.includes("valor") || msg.includes("custa")) intent = "TREATMENT_PRICE";
+    else if (msg.includes("humano") || msg.includes("atendente") || msg.includes("pessoa")) intent = "HUMAN_TRANSFER";
+    else if (msg.includes("horário") || msg.includes("funcionamento")) intent = "CLINIC_HOURS";
+    else if (msg.includes("histórico") || msg.includes("já feita")) intent = "CHECK_PAST_APPOINTMENTS";
+    else if (msg === "oi" || msg === "olá" || msg === "boa tarde" || msg === "bom dia" || msg === "boa noite") intent = "GREETING";
     
     return { intent, confidence: 0.6, entities: {} };
 }
@@ -200,7 +211,7 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma fluida e conversacio
         ];
 
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-            model: "openai/gpt-oss-120b",
+            model: "llama3-70b-8192", // Modelo poderoso para geração de linguagem natural
             messages: messages,
             temperature: 0.2
         }, {

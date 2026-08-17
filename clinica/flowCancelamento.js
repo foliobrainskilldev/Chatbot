@@ -1,3 +1,4 @@
+// clinica/flowCancelamento.js
 const { prisma } = require('../db');
 const { format } = require('date-fns');
 const whatsappService = require('../whatsappService');
@@ -7,13 +8,26 @@ const aiService = require('../aiService');
 const { processarAgendamento } = require('./flowAgendamento');
 
 async function processarCancelamento(jid, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao = false, cliente, isNewPatient) {
-    let userState = stateMachine.get(senderNumber) || { step: 'CANCELAMENTO', intent: isRemarcacao ? 'appointment.reschedule' : 'appointment.cancel', entities: {} };
-    userState.step = 'CANCELAMENTO';
+    let userState = stateMachine.get(senderNumber) || { step: 'IDLE', entities: {} };
+    const intent = nlpResult.intent;
+    const entities = nlpResult.entities || {};
+
+    if (userState.step === 'IDLE') {
+        userState.step = 'CANCELAMENTO_AWAITING_SELECTION';
+    }
     
-    if (textoProcessado === '0' || textoProcessado === 'cmd_cancelar_fluxo') {
-        stateMachine.set(senderNumber, { step: 'IDLE', intent: null, entities: {} });
+    if (intent === 'REJECT_APPOINTMENT') {
+        stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
         await whatsappService.sendText(jid, 'Tudo bem, a operação foi interrompida. Como mais posso ajudar hoje?');
         return;
+    }
+
+    if (intent === 'CANCEL_APPOINTMENT' && entities.appointment_id) {
+        userState.resolvedAppointmentId = parseInt(entities.appointment_id);
+    }
+    if (intent === 'RESCHEDULE_APPOINTMENT' && entities.appointment_id) {
+        userState.resolvedAppointmentId = parseInt(entities.appointment_id);
+        isRemarcacao = true;
     }
 
     let agendamentos = await prisma.agendamento.findMany({
@@ -28,22 +42,18 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
         
         const resp = await aiService.gerarRespostaNatural(msgAusencia, [], contextoFake, configDb);
         await whatsappService.sendText(jid, resp);
-        stateMachine.set(senderNumber, { step: 'IDLE', intent: null, entities: {} });
+        stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
         return;
     }
 
-    if (userState.entities && agendamentos.length > 1) {
-        if (userState.entities.treatment) {
-            const search = userState.entities.treatment.toLowerCase();
-            const filtrados = agendamentos.filter(ag => ag.tratamento.nome.toLowerCase().includes(search));
-            if (filtrados.length > 0) agendamentos = filtrados;
-        }
+    if (entities.treatment && agendamentos.length > 1) {
+        const search = entities.treatment.toLowerCase();
+        const filtrados = agendamentos.filter(ag => ag.tratamento.nome.toLowerCase().includes(search));
+        if (filtrados.length > 0) agendamentos = filtrados;
     }
 
     if (!userState.resolvedAppointmentId) {
-        if (isInteractive && (textoProcessado.startsWith('canc_') || textoProcessado.startsWith('reag_'))) {
-            userState.resolvedAppointmentId = parseInt(textoProcessado.replace('canc_', '').replace('reag_', ''));
-        } else if (agendamentos.length === 1) {
+        if (agendamentos.length === 1) {
             userState.resolvedAppointmentId = agendamentos[0].id;
         } else {
             let opcoes = agendamentos.slice(0, 9).map(ag => ({ id: `canc_${ag.id}`, title: ag.tratamento.nome.substring(0, 24), description: format(ag.dataHora, 'dd/MM/yyyy HH:mm') }));
@@ -81,12 +91,13 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
             await whatsappService.sendText(jid, resp);
             
             stateMachine.set(senderNumber, { 
-                step: 'AGENDAMENTO', 
-                intent: 'appointment.create', 
+                step: 'AGENDAMENTO_COLLECTING_DATE', 
                 entities: { treatment: agAtualizado.tratamento.nome }, 
-                resolvedTreatment: agAtualizado.tratamento 
+                resolvedTreatment: agAtualizado.tratamento,
+                pageData: 0,
+                pageHora: 0
             });
-            return processarAgendamento(jid, null, senderNumber, stateMachine, { intent: 'appointment.create' }, false, configDb, cliente, isNewPatient);
+            return processarAgendamento(jid, null, senderNumber, stateMachine, { intent: 'UNKNOWN' }, false, configDb, cliente, isNewPatient);
         } else {
             await automationEngine.dispararAutomacoes('CONSULTA_CANCELADA', agAtualizado);
             await webhookService.dispararEvento('appointment.cancelled', agAtualizado);
@@ -94,11 +105,11 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
             const promptCancelamento = "Confirme gentilmente que a consulta foi cancelada na agenda. Diga que esperamos vê-lo no futuro. Vá direto ao ponto e NÃO use saudações.";
             const resp = await aiService.gerarRespostaNatural(promptCancelamento, [], contextoIA, configDb);
             await whatsappService.sendText(jid, resp);
-            stateMachine.set(senderNumber, { step: 'IDLE', intent: null, entities: {} });
+            stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
         }
     } catch (error) {
         await whatsappService.sendText(jid, "Tivemos uma dificuldade interna ao processar seu pedido. Tente novamente mais tarde.");
-        stateMachine.set(senderNumber, { step: 'IDLE', intent: null, entities: {} });
+        stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
     }
 }
 

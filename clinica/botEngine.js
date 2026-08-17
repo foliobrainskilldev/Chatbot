@@ -1,3 +1,4 @@
+// clinica/botEngine.js
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
 const aiService = require('../aiService');
@@ -141,31 +142,37 @@ async function processarMensagemEntrante(message) {
             historicoRaw.reverse();
             const historico = historicoRaw.map(h => ({ role: h.role, content: h.content }));
 
-            let nlpResult = { intent: "unknown", confidence: 1, entities: {} };
+            let nlpResult = { intent: "UNKNOWN", confidence: 1, entities: {} };
 
+            // Extração de Intenção: Trata Botões interativos ou envia para a NLP Processar o texto
             if (!isInteractive && textoProcessado) {
                 nlpResult = await aiService.analisarMensagemNLP(textoProcessado, historico, userState, configDb);
                 console.log(`🧠 [NLP] Intenção: ${nlpResult.intent} | Entidades extraídas:`, JSON.stringify(nlpResult.entities));
                 userState.entities = { ...userState.entities, ...nlpResult.entities };
-                stateMachine.set(senderNumber, userState);
             } else if (isInteractive) {
-                const agendamentoPrefixes = ['trat_', 'data_', 'hora_', 'ver_mais_', 'cmd_confirmar_reserva', 'cmd_cancelar_fluxo'];
-                if (agendamentoPrefixes.some(p => textoProcessado.startsWith(p)) || textoProcessado === 'cmd_agendar') {
-                    nlpResult.intent = 'appointment.create';
-                } else if (textoProcessado.startsWith('canc_') || textoProcessado.startsWith('reag_')) {
-                    nlpResult.intent = textoProcessado.startsWith('reag_') ? 'appointment.reschedule' : 'appointment.cancel';
-                }
+                if (textoProcessado === 'cmd_agendar') nlpResult.intent = 'BOOK_APPOINTMENT';
+                else if (textoProcessado.startsWith('trat_')) { nlpResult.intent = 'SELECT_TREATMENT'; nlpResult.entities.treatment_id = textoProcessado.replace('trat_', ''); }
+                else if (textoProcessado.startsWith('data_')) { nlpResult.intent = 'SELECT_DATE'; nlpResult.entities.date = textoProcessado.replace('data_', ''); }
+                else if (textoProcessado === 'ver_mais_data') nlpResult.intent = 'REQUEST_MORE_DATES';
+                else if (textoProcessado.startsWith('hora_')) { nlpResult.intent = 'SELECT_TIME'; nlpResult.entities.time = textoProcessado.replace('hora_', ''); }
+                else if (textoProcessado === 'ver_mais_hora') nlpResult.intent = 'REQUEST_MORE_TIMES';
+                else if (textoProcessado === 'cmd_confirmar_reserva') nlpResult.intent = 'CONFIRM_APPOINTMENT';
+                else if (textoProcessado === 'cmd_cancelar_fluxo') nlpResult.intent = 'REJECT_APPOINTMENT';
+                else if (textoProcessado.startsWith('canc_')) { nlpResult.intent = 'CANCEL_APPOINTMENT'; nlpResult.entities.appointment_id = textoProcessado.replace('canc_', ''); }
+                else if (textoProcessado.startsWith('reag_')) { nlpResult.intent = 'RESCHEDULE_APPOINTMENT'; nlpResult.entities.appointment_id = textoProcessado.replace('reag_', ''); }
+                
+                userState.entities = { ...userState.entities, ...nlpResult.entities };
             }
 
-            let activeIntent = nlpResult.intent || 'unknown';
+            let activeIntent = nlpResult.intent || 'UNKNOWN';
+            stateMachine.set(senderNumber, userState);
 
-            if (userState.step === 'AGENDAMENTO' && activeIntent === 'unknown') {
-                activeIntent = 'appointment.create';
-            }
+            // Roteador Mestre de Ações / State Machine
+            const bookingIntents = ['BOOK_APPOINTMENT', 'SELECT_TREATMENT', 'SELECT_DATE', 'SELECT_TIME', 'REQUEST_MORE_TIMES', 'REQUEST_MORE_DATES', 'CONFIRM_APPOINTMENT', 'REJECT_APPOINTMENT'];
+            const cancelIntents = ['CANCEL_APPOINTMENT', 'RESCHEDULE_APPOINTMENT'];
+            const queryIntents = ['TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST', 'CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS'];
 
-            const intentsDeDuvida = ['treatment.price', 'treatment.info', 'treatment.duration', 'treatment.list', 'clinic.hours', 'clinic.location', 'clinic.contact', 'clinic.payment_methods'];
-
-            if (activeIntent === 'human.transfer') {
+            if (activeIntent === 'HUMAN_TRANSFER') {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
                 const resp = configDb?.msgTransferencia || "Vou transferir você para nossa equipe agora mesmo. Só um instante.";
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
@@ -176,16 +183,12 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            if (intentsDeDuvida.includes(activeIntent)) {
-                const flowConsultas = require('./flowConsultas');
-                await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient);
-            } 
-            else if (activeIntent === 'appointment.create' || userState.step === 'AGENDAMENTO') {
+            if (bookingIntents.includes(activeIntent) || userState.step.startsWith('AGENDAMENTO_')) {
                 const flowAgendamento = require('./flowAgendamento');
                 await flowAgendamento.processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, isNewPatient);
             } 
-            else if (activeIntent === 'appointment.cancel' || activeIntent === 'appointment.reschedule' || userState.step === 'CANCELAMENTO') {
-                const isRemarcacao = activeIntent === 'appointment.reschedule';
+            else if (cancelIntents.includes(activeIntent) || userState.step.startsWith('CANCELAMENTO_')) {
+                const isRemarcacao = activeIntent === 'RESCHEDULE_APPOINTMENT';
                 const flowCancelamento = require('./flowCancelamento');
                 await flowCancelamento.processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao, cliente, isNewPatient);
             } 

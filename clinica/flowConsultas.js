@@ -1,3 +1,4 @@
+// clinica/flowConsultas.js
 const { prisma } = require('../db');
 const aiService = require('../aiService');
 const whatsappService = require('../whatsappService');
@@ -12,7 +13,7 @@ function formatarMoeda(valor, moeda) {
 
 async function processarDuvidas(jid, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient) {
     let dadosCrmContexto = {};
-    const intent = nlpResult?.intent || "unknown";
+    const intent = nlpResult?.intent || "UNKNOWN";
     const moedaGlobal = configDb?.moeda || 'MT'; 
 
     try {
@@ -38,7 +39,10 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         console.error("Aviso: Falha ao carregar histórico de consultas no fluxo de dúvidas.");
     }
 
-    if (intent === 'treatment.price' || intent === 'treatment.info' || intent === 'treatment.duration' || intent === 'treatment.faq' || intent === 'treatment.list') {
+    const treatmentIntents = ['TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST'];
+    const clinicIntents = ['CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS'];
+
+    if (treatmentIntents.includes(intent)) {
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' }});
         
         const mapearTratamento = (t) => ({
@@ -49,7 +53,7 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
             informacoes_adicionais: t.informacoesIA
         });
 
-        if (nlpResult?.entities?.treatment && intent !== 'treatment.list') {
+        if (nlpResult?.entities?.treatment && intent !== 'TREATMENT_LIST') {
             const search = nlpResult.entities.treatment.toLowerCase();
             const match = tratamentos.find(t => t.nome.toLowerCase().includes(search));
             if (match) {
@@ -60,7 +64,7 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         } else {
             dadosCrmContexto.tratamentos_cadastrados_no_catalogo = tratamentos.map(mapearTratamento);
         }
-    } else if (intent === 'clinic.hours' || intent === 'clinic.location' || intent === 'clinic.contact' || intent === 'clinic.payment_methods') {
+    } else if (clinicIntents.includes(intent)) {
         dadosCrmContexto.dados_operacionais = {
             horarios: configDb?.horarioFuncionamento || "Disponibilidade comercial.",
             endereco: configDb?.endereco || "Endereço principal da clínica.",
@@ -71,9 +75,9 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         dadosCrmContexto.dados_basicos = { nome_clinica: configDb?.nomeClinica || "Clínica", faq: configDb?.faq || "" };
     }
 
-    if (userState && userState.step === 'AGENDAMENTO') {
+    if (userState && userState.step.startsWith('AGENDAMENTO_')) {
         dadosCrmContexto.aviso_sistema_prioridade = "INSTRUÇÃO CRÍTICA: O paciente está atualmente no MEIO de um fluxo de agendamento que foi pausado para que você respondesse esta dúvida. Responda de forma orgânica e gentil e, OBRIGATORIAMENTE no final, pergunte se ele deseja retomar a escolha da data ou horário do agendamento.";
-    } else if (intent === 'treatment.price' || intent === 'treatment.info') {
+    } else if (intent === 'TREATMENT_PRICE' || intent === 'TREATMENT_INFO') {
         dadosCrmContexto.aviso_sistema_prioridade = "DICA: Após responder a dúvida de forma cordial, pergunte casualmente se o paciente deseja verificar os horários disponíveis para esse procedimento.";
     }
 

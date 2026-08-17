@@ -1,4 +1,5 @@
-const { addMinutes, format, startOfDay, endOfDay, addDays, getDay } = require('date-fns');
+// dateUtils.js
+const { addMinutes, format, startOfDay, endOfDay, addDays, getDay, parse } = require('date-fns');
 const { prisma } = require('./db');
 
 function obterDiasTrabalhoGlobais() {
@@ -32,7 +33,7 @@ async function getProximosDiasUteis(qtdDias = 7) {
     return dias;
 }
 
-async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, profissionalSaudeId = null) {
+async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, profissionalSaudeId = null, nicho = 'CLINICA') {
     const configDb = await prisma.configSistema.findFirst();
     const fusoOffset = configDb?.fusoHorario === 'America/Sao_Paulo' ? '-03:00' : '+02:00';
     const clinicTZ = configDb?.fusoHorario || 'Africa/Maputo';
@@ -42,13 +43,18 @@ async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, prof
 
     if (profissionalSaudeId) {
         try {
-            const medico = await prisma.profissionalSaude.findUnique({ where: { id: parseInt(profissionalSaudeId) } });
-            if (medico && medico.horaInicioTrabalho) horaAbertura = parseInt(medico.horaInicioTrabalho);
-            if (medico && medico.horaFimTrabalho) horaFecho = parseInt(medico.horaFimTrabalho);
-        } catch (e) { console.error("Aviso: Configuração de hora do médico não encontrada."); }
+            if (nicho === 'CLINICA') {
+                const medico = await prisma.profissionalSaude.findUnique({ where: { id: parseInt(profissionalSaudeId) } });
+                if (medico && medico.horaInicioTrabalho) horaAbertura = parseInt(medico.horaInicioTrabalho);
+                if (medico && medico.horaFimTrabalho) horaFecho = parseInt(medico.horaFimTrabalho);
+            } else {
+                const barbeiro = await prisma.barbeiro.findUnique({ where: { id: parseInt(profissionalSaudeId) } });
+                // Aqui podemos adicionar lógica específica de horas para barbeiros no futuro
+            }
+        } catch (e) { console.error("Aviso: Configuração de hora do profissional não encontrada."); }
     }
 
-    // CORREÇÃO: Cria a hora exata focada no fuso da clínica
+    // O NLP extrai a data puramente como "DD/MM/YYYY". Montamos a data cravada no fuso.
     const [dia, mes, ano] = dataString.split('/');
     const hrAStr = horaAbertura.toString().padStart(2, '0');
     const hrFStr = horaFecho.toString().padStart(2, '0');
@@ -71,14 +77,17 @@ async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, prof
             gte: new Date(`${ano}-${mes}-${dia}T00:00:00${fusoOffset}`), 
             lte: new Date(`${ano}-${mes}-${dia}T23:59:59${fusoOffset}`) 
         },
-        status: { in: ['AGENDADO', 'REMARCADO'] }
+        status: { in: ['AGENDADO', 'REMARCADO', 'CONFIRMADA'] }
     };
     
-    if (profissionalSaudeId) whereClause.profissionalSaudeId = parseInt(profissionalSaudeId);
+    if (profissionalSaudeId) {
+        if (nicho === 'CLINICA') whereClause.profissionalSaudeId = parseInt(profissionalSaudeId);
+        else whereClause.barbeiroId = parseInt(profissionalSaudeId);
+    }
 
     const agendamentosDia = await prisma.agendamento.findMany({
         where: whereClause,
-        include: { tratamento: true }
+        include: { tratamento: true, servico: true }
     });
 
     const horariosLivres = [];
@@ -90,9 +99,10 @@ async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, prof
 
         for (let ag of agendamentosDia) {
             const inicioAg = new Date(ag.dataHora);
-            const duracaoDb = ag.tratamento ? ag.tratamento.duracaoMin : 30;
+            const duracaoDb = ag.tratamento ? ag.tratamento.duracaoMin : (ag.servico ? ag.servico.duracaoMin : 30);
             const fimAg = new Date(inicioAg.getTime() + duracaoDb * 60000);
             
+            // Verifica sobreposição estrita
             if ((horarioAtual >= inicioAg && horarioAtual < fimAg) || 
                 (fimHorarioAtual > inicioAg && fimHorarioAtual <= fimAg) ||
                 (horarioAtual <= inicioAg && fimHorarioAtual >= fimAg)) {
