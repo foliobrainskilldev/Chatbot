@@ -78,6 +78,7 @@ Se mencionar horas ("10h", "às três da tarde"), converta a entidade 'time' EXA
 MODIFICADORES DE TEMPO (CRÍTICO):
 Se o paciente disser "depois das 10", defina "time": "10:00" e "time_modifier": "after".
 Se o paciente disser "antes das 12h", defina o "time" como a hora limite e "time_modifier": "before".
+Se o paciente pedir mais opções, "tem outros?", "quais mais?", ou "mostra mais", defina "time_modifier": "more".
 Se for uma hora exata, defina "time_modifier": "exact".
 
 Estado atual da conversa (Contexto): ${JSON.stringify(userState || {})}
@@ -90,7 +91,7 @@ Responda APENAS com um JSON válido no formato exato:
     "treatment": "...",
     "date": "DD/MM/YYYY",
     "time": "HH:mm",
-    "time_modifier": "after|before|exact"
+    "time_modifier": "after|before|exact|more"
   }
 }
 `;
@@ -201,7 +202,7 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma fluida e conversacio
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
             model: "openai/gpt-oss-120b",
             messages: messages,
-            temperature: 0.2 // Reduzido para diminuir a criatividade excessiva (alucinação)
+            temperature: 0.2
         }, {
             headers: { 'Authorization': `Bearer ${GROQ_API_KEY}` }
         });

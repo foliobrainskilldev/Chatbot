@@ -36,6 +36,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         return;
     }
     
+    // 1. RESOLUÇÃO DE TRATAMENTO
     if (!userState.resolvedTreatment) {
         if (isInteractive && textoProcessado.startsWith('trat_')) {
             const idTrat = parseInt(textoProcessado.replace('trat_', ''));
@@ -71,14 +72,25 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
+    // 2. RESOLUÇÃO DE DATA
     if (!userState.resolvedDate) {
         const diasValidos = await getProximosDiasUteis(14); 
-        
+        let pediuMaisDatas = textoProcessado === 'ver_mais_data' || (userState.entities.time_modifier === 'more' && !userState.resolvedDate);
+
         if (isInteractive && textoProcessado.startsWith('data_')) {
             const dataEscolhida = textoProcessado.replace('data_', '');
             if (diasValidos.includes(dataEscolhida)) userState.resolvedDate = dataEscolhida;
             else await whatsappService.sendText(jid, 'Essa data já não está disponível em nossa agenda. Vamos escolher outra?');
         } 
+        else if (pediuMaisDatas) {
+            const nextStart = (userState.pageData + 1) * 2;
+            if (nextStart >= diasValidos.length) {
+                await whatsappService.sendText(jid, 'Essas são todas as datas disponíveis na nossa agenda de curto prazo no momento.');
+            } else {
+                userState.pageData++;
+            }
+            userState.entities.time_modifier = null;
+        }
         else if (userState.entities.date) {
             const matchDia = diasValidos.find(d => d === userState.entities.date || d.includes(userState.entities.date));
             if (matchDia) {
@@ -91,8 +103,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
         
         if (!userState.resolvedDate) {
-            if (textoProcessado === 'ver_mais_data') userState.pageData++;
-            
             const start = userState.pageData * 2;
             const chunk = diasValidos.slice(start, start + 2);
             const hasMore = start + 2 < diasValidos.length;
@@ -115,8 +125,10 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
+    // 3. RESOLUÇÃO DE HORA E PREFERÊNCIAS (Tratamento Anti-Loop Orgânico)
     if (!userState.resolvedTime) {
         const horasLivres = await getHorariosDisponiveis(userState.resolvedDate, userState.resolvedTreatment.duracaoMin, null);
+        let pediuMaisHoras = textoProcessado === 'ver_mais_hora' || (userState.entities.time_modifier === 'more' && userState.resolvedDate);
         
         if (horasLivres.length === 0) {
             userState.resolvedDate = null; 
@@ -130,6 +142,15 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
             if (horasLivres.includes(horaEscolhida)) userState.resolvedTime = horaEscolhida;
             else await whatsappService.sendText(jid, 'Ops, alguém acabou de ocupar esse horário. Vamos ver outro.');
         } 
+        else if (pediuMaisHoras) {
+            const nextStart = (userState.pageHora + 1) * 2;
+            if (nextStart >= horasLivres.length) {
+                await whatsappService.sendText(jid, `Esses são todos os horários que temos livres para o dia ${userState.resolvedDate}. O último da lista é às ${horasLivres[horasLivres.length - 1]}.`);
+            } else {
+                userState.pageHora++;
+            }
+            userState.entities.time_modifier = null;
+        }
         else if (userState.entities.time) {
             const reqTime = userState.entities.time;
             const modifier = userState.entities.time_modifier || 'exact';
@@ -155,8 +176,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
         
         if (!userState.resolvedTime) {
-            if (textoProcessado === 'ver_mais_hora') userState.pageHora++;
-            
             const start = userState.pageHora * 2;
             const chunk = horasLivres.slice(start, start + 2);
             const hasMore = start + 2 < horasLivres.length;
@@ -171,7 +190,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
 
             const textoApresentacao = userState.pageHora === 0
                 ? `Encontrei estes horários livres para o dia ${userState.resolvedDate}:`
-                : `Ainda no dia ${userState.resolvedDate}, também tenho estas opções:`;
+                : `Claro. Além desses, também tenho:`;
 
             await whatsappService.sendInteractiveMenu(jid, textoApresentacao, optHoras);
             stateMachine.set(senderNumber, userState);
@@ -179,6 +198,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
+    // 4. CONFIRMAÇÃO HUMANIZADA
     if (!userState.confirmed) {
         if (isInteractive && textoProcessado === 'cmd_confirmar_reserva') {
             userState.confirmed = true;
@@ -193,6 +213,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
+    // 5. EFETIVAÇÃO
     const [dia, mes, ano] = userState.resolvedDate.split('/');
     const [hora, min] = userState.resolvedTime.split(':');
     const fusoOffset = configDb?.fusoHorario === 'America/Sao_Paulo' ? '-03:00' : '+02:00';
