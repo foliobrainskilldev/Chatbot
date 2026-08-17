@@ -1,6 +1,6 @@
-const { prisma } = require('../db');
-const aiService = require('../aiService');
-const whatsappService = require('../whatsappService');
+const { prisma } = require('../../db');
+const aiService = require('../../aiService');
+const whatsappService = require('../../whatsappService');
 
 function formatarMoeda(valor, moeda) {
     if (!valor) return '';
@@ -29,10 +29,10 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
                 dataHora: ag.dataHora,
                 status: ag.status,
                 tratamento: ag.tratamento?.nome,
-                medico: ag.profissionalSaude?.nome || "Plantonista"
+                medico: ag.profissionalSaude?.nome || "Equipe Médica"
             }));
         } else {
-            dadosCrmContexto.historico_consultas_paciente = "O paciente não possui nenhuma consulta (futura ou passada) no sistema.";
+            dadosCrmContexto.historico_consultas_paciente = "Este paciente é novo ou não possui nenhuma consulta lançada no sistema.";
         }
     } catch (e) {
         console.error("Aviso: Falha ao carregar histórico de consultas no fluxo de dúvidas.");
@@ -41,12 +41,10 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
     if (intent === 'treatment.price' || intent === 'treatment.info' || intent === 'treatment.duration' || intent === 'treatment.faq' || intent === 'treatment.list') {
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' }});
         
-        // Removemos o campo numérico puro "preco_sistema" para não confundir a IA.
-        // Entregamos apenas o preço formatado inquebrável com a sigla correta.
         const mapearTratamento = (t) => ({
             nome: t.nome,
             categoria: t.categoria,
-            preco: t.preco ? formatarMoeda(t.preco, moedaGlobal) : 'Sob Consulta',
+            preco: t.preco ? formatarMoeda(t.preco, moedaGlobal) : 'Sob Avaliação',
             tipoPreco: t.tipoPreco,
             informacoes_adicionais: t.informacoesIA
         });
@@ -64,17 +62,20 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         }
     } else if (intent === 'clinic.hours' || intent === 'clinic.location' || intent === 'clinic.contact' || intent === 'clinic.payment_methods') {
         dadosCrmContexto.dados_operacionais = {
-            horarios: configDb?.horarioFuncionamento || "Segunda a Sexta",
-            endereco: configDb?.endereco || "Endereço cadastrado",
+            horarios: configDb?.horarioFuncionamento || "Disponibilidade comercial.",
+            endereco: configDb?.endereco || "Endereço principal da clínica.",
             telefone: configDb?.telefone || "",
             faq: configDb?.faq || ""
         };
     } else {
+        // Conversação orgânica (unknown/greeting/saudação livre)
         dadosCrmContexto.dados_basicos = { nome_clinica: configDb?.nomeClinica || "Clínica", faq: configDb?.faq || "" };
     }
 
     if (userState && userState.step === 'AGENDAMENTO') {
-        dadosCrmContexto.aviso_sistema_prioridade = "O paciente está atualmente no meio de um fluxo de agendamento que foi pausado para que você respondesse esta dúvida. Responda a dúvida baseada no catálogo e, obrigatoriamente no final, convide-o a continuar com o agendamento enviando a data desejada.";
+        dadosCrmContexto.aviso_sistema_prioridade = "INSTRUÇÃO CRÍTICA: O paciente está atualmente no MEIO de um fluxo de agendamento que foi pausado para que você respondesse esta dúvida. Responda de forma orgânica e gentil e, OBRIGATORIAMENTE no final, pergunte se ele deseja retomar a escolha da data ou horário do agendamento.";
+    } else if (intent === 'treatment.price' || intent === 'treatment.info') {
+        dadosCrmContexto.aviso_sistema_prioridade = "DICA: Após responder a dúvida de forma cordial, pergunte casualmente se o paciente deseja verificar os horários disponíveis para esse procedimento.";
     }
 
     const contextoIA = {

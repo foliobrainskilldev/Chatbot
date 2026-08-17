@@ -76,6 +76,11 @@ Hoje é: ${diaDeHoje}.
 Se o usuário mencionar dias relativos ("amanhã", "sexta", "dia 16"), converta a entidade 'date' EXATAMENTE para o formato "DD/MM/YYYY" usando como base a data de hoje acima. Ex: "15/08/2026".
 Se mencionar horas ("10h", "às três da tarde"), converta a entidade 'time' EXATAMENTE para "HH:mm". Ex: "10:00", "15:00".
 
+MODIFICADORES DE TEMPO (CRÍTICO):
+Se o paciente disser "depois das 10" ou "a partir das 15h", defina "time": "10:00" e "time_modifier": "after".
+Se o paciente disser "antes das 12h" ou "de manhã", defina o "time" como a hora limite e "time_modifier": "before".
+Se for uma hora exata, defina "time_modifier": "exact".
+
 Estado atual da conversa (Contexto): ${JSON.stringify(userState || {})}
 
 Responda APENAS com um JSON válido no formato exato:
@@ -85,7 +90,8 @@ Responda APENAS com um JSON válido no formato exato:
   "entities": {
     "treatment": "...",
     "date": "DD/MM/YYYY",
-    "time": "HH:mm"
+    "time": "HH:mm",
+    "time_modifier": "after|before|exact"
   }
 }
 `;
@@ -151,34 +157,24 @@ Estilo: ${configDb?.estiloComunicacao || 'Respostas curtas e objetivas'}.
 Formalidade: ${configDb?.formalidade || 'Sempre tratar por Senhor/Senhora'}.
 
 A MOEDA OFICIAL E ÚNICA DA CLÍNICA É: ${moedaGlobal}.
-REGRA ABSOLUTA DE MOEDA: TODOS os valores financeiros, preços e orçamentos mencionados por você DEVEM ser expressos EXCLUSIVAMENTE nesta moeda (ex: ${moedaGlobal} X.XXX,XX ou X.XXX,XX ${moedaGlobal}). 
-JAMAIS converta, alucine ou utilize Reais (R$), Dólares ($) ou qualquer outra moeda, mesmo que a dúvida do paciente contenha outra moeda ou que nas informações adicionais do CRM haja algum erro de digitação. Assuma SEMPRE que todo e qualquer valor numérico fornecido no contexto é na moeda ${moedaGlobal}.
+REGRA ABSOLUTA DE MOEDA: TODOS os valores financeiros, preços e orçamentos mencionados por você DEVEM ser expressos EXCLUSIVAMENTE nesta moeda. JAMAIS converta para Reais ou Dólares caso essa não seja a moeda oficial.
 
 REGRAS DE CONVERSAÇÃO E SAUDAÇÃO:
 ${isOngoing 
-    ? "- Vocês já estão no meio de uma conversa. NUNCA inicie sua resposta com saudações (como 'Bom dia', 'Boa tarde', 'Boa noite', 'Olá', 'Tudo bem?'). Vá DIRETAMENTE ao ponto." 
-    : `- Esta é a primeira mensagem do paciente. Inicie com uma saudação educada baseada no horário local (${dataHoraAtual}): "Bom dia" (00h-11h59), "Boa tarde" (12h-17h59) ou "Boa noite" (18h-23h59).`
+    ? "- Vocês já estão no meio de uma conversa. NUNCA inicie sua resposta com saudações. Vá DIRETAMENTE ao ponto." 
+    : `- Esta é a primeira mensagem do paciente. Inicie com uma saudação baseada no horário local (${dataHoraAtual}).`
 }
-- Não utilize o nome do paciente em todas as mensagens. Evite repetir o nome em mensagens consecutivas para não soar artificial ou robótico.
+- Evite repetir informações que o paciente já sabe. Seja fluido e humano.
 
 INFORMAÇÕES DO PACIENTE:
 - Nome: ${contexto.paciente_nome || 'Paciente'}
-- Tipo: ${contexto.paciente_novo ? 'Novo Paciente (Dê as boas vindas apenas se for a primeira mensagem)' : 'Paciente Recorrente'}.
 
-REGRAS OBRIGATÓRIAS DE CONTEXTO:
-1. Você recebe abaixo os DADOS DE CONTEXTO extraídos do CRM. Use EXCLUSIVAMENTE estes dados para compor sua resposta.
-2. NUNCA diga que não tem acesso a consultas ou preços se a informação estiver no contexto. 
-3. Se a informação não constar no contexto, ofereça transferência para a recepção.
-
-DADOS DE CONTEXTO DO CRM (USE ESTES DADOS PARA RESPONDER):
+DADOS DE CONTEXTO DO CRM:
 ${JSON.stringify(contexto.dados_crm || {}, null, 2)}
 
-Sua tarefa: Leia a mensagem do usuário e responda de forma natural e conversacional, aplicando rigorosamente as regras de moeda (${moedaGlobal}), saudações, restrição de uso de nome e do contexto informado.
+Sua tarefa: Leia a mensagem do usuário e responda de forma fluida, como se estivesse teclando no WhatsApp organicamente.
 `;
 
-        // ========================================================================
-        // NORMALIZAÇÃO DE HISTÓRICO PARA EVITAR ERROS HTTP 400 
-        // ========================================================================
         const rawMessages = [
             ...(historico || []),
             { role: "user", content: mensagem }
@@ -190,12 +186,9 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma natural e conversaci
         for (const msg of rawMessages) {
             const currentRole = msg.role;
             const currentContent = msg.content || "";
-            
-            // Ignora mensagens completamente vazias
             if (currentContent.trim() === "") continue;
 
             if (currentRole === lastRole) {
-                // Se for a mesma role seguida (Ex: Duas mensagens do user seguidas), fundimos em uma só
                 mergedMessages[mergedMessages.length - 1].content += `\n${currentContent}`;
             } else {
                 mergedMessages.push({ role: currentRole, content: currentContent });
@@ -203,7 +196,6 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma natural e conversaci
             }
         }
 
-        // Os LLMs obrigam que o primeiro diálogo após o system prompt seja do usuário.
         if (mergedMessages.length > 0 && mergedMessages[0].role === 'assistant') {
             mergedMessages.shift(); 
         }

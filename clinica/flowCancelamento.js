@@ -1,18 +1,18 @@
-const { prisma } = require('../db');
+const { prisma } = require('../../db');
 const { format } = require('date-fns');
-const whatsappService = require('../whatsappService');
-const automationEngine = require('../services/automationEngine');
-const webhookService = require('../services/webhookService');
-const aiService = require('../aiService');
+const whatsappService = require('../../whatsappService');
+const automationEngine = require('../../services/automationEngine');
+const webhookService = require('../../services/webhookService');
+const aiService = require('../../aiService');
 const { processarAgendamento } = require('./flowAgendamento');
 
 async function processarCancelamento(jid, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao = false, cliente, isNewPatient) {
     let userState = stateMachine.get(senderNumber) || { step: 'CANCELAMENTO', intent: isRemarcacao ? 'appointment.reschedule' : 'appointment.cancel', entities: {} };
     userState.step = 'CANCELAMENTO';
     
-    if (textoProcessado === '0') {
+    if (textoProcessado === '0' || textoProcessado === 'cmd_cancelar_fluxo') {
         stateMachine.set(senderNumber, { step: 'IDLE', intent: null, entities: {} });
-        await whatsappService.sendText(jid, 'A operação de cancelamento/remarcação foi abortada.');
+        await whatsappService.sendText(jid, 'Tudo bem, a operação foi interrompida. Como mais posso ajudar hoje?');
         return;
     }
 
@@ -23,8 +23,8 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
     });
 
     if (agendamentos.length === 0) {
-        const contextoFake = { paciente_nome: cliente.nome, paciente_novo: isNewPatient, dados_crm: { aviso: "O paciente não possui consultas futuras pendentes." } };
-        const msgAusencia = "Avise gentilmente o paciente que ele não possui consultas futuras pendentes cadastradas no sistema. NUNCA use saudações como 'Bom dia/Olá', vá direto ao ponto e não repita o nome do paciente para não soar artificial.";
+        const contextoFake = { paciente_nome: cliente.nome, paciente_novo: isNewPatient, dados_crm: { aviso: "O paciente não possui consultas futuras pendentes no sistema." } };
+        const msgAusencia = "Alerte de forma leve que o paciente não tem consultas marcadas em aberto na agenda. NUNCA use saudações, vá direto ao ponto.";
         
         const resp = await aiService.gerarRespostaNatural(msgAusencia, [], contextoFake, configDb);
         await whatsappService.sendText(jid, resp);
@@ -41,14 +41,19 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
     }
 
     if (!userState.resolvedAppointmentId) {
-        if (isInteractive && textoProcessado.startsWith('canc_')) {
-            userState.resolvedAppointmentId = parseInt(textoProcessado.replace('canc_', ''));
+        if (isInteractive && (textoProcessado.startsWith('canc_') || textoProcessado.startsWith('reag_'))) {
+            userState.resolvedAppointmentId = parseInt(textoProcessado.replace('canc_', '').replace('reag_', ''));
         } else if (agendamentos.length === 1) {
             userState.resolvedAppointmentId = agendamentos[0].id;
         } else {
+            // Garantindo limite de opções via Menu Lista (Menu List suporta até 10, diferente de Botão que é max 3)
             let opcoes = agendamentos.slice(0, 9).map(ag => ({ id: `canc_${ag.id}`, title: ag.tratamento.nome.substring(0, 24), description: format(ag.dataHora, 'dd/MM/yyyy HH:mm') }));
-            opcoes.push({ id: '0', title: 'Voltar ao Menu' });
-            const textoMenu = isRemarcacao ? "Encontrei estas consultas ativas. Qual delas você precisa reagendar?" : "Encontrei estas consultas. Qual delas deseja cancelar?";
+            opcoes.push({ id: 'cmd_cancelar_fluxo', title: 'Voltar / Desistir' });
+            
+            const textoMenu = isRemarcacao 
+                ? "Vi que você tem estas consultas ativas. Qual delas você gostaria de reagendar?" 
+                : "Encontrei estas consultas. Qual delas você deseja cancelar?";
+            
             await whatsappService.sendInteractiveMenu(jid, textoMenu, opcoes);
             stateMachine.set(senderNumber, userState);
             return;
@@ -72,7 +77,7 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
             await automationEngine.dispararAutomacoes('CONSULTA_REMARCADA', agAtualizado);
             await webhookService.dispararEvento('appointment.updated', agAtualizado);
             
-            const promptRemarcacao = "Avise que a consulta antiga foi suspensa e que agora vocês vão escolher juntos um novo horário. IMPORTANTE: Vá direto ao ponto, NÃO use saudações iniciais (Bom dia/Olá) e evite repetir o nome do paciente.";
+            const promptRemarcacao = "Avise o paciente que a consulta antiga foi suspensa. E diga que agora vocês vão escolher um novo horário juntos. NUNCA use saudações. Seja direto e amigável.";
             const resp = await aiService.gerarRespostaNatural(promptRemarcacao, [], contextoIA, configDb);
             await whatsappService.sendText(jid, resp);
             
@@ -82,12 +87,13 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
                 entities: { treatment: agAtualizado.tratamento.nome }, 
                 resolvedTreatment: agAtualizado.tratamento 
             });
+            // Entra silenciosamente de volta no fluxo de agendamento passando o novo state
             return processarAgendamento(jid, null, senderNumber, stateMachine, { intent: 'appointment.create' }, false, configDb, cliente, isNewPatient);
         } else {
             await automationEngine.dispararAutomacoes('CONSULTA_CANCELADA', agAtualizado);
             await webhookService.dispararEvento('appointment.cancelled', agAtualizado);
             
-            const promptCancelamento = "Confirme que a consulta foi efetivamente cancelada na agenda do sistema baseando-se no JSON do CRM. IMPORTANTE: Vá direto ao ponto, NÃO use saudações iniciais (Bom dia/Olá) e evite repetir o nome do paciente.";
+            const promptCancelamento = "Confirme gentilmente que a consulta foi cancelada na agenda. Diga que esperamos vê-lo no futuro. Vá direto ao ponto e NÃO use saudações (Bom dia).";
             const resp = await aiService.gerarRespostaNatural(promptCancelamento, [], contextoIA, configDb);
             await whatsappService.sendText(jid, resp);
             stateMachine.set(senderNumber, { step: 'IDLE', intent: null, entities: {} });
