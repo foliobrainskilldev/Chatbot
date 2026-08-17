@@ -4,7 +4,6 @@ const aiService = require('../aiService');
 const webhookService = require('../services/webhookService');
 const automationEngine = require('../services/automationEngine');
 const supabaseService = require('../services/supabaseService');
-
 const demoService = require('../services/demoService');
 
 const stateMachine = new Map();
@@ -123,7 +122,6 @@ async function processarMensagemEntrante(message) {
             });
             const lastBotMsg = historicoRaw.find(h => h.role === 'assistant');
             
-            // Avaliação CSAT
             if (lastBotMsg && lastBotMsg.content.includes('(Pesquisa CSAT enviada)')) {
                 const nota = parseInt(textoProcessado.trim());
                 if (!isNaN(nota) && nota >= 1 && nota <= 5) {
@@ -145,7 +143,6 @@ async function processarMensagemEntrante(message) {
 
             let nlpResult = { intent: "unknown", confidence: 1, entities: {} };
 
-            // Extração de Intenção
             if (!isInteractive && textoProcessado) {
                 nlpResult = await aiService.analisarMensagemNLP(textoProcessado, historico, userState, configDb);
                 console.log(`🧠 [NLP] Intenção: ${nlpResult.intent} | Entidades extraídas:`, JSON.stringify(nlpResult.entities));
@@ -162,7 +159,6 @@ async function processarMensagemEntrante(message) {
 
             let activeIntent = nlpResult.intent || 'unknown';
 
-            // Se o usuário está no fluxo de agendamento e a intenção foi unknown, vamos assumir que ele está digitando respostas fluidas de data/hora
             if (userState.step === 'AGENDAMENTO' && activeIntent === 'unknown') {
                 activeIntent = 'appointment.create';
             }
@@ -180,7 +176,6 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // Roteamento
             if (intentsDeDuvida.includes(activeIntent)) {
                 const flowConsultas = require('./flowConsultas');
                 await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient);
@@ -195,7 +190,6 @@ async function processarMensagemEntrante(message) {
                 await flowCancelamento.processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao, cliente, isNewPatient);
             } 
             else {
-                // Fluxo padrão para conversação livre
                 const flowConsultas = require('./flowConsultas');
                 await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient);
             }

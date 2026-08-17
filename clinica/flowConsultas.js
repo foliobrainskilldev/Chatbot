@@ -68,7 +68,6 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
             faq: configDb?.faq || ""
         };
     } else {
-        // Conversação orgânica (unknown/greeting/saudação livre)
         dadosCrmContexto.dados_basicos = { nome_clinica: configDb?.nomeClinica || "Clínica", faq: configDb?.faq || "" };
     }
 

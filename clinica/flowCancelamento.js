@@ -46,7 +46,6 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
         } else if (agendamentos.length === 1) {
             userState.resolvedAppointmentId = agendamentos[0].id;
         } else {
-            // Garantindo limite de opções via Menu Lista (Menu List suporta até 10, diferente de Botão que é max 3)
             let opcoes = agendamentos.slice(0, 9).map(ag => ({ id: `canc_${ag.id}`, title: ag.tratamento.nome.substring(0, 24), description: format(ag.dataHora, 'dd/MM/yyyy HH:mm') }));
             opcoes.push({ id: 'cmd_cancelar_fluxo', title: 'Voltar / Desistir' });
             
@@ -87,13 +86,12 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
                 entities: { treatment: agAtualizado.tratamento.nome }, 
                 resolvedTreatment: agAtualizado.tratamento 
             });
-            // Entra silenciosamente de volta no fluxo de agendamento passando o novo state
             return processarAgendamento(jid, null, senderNumber, stateMachine, { intent: 'appointment.create' }, false, configDb, cliente, isNewPatient);
         } else {
             await automationEngine.dispararAutomacoes('CONSULTA_CANCELADA', agAtualizado);
             await webhookService.dispararEvento('appointment.cancelled', agAtualizado);
             
-            const promptCancelamento = "Confirme gentilmente que a consulta foi cancelada na agenda. Diga que esperamos vê-lo no futuro. Vá direto ao ponto e NÃO use saudações (Bom dia).";
+            const promptCancelamento = "Confirme gentilmente que a consulta foi cancelada na agenda. Diga que esperamos vê-lo no futuro. Vá direto ao ponto e NÃO use saudações.";
             const resp = await aiService.gerarRespostaNatural(promptCancelamento, [], contextoIA, configDb);
             await whatsappService.sendText(jid, resp);
             stateMachine.set(senderNumber, { step: 'IDLE', intent: null, entities: {} });

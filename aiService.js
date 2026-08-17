@@ -42,7 +42,6 @@ async function analisarMensagemNLP(mensagem, historico, userState, configDb) {
         return fallbackNLP(mensagem);
     }
 
-    // Calcula a data local baseado no fuso horário configurado na clínica
     const fusoHorario = configDb?.fusoHorario || 'Africa/Maputo';
     const formatterDia = new Intl.DateTimeFormat('pt-BR', { timeZone: fusoHorario, weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit' });
     const diaDeHoje = formatterDia.format(new Date());
@@ -73,12 +72,12 @@ Intenções permitidas:
 
 INFORMAÇÃO TEMPORAL IMPORTANTE E FUSO HORÁRIO LOCAL:
 Hoje é: ${diaDeHoje}.
-Se o usuário mencionar dias relativos ("amanhã", "sexta", "dia 16"), converta a entidade 'date' EXATAMENTE para o formato "DD/MM/YYYY" usando como base a data de hoje acima. Ex: "15/08/2026".
-Se mencionar horas ("10h", "às três da tarde"), converta a entidade 'time' EXATAMENTE para "HH:mm". Ex: "10:00", "15:00".
+Se o usuário mencionar dias relativos ("amanhã", "sexta", "dia 16"), converta a entidade 'date' EXATAMENTE para o formato "DD/MM/YYYY" usando como base a data de hoje acima.
+Se mencionar horas ("10h", "às três da tarde"), converta a entidade 'time' EXATAMENTE para "HH:mm".
 
 MODIFICADORES DE TEMPO (CRÍTICO):
-Se o paciente disser "depois das 10" ou "a partir das 15h", defina "time": "10:00" e "time_modifier": "after".
-Se o paciente disser "antes das 12h" ou "de manhã", defina o "time" como a hora limite e "time_modifier": "before".
+Se o paciente disser "depois das 10", defina "time": "10:00" e "time_modifier": "after".
+Se o paciente disser "antes das 12h", defina o "time" como a hora limite e "time_modifier": "before".
 Se for uma hora exata, defina "time_modifier": "exact".
 
 Estado atual da conversa (Contexto): ${JSON.stringify(userState || {})}
@@ -146,33 +145,29 @@ async function gerarRespostaNatural(mensagem, historico, contexto, configDb) {
         hour: '2-digit', minute: '2-digit', second: '2-digit'
     });
     const dataHoraAtual = formatter.format(new Date());
-
     const isOngoing = historico && historico.length > 0;
 
     try {
         const prompt = `
 Você é ${configDb?.nomeAssistente || 'o assistente virtual'} da clínica ${configDb?.nomeClinica || 'HealthCRM'}.
 Tom de voz: ${configDb?.tomDeVoz || 'Profissional e acolhedor'}.
-Estilo: ${configDb?.estiloComunicacao || 'Respostas curtas e objetivas'}.
-Formalidade: ${configDb?.formalidade || 'Sempre tratar por Senhor/Senhora'}.
 
-A MOEDA OFICIAL E ÚNICA DA CLÍNICA É: ${moedaGlobal}.
-REGRA ABSOLUTA DE MOEDA: TODOS os valores financeiros, preços e orçamentos mencionados por você DEVEM ser expressos EXCLUSIVAMENTE nesta moeda. JAMAIS converta para Reais ou Dólares caso essa não seja a moeda oficial.
+PROTEÇÃO CONTRA ALUCINAÇÃO (REGRA DE OURO - CRÍTICO):
+Você está ESTRITAMENTE PROIBIDO de inventar, supor ou criar horários, vagas disponíveis, preços de tratamentos ou condições de pagamento.
+Se o usuário perguntar preços, horários ou formas de pagamento, e essa informação NÃO estiver explícita no bloco "DADOS DE CONTEXTO DO CRM", você NÃO PODE inventar números. JAMAIS invente que há vaga "às 09:00" ou que um serviço custa "120 MT". Responda de forma orgânica que precisa consultar o sistema ou a recepção.
 
-REGRAS DE CONVERSAÇÃO E SAUDAÇÃO:
-${isOngoing 
-    ? "- Vocês já estão no meio de uma conversa. NUNCA inicie sua resposta com saudações. Vá DIRETAMENTE ao ponto." 
-    : `- Esta é a primeira mensagem do paciente. Inicie com uma saudação baseada no horário local (${dataHoraAtual}).`
-}
-- Evite repetir informações que o paciente já sabe. Seja fluido e humano.
+REGRAS DE MOEDA E SAUDAÇÃO:
+- A moeda da clínica é ${moedaGlobal}. Nunca fale em Reais ou Dólares.
+${isOngoing ? "- NUNCA inicie sua resposta com saudações (Bom dia/Olá). Vá DIRETAMENTE ao ponto." : `- Esta é a primeira mensagem. Inicie com uma saudação educada baseada no horário local (${dataHoraAtual}).`}
+- Evite repetir o nome do paciente.
 
 INFORMAÇÕES DO PACIENTE:
 - Nome: ${contexto.paciente_nome || 'Paciente'}
 
-DADOS DE CONTEXTO DO CRM:
+DADOS DE CONTEXTO DO CRM (USE APENAS ISTO COMO VERDADE ABSOLUTA):
 ${JSON.stringify(contexto.dados_crm || {}, null, 2)}
 
-Sua tarefa: Leia a mensagem do usuário e responda de forma fluida, como se estivesse teclando no WhatsApp organicamente.
+Sua tarefa: Leia a mensagem do usuário e responda de forma fluida e conversacional, respeitando as regras acima.
 `;
 
         const rawMessages = [
@@ -196,9 +191,7 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma fluida, como se esti
             }
         }
 
-        if (mergedMessages.length > 0 && mergedMessages[0].role === 'assistant') {
-            mergedMessages.shift(); 
-        }
+        if (mergedMessages.length > 0 && mergedMessages[0].role === 'assistant') mergedMessages.shift(); 
 
         const messages = [
             { role: "system", content: prompt },
@@ -208,7 +201,7 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma fluida, como se esti
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
             model: "openai/gpt-oss-120b",
             messages: messages,
-            temperature: 0.6
+            temperature: 0.2 // Reduzido para diminuir a criatividade excessiva (alucinação)
         }, {
             headers: { 'Authorization': `Bearer ${GROQ_API_KEY}` }
         });

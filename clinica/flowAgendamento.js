@@ -1,6 +1,6 @@
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
-const { getHorariosDisponiveis, getProximosDiasUteis } = require('../../dateUtils');
+const { getHorariosDisponiveis, getProximosDiasUteis } = require('../dateUtils');
 const aiService = require('../aiService');
 const automationEngine = require('../services/automationEngine');
 const webhookService = require('../services/webhookService');
@@ -20,7 +20,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
     userState.pageData = userState.pageData || 0;
     userState.pageHora = userState.pageHora || 0;
     
-    // Tratamento de cancelamento interativo ("Escolher outro horário" / "Cancelar")
     if (textoProcessado === '0' || textoProcessado === 'cmd_cancelar_fluxo') {
         stateMachine.set(senderNumber, { step: 'IDLE', intent: null, entities: {} });
         await whatsappService.sendText(jid, 'Sem problemas. O processo de agendamento foi cancelado. Posso ajudar em mais alguma coisa?');
@@ -37,7 +36,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         return;
     }
     
-    // 1. RESOLUÇÃO DE TRATAMENTO
     if (!userState.resolvedTreatment) {
         if (isInteractive && textoProcessado.startsWith('trat_')) {
             const idTrat = parseInt(textoProcessado.replace('trat_', ''));
@@ -73,7 +71,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
-    // 2. RESOLUÇÃO DE DATA
     if (!userState.resolvedDate) {
         const diasValidos = await getProximosDiasUteis(14); 
         
@@ -86,7 +83,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
             const matchDia = diasValidos.find(d => d === userState.entities.date || d.includes(userState.entities.date));
             if (matchDia) {
                 userState.resolvedDate = matchDia;
-                // Como resolveu organicamente pela NLP, podemos contextualizar fluidamente
                 await whatsappService.sendText(jid, `Perfeito, dia ${matchDia}. Deixe-me ver os horários...`);
             } else {
                 await whatsappService.sendText(jid, `A agenda para a data solicitada (${userState.entities.date}) está indisponível. Vamos ver as próximas opções.`);
@@ -97,7 +93,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         if (!userState.resolvedDate) {
             if (textoProcessado === 'ver_mais_data') userState.pageData++;
             
-            // Limitando a 2 botões para permitir que o WhatsApp adicione o botão de "Ver mais" e fique dentro do limite de 3
             const start = userState.pageData * 2;
             const chunk = diasValidos.slice(start, start + 2);
             const hasMore = start + 2 < diasValidos.length;
@@ -120,7 +115,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
-    // 3. RESOLUÇÃO DE HORA E PREFERÊNCIAS (A Mágica Conversacional)
     if (!userState.resolvedTime) {
         const horasLivres = await getHorariosDisponiveis(userState.resolvedDate, userState.resolvedTreatment.duracaoMin, null);
         
@@ -141,12 +135,9 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
             const modifier = userState.entities.time_modifier || 'exact';
             
             let matchHora;
-            
-            if (modifier === 'after') {
-                matchHora = horasLivres.find(h => h >= reqTime);
-            } else if (modifier === 'before') {
-                matchHora = [...horasLivres].reverse().find(h => h <= reqTime);
-            } else {
+            if (modifier === 'after') matchHora = horasLivres.find(h => h >= reqTime);
+            else if (modifier === 'before') matchHora = [...horasLivres].reverse().find(h => h <= reqTime);
+            else {
                 matchHora = horasLivres.find(h => h === reqTime);
                 if (!matchHora) matchHora = horasLivres.find(h => h > reqTime);
             }
@@ -188,7 +179,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
-    // 4. CONFIRMAÇÃO HUMANIZADA
     if (!userState.confirmed) {
         if (isInteractive && textoProcessado === 'cmd_confirmar_reserva') {
             userState.confirmed = true;
@@ -203,7 +193,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
     
-    // 5. EFETIVAÇÃO E COMUNICAÇÃO FINAL
     const [dia, mes, ano] = userState.resolvedDate.split('/');
     const [hora, min] = userState.resolvedTime.split(':');
     const fusoOffset = configDb?.fusoHorario === 'America/Sao_Paulo' ? '-03:00' : '+02:00';
@@ -229,14 +218,9 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         dados_crm: { agendamento_realizado: novoAgendamento }
     };
 
-    const promptDireto = "Gere uma mensagem curta confirmando de forma simpática que a consulta foi agendada. Informe a data e hora. NUNCA use saudações iniciais (Bom dia/Olá) pois já estamos no meio da conversa. Finalize dizendo que se ele precisar alterar, é só chamar.";
+    const promptDireto = "Gere uma mensagem curta confirmando de forma simpática que a consulta foi agendada. Informe a data e hora. NUNCA use saudações iniciais. Finalize dizendo que se ele precisar alterar, é só chamar.";
     
-    const respostaContexto = await aiService.gerarRespostaNatural(
-        promptDireto,
-        [],
-        contextoIA,
-        configDb
-    );
+    const respostaContexto = await aiService.gerarRespostaNatural(promptDireto, [], contextoIA, configDb);
     await whatsappService.sendText(jid, respostaContexto);
     
     await automationEngine.dispararAutomacoes('CONSULTA_CRIADA', novoAgendamento);
