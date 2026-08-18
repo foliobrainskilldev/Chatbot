@@ -1,4 +1,3 @@
-// aiService.js
 const axios = require('axios');
 
 async function transcreverAudio(audioBuffer) {
@@ -70,7 +69,7 @@ Intenções permitidas:
 - GOODBYE (despedida)
 - CONFIRM_APPOINTMENT (sim, pode confirmar, isso mesmo, ok)
 - REJECT_APPOINTMENT (não, deixa pra lá, não quero)
-- REQUEST_MORE_TIMES (tem outros horários? tem mais tarde?)
+- REQUEST_MORE_TIMES (tem outros horários? quais mais horários?)
 - REQUEST_MORE_DATES (tem outros dias? e semana que vem?)
 - REQUEST_SPECIFIC_TIME (tem depois das 10? pode ser às 14h? antes do almoço?)
 - SELECT_TIME (às 9h, as 14:00, as duas da tarde)
@@ -85,7 +84,7 @@ Hoje é: ${diaDeHoje}.
 Sempre que mencionar dias relativos ("amanhã", "sexta"), converta a entidade 'date' EXATAMENTE para o formato "DD/MM/YYYY" usando como base hoje.
 Sempre que mencionar horas ("10h", "três da tarde"), converta a entidade 'time' EXATAMENTE para "HH:mm".
 
-MODIFICADORES DE TEMPO (CRÍTICO PARA REQUEST_SPECIFIC_TIME):
+MODIFICADORES DE TEMPO (CRÍTICO):
 "depois das 10" -> "time": "10:00", "time_modifier": "after".
 "antes das 12h" -> "time": "12:00", "time_modifier": "before".
 "hora exata" -> "time_modifier": "exact".
@@ -132,7 +131,7 @@ function fallbackNLP(mensagem) {
     if (msg === "sim" || msg.includes("pode confirmar") || msg.includes("confirmo") || msg === "ok") intent = "CONFIRM_APPOINTMENT";
     else if (msg === "não" || msg.includes("desisto") || msg.includes("deixa pra lá")) intent = "REJECT_APPOINTMENT";
     else if (msg.includes("depois das") || msg.includes("antes das")) intent = "REQUEST_SPECIFIC_TIME";
-    else if (msg.includes("mais") || msg.includes("outros horários") || msg.includes("tem outro")) intent = "REQUEST_MORE_TIMES";
+    else if (msg.includes("quais mais") || msg.includes("mais") || msg.includes("outros horários") || msg.includes("tem outro")) intent = "REQUEST_MORE_TIMES";
     else if (msg.includes("mudar o dia") || msg.includes("outra data")) intent = "CHANGE_DATE";
     else if (msg.includes("mudar a hora") || msg.includes("outro horário")) intent = "CHANGE_TIME";
     else if (msg.includes("agendar") || msg.includes("marcar") || msg.includes("dia ") || msg.includes("às ")) intent = "BOOK_APPOINTMENT";

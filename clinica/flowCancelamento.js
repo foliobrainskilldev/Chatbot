@@ -1,4 +1,3 @@
-// clinica/flowCancelamento.js
 const { prisma } = require('../db');
 const { format } = require('date-fns');
 const whatsappService = require('../whatsappService');
@@ -21,7 +20,9 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
         return;
     }
 
-    if (intent === 'CANCEL_APPOINTMENT' && entities.appointment_id) userState.resolvedAppointmentId = parseInt(entities.appointment_id);
+    if (intent === 'CANCEL_APPOINTMENT' && entities.appointment_id) {
+        userState.resolvedAppointmentId = parseInt(entities.appointment_id);
+    }
     if (intent === 'RESCHEDULE_APPOINTMENT' && entities.appointment_id) {
         userState.resolvedAppointmentId = parseInt(entities.appointment_id);
         isRemarcacao = true;

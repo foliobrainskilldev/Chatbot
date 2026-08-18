@@ -1,4 +1,3 @@
-// clinica/flowConsultas.js
 const { prisma } = require('../db');
 const aiService = require('../aiService');
 const whatsappService = require('../whatsappService');
