@@ -49,45 +49,45 @@ async function analisarMensagemNLP(mensagem, historico, userState, configDb) {
 
     try {
         const prompt = `
-Você é o motor de NLP de um HealthCRM (Clínica Médica).
+Você é o motor de NLU (Natural Language Understanding) de um HealthCRM (Clínica Médica).
 Sua tarefa é analisar a mensagem do paciente e extrair a intenção (intent) e as entidades (entities).
 
 Intenções permitidas:
-- CLINIC_HOURS (horário da clínica)
-- CLINIC_LOCATION (localização)
-- CLINIC_CONTACT (contato)
-- CLINIC_PAYMENT_METHODS (pagamento)
-- TREATMENT_LIST (listar tratamentos)
-- TREATMENT_INFO (informação sobre serviço)
-- TREATMENT_PRICE (preço)
-- TREATMENT_DURATION (duração)
-- BOOK_APPOINTMENT (marcar consulta ou iniciar agendamento)
-- CHECK_UPCOMING_APPOINTMENTS (verificar consultas futuras)
-- CHECK_PAST_APPOINTMENTS (verificar consultas passadas)
-- RESCHEDULE_APPOINTMENT (remarcar)
-- CANCEL_APPOINTMENT (cancelar)
-- HUMAN_TRANSFER (falar com atendente humano)
-- GREETING (saudação genérica)
-- GOODBYE (despedida)
-- CONFIRM_APPOINTMENT (usado ESTRITAMENTE quando o usuário confirma positivamente a marcação, ex: "Sim", "Pode confirmar", "Isso mesmo")
-- REJECT_APPOINTMENT (usado quando o usuário desiste ou recusa, ex: "Não", "Deixa para lá", "Cancelar operação")
-- REQUEST_MORE_TIMES (usado quando o usuário pede mais horários ou opções)
-- REQUEST_MORE_DATES (usado quando o usuário pede mais dias ou outras datas)
-- SELECT_TIME (quando o usuário informa especificamente uma hora durante o processo, ex: "às 9h", "pode ser as 14")
-- SELECT_DATE (quando o usuário informa especificamente uma data, ex: "amanhã", "sexta")
-- UNKNOWN (não entendi)
+- CLINIC_HOURS (perguntas sobre horário de funcionamento)
+- CLINIC_LOCATION (onde fica, endereço)
+- CLINIC_CONTACT (telefone, contato)
+- CLINIC_PAYMENT_METHODS (aceita plano, cartão, convênio)
+- TREATMENT_LIST (quais serviços fazem)
+- TREATMENT_INFO (como funciona um tratamento específico)
+- TREATMENT_PRICE (quanto custa, qual o valor)
+- BOOK_APPOINTMENT (quer marcar consulta, agendar)
+- CHECK_UPCOMING_APPOINTMENTS (quando é minha consulta)
+- RESCHEDULE_APPOINTMENT (quero mudar o dia, remarcar)
+- CANCEL_APPOINTMENT (quero cancelar, desistir da consulta)
+- HUMAN_TRANSFER (falar com pessoa, atendente, humano)
+- FRUSTRATION (paciente irritado, "você não entende", "que saco", reclamação)
+- GREETING (oi, olá, bom dia)
+- GOODBYE (tchau, obrigado)
+- CONFIRM_APPOINTMENT (sim, pode confirmar, isso mesmo, ok)
+- REJECT_APPOINTMENT (não, deixa pra lá, não quero)
+- REQUEST_MORE_TIMES (tem outros horários? tem mais tarde?)
+- REQUEST_MORE_DATES (tem outros dias? e semana que vem?)
+- REQUEST_SPECIFIC_TIME (tem depois das 10? pode ser às 14h? antes do almoço?)
+- SELECT_TIME (às 9h, as 14:00, as duas da tarde)
+- SELECT_DATE (amanhã, sexta, dia 20)
+- UNKNOWN (não se encaixa em nenhuma das acima)
 
 INFORMAÇÃO TEMPORAL IMPORTANTE E FUSO HORÁRIO LOCAL:
 Hoje é: ${diaDeHoje}.
-Se o usuário mencionar dias relativos ("amanhã", "sexta", "dia 16"), converta a entidade 'date' EXATAMENTE para o formato "DD/MM/YYYY" usando como base a data de hoje.
-Se mencionar horas ("10h", "às três da tarde"), converta a entidade 'time' EXATAMENTE para "HH:mm".
+Sempre que o usuário mencionar dias relativos ("amanhã", "sexta"), converta a entidade 'date' EXATAMENTE para o formato "DD/MM/YYYY" usando como base a data de hoje.
+Sempre que mencionar horas ("10h", "três da tarde"), converta a entidade 'time' EXATAMENTE para "HH:mm".
 
-MODIFICADORES DE TEMPO:
+MODIFICADORES DE TEMPO (CRÍTICO PARA REQUEST_SPECIFIC_TIME):
 Se o paciente disser "depois das 10", defina "time": "10:00" e "time_modifier": "after".
-Se o paciente disser "antes das 12h", defina o "time" como a hora limite e "time_modifier": "before".
-Se o paciente apenas passar a hora, defina "time_modifier": "exact".
+Se o paciente disser "antes das 12h", defina "time": "12:00" e "time_modifier": "before".
+Se o paciente apenas passar a hora exata, defina "time_modifier": "exact".
 
-Estado atual da conversa (Contexto do Funil): ${JSON.stringify(userState || {})}
+Estado atual da conversa (Funil): ${userState?.step || 'IDLE'}
 
 Responda APENAS com um JSON válido no formato exato:
 {
@@ -128,7 +128,8 @@ function fallbackNLP(mensagem) {
     let intent = "UNKNOWN";
     
     if (msg === "sim" || msg.includes("pode confirmar") || msg.includes("confirmo") || msg === "ok") intent = "CONFIRM_APPOINTMENT";
-    else if (msg === "não" || msg.includes("desisto")) intent = "REJECT_APPOINTMENT";
+    else if (msg === "não" || msg.includes("desisto") || msg.includes("deixa pra lá")) intent = "REJECT_APPOINTMENT";
+    else if (msg.includes("depois das") || msg.includes("antes das")) intent = "REQUEST_SPECIFIC_TIME";
     else if (msg.includes("mais") || msg.includes("outros horários") || msg.includes("tem outro")) intent = "REQUEST_MORE_TIMES";
     else if (msg.includes("agendar") || msg.includes("marcar") || msg.includes("dia ") || msg.includes("às ")) intent = "BOOK_APPOINTMENT";
     else if (msg.includes("cancelar consulta") || msg.includes("desmarcar")) intent = "CANCEL_APPOINTMENT";
@@ -137,7 +138,7 @@ function fallbackNLP(mensagem) {
     else if (msg.includes("humano") || msg.includes("atendente") || msg.includes("pessoa")) intent = "HUMAN_TRANSFER";
     else if (msg.includes("horário") || msg.includes("funcionamento")) intent = "CLINIC_HOURS";
     else if (msg.includes("histórico") || msg.includes("já feita")) intent = "CHECK_PAST_APPOINTMENTS";
-    else if (msg === "oi" || msg === "olá" || msg === "boa tarde" || msg === "bom dia" || msg === "boa noite") intent = "GREETING";
+    else if (msg === "oi" || msg === "olá" || msg === "boa tarde" || msg === "bom dia") intent = "GREETING";
     
     return { intent, confidence: 0.6, entities: {} };
 }
@@ -157,7 +158,6 @@ async function gerarRespostaNatural(mensagem, historico, contexto, configDb) {
         hour: '2-digit', minute: '2-digit', second: '2-digit'
     });
     const dataHoraAtual = formatter.format(new Date());
-    const isOngoing = historico && historico.length > 0;
 
     try {
         const prompt = `
@@ -165,13 +165,13 @@ Você é ${configDb?.nomeAssistente || 'o assistente virtual'} da clínica ${con
 Tom de voz: ${configDb?.tomDeVoz || 'Profissional e acolhedor'}.
 
 PROTEÇÃO CONTRA ALUCINAÇÃO (REGRA DE OURO - CRÍTICO):
-Você está ESTRITAMENTE PROIBIDO de inventar, supor ou criar horários, vagas disponíveis, preços de tratamentos ou condições de pagamento.
-Se o usuário perguntar preços, horários ou formas de pagamento, e essa informação NÃO estiver explícita no bloco "DADOS DE CONTEXTO DO CRM", você NÃO PODE inventar números. JAMAIS invente que há vaga "às 09:00" ou que um serviço custa "120 MT". Responda de forma orgânica que precisa consultar o sistema ou a recepção.
+Você está ESTRITAMENTE PROIBIDO de inventar horários, vagas disponíveis, preços de tratamentos ou se a consulta foi marcada.
+Nunca diga "sua consulta foi marcada". Quem diz isso é o sistema.
+Se o usuário perguntar preços ou horários de funcionamento, baseie-se APENAS nos dados fornecidos abaixo.
 
 REGRAS DE MOEDA E SAUDAÇÃO:
 - A moeda da clínica é ${moedaGlobal}. Nunca fale em Reais ou Dólares.
-${isOngoing ? "- NUNCA inicie sua resposta com saudações (Bom dia/Olá). Vá DIRETAMENTE ao ponto." : `- Esta é a primeira mensagem. Inicie com uma saudação educada baseada no horário local (${dataHoraAtual}).`}
-- Evite repetir o nome do paciente.
+- NUNCA inicie sua resposta com saudações (Bom dia/Olá) se já estiver no meio da conversa.
 
 INFORMAÇÕES DO PACIENTE:
 - Nome: ${contexto.paciente_nome || 'Paciente'}
@@ -179,7 +179,7 @@ INFORMAÇÕES DO PACIENTE:
 DADOS DE CONTEXTO DO CRM (USE APENAS ISTO COMO VERDADE ABSOLUTA):
 ${JSON.stringify(contexto.dados_crm || {}, null, 2)}
 
-Sua tarefa: Leia a mensagem do usuário e responda de forma fluida e conversacional, respeitando as regras acima.
+Sua tarefa: Formule uma resposta conversacional e gentil que entregue a informação solicitada acima.
 `;
 
         const rawMessages = [
@@ -220,8 +220,8 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma fluida e conversacio
 
         return response.data.choices[0].message.content;
     } catch (error) {
-        console.error("❌ [GERAÇÃO DE RESPOSTA ERRO]:", error.response ? JSON.stringify(error.response.data, null, 2) : error.message);
-        return "Desculpe, tive um pequeno problema ao formular a resposta agora. Você poderia repetir, por favor?";
+        console.error("❌ [GERAÇÃO DE RESPOSTA ERRO]:", error.message);
+        return "Desculpe, tive um problema ao formular a resposta agora. Pode repetir?";
     }
 }
 

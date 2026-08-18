@@ -23,11 +23,7 @@ async function getOrCreateCliente(numero, nomePushName = null) {
     } else {
         const updates = { ultimaInteracao: new Date() };
         if (nomePushName && !cliente.nome) updates.nome = nomePushName;
-        
-        if (cliente.leadStatus === 'NOVO') {
-            isNewPatient = true;
-        }
-
+        if (cliente.leadStatus === 'NOVO') isNewPatient = true;
         await prisma.cliente.update({ where: { id: numero }, data: updates });
     }
     return { cliente, isNewPatient };
@@ -36,10 +32,7 @@ async function getOrCreateCliente(numero, nomePushName = null) {
 async function processarMensagemEntrante(message) {
     if (!message || !message.from) return; 
 
-    if (demoService.isDemoActive()) {
-        console.log(`🛑 [MODO DEMONSTRAÇÃO] Sistema em Demonstração. Ignorando mensagem real de ${message.from}.`);
-        return;
-    }
+    if (demoService.isDemoActive()) return;
 
     setTimeout(async () => {
         const senderNumber = message.from;
@@ -53,9 +46,13 @@ async function processarMensagemEntrante(message) {
             let pushName = message.profile?.name || null;
             const { cliente, isNewPatient } = await getOrCreateCliente(senderNumber, pushName);
             
-            await whatsappService.markAsReadAndTyping(msgId, senderNumber);
+            if (cliente.falarHumano) {
+                console.log(`🛑 [MOTOR CLÍNICA] Lead em atendimento humano. IA pausada.`);
+                return; 
+            }
 
-            const delayMs = Math.floor(Math.random() * (4000 - 2000 + 1)) + 2000;
+            await whatsappService.markAsReadAndTyping(msgId, senderNumber);
+            const delayMs = Math.floor(Math.random() * (3000 - 1500 + 1)) + 1500;
             await new Promise(resolve => setTimeout(resolve, delayMs));
 
             let textoProcessado = "";
@@ -65,34 +62,13 @@ async function processarMensagemEntrante(message) {
 
             if (message.type === 'audio') {
                 const mediaId = message.audio.id;
-                let audioBuffer;
-
-                try { audioBuffer = await whatsappService.downloadMedia(mediaId); } catch(e) {}
-
-                if (audioBuffer) {
-                    try {
-                        const cloudRes = await supabaseService.uploadStream(audioBuffer, 'clinica/pacientes/audios', 'video');
-                        midiaUrl = cloudRes.secure_url;
-                    } catch (e) { }
-
-                    try {
-                        textoProcessado = await aiService.transcreverAudio(audioBuffer);
-                        isTranscribed = true;
-                        console.log(`🎙️ [WHISPER] Texto Transcrito: "${textoProcessado}"`);
-                    } catch (e) {
-                        textoProcessado = "[Falha na transcrição do áudio]";
-                    }
-                }
-
+                try { 
+                    const audioBuffer = await whatsappService.downloadMedia(mediaId);
+                    textoProcessado = await aiService.transcreverAudio(audioBuffer);
+                    isTranscribed = true;
+                } catch(e) { textoProcessado = "[Falha na transcrição do áudio]"; }
             } else if (['image', 'video', 'document'].includes(message.type)) {
-                const mediaId = message[message.type].id;
-                textoProcessado = message[message.type].caption || ""; 
-                try {
-                    const mediaBuffer = await whatsappService.downloadMedia(mediaId);
-                    const resourceType = message.type === 'image' ? 'image' : (message.type === 'video' ? 'video' : 'raw');
-                    const cloudRes = await supabaseService.uploadStream(mediaBuffer, `clinica/pacientes/${message.type}s`, resourceType);
-                    midiaUrl = cloudRes.secure_url;
-                } catch (e) {}
+                textoProcessado = message[message.type].caption || "[Mídia Recebida]"; 
             } else if (message.type === 'text') {
                 textoProcessado = message.text.body;
             } else if (message.type === 'interactive') {
@@ -101,53 +77,23 @@ async function processarMensagemEntrante(message) {
 
             if (!textoProcessado && !midiaUrl) return;
 
-            let contentToSave = textoProcessado;
-            if (midiaUrl) {
-                contentToSave = `[MEDIA:${tipoMidia}] ${midiaUrl} | Texto: ${textoProcessado}`;
-            } else if (isTranscribed) {
-                contentToSave = `[Áudio Transcrito]: ${textoProcessado}`;
-            }
+            let contentToSave = isTranscribed ? `[Áudio Transcrito]: ${textoProcessado}` : textoProcessado;
+            await prisma.mensagemIA.create({ data: { role: 'user', content: contentToSave, clienteId: senderNumber } });
 
-            await prisma.mensagemIA.create({ 
-                data: { role: 'user', content: contentToSave, clienteId: senderNumber, tipoMidia: tipoMidia, midiaUrl: midiaUrl } 
-            });
-
-            if (cliente.falarHumano) {
-                console.log(`🛑 [MOTOR CLÍNICA] Lead em atendimento humano. IA pausada.`);
-                return; 
-            }
-
-            const historicoRaw = await prisma.mensagemIA.findMany({ 
-                where: { clienteId: senderNumber }, 
-                take: 8, orderBy: { criadoEm: 'desc' } 
-            });
-            const lastBotMsg = historicoRaw.find(h => h.role === 'assistant');
-            
-            if (lastBotMsg && lastBotMsg.content.includes('(Pesquisa CSAT enviada)')) {
-                const nota = parseInt(textoProcessado.trim());
-                if (!isNaN(nota) && nota >= 1 && nota <= 5) {
-                    await prisma.notaInterna.create({ data: { texto: `📊 Avaliação de Atendimento (CSAT): ${nota} Estrela(s)`, clienteId: senderNumber, usuarioId: 1 } });
-                    const msgAgradecimento = "Muito obrigado pela sua avaliação! Isso nos ajuda a melhorar sempre. 😊";
-                    await whatsappService.sendText(senderNumber, msgAgradecimento);
-                    await prisma.mensagemIA.create({ data: { role: 'assistant', content: msgAgradecimento, clienteId: senderNumber } });
-                    return; 
-                }
-            }
-
-            let isInteractive = message.type === 'interactive';
-            let userState = stateMachine.get(senderNumber) || { step: 'IDLE', intent: null, entities: {} };
-            
-            const configDb = await prisma.configSistema.findFirst();
-            
+            const historicoRaw = await prisma.mensagemIA.findMany({ where: { clienteId: senderNumber }, take: 8, orderBy: { criadoEm: 'desc' } });
             historicoRaw.reverse();
             const historico = historicoRaw.map(h => ({ role: h.role, content: h.content }));
 
+            let userState = stateMachine.get(senderNumber) || { step: 'IDLE', entities: {} };
+            const configDb = await prisma.configSistema.findFirst();
+
+            let isInteractive = message.type === 'interactive';
             let nlpResult = { intent: "UNKNOWN", confidence: 1, entities: {} };
 
-            // Extração de Intenção: Trata Botões interativos ou envia para a NLP Processar o texto
+            // Extração de Intenções e Entidades via NLU
             if (!isInteractive && textoProcessado) {
                 nlpResult = await aiService.analisarMensagemNLP(textoProcessado, historico, userState, configDb);
-                console.log(`🧠 [NLP] Intenção: ${nlpResult.intent} | Entidades extraídas:`, JSON.stringify(nlpResult.entities));
+                console.log(`🧠 [NLP] Intenção: ${nlpResult.intent} | Entidades:`, JSON.stringify(nlpResult.entities));
                 userState.entities = { ...userState.entities, ...nlpResult.entities };
             } else if (isInteractive) {
                 if (textoProcessado === 'cmd_agendar') nlpResult.intent = 'BOOK_APPOINTMENT';
@@ -165,30 +111,55 @@ async function processarMensagemEntrante(message) {
             }
 
             let activeIntent = nlpResult.intent || 'UNKNOWN';
-            stateMachine.set(senderNumber, userState);
-
-            // Roteador Mestre de Ações / State Machine
-            const bookingIntents = ['BOOK_APPOINTMENT', 'SELECT_TREATMENT', 'SELECT_DATE', 'SELECT_TIME', 'REQUEST_MORE_TIMES', 'REQUEST_MORE_DATES', 'CONFIRM_APPOINTMENT', 'REJECT_APPOINTMENT'];
-            const cancelIntents = ['CANCEL_APPOINTMENT', 'RESCHEDULE_APPOINTMENT'];
-            const queryIntents = ['TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST', 'CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS'];
-
-            if (activeIntent === 'HUMAN_TRANSFER') {
+            
+            // ----------------------------------------------------
+            // MATRIZ DE ESTADO VS INTENÇÃO (O CÉREBRO REAL DO SISTEMA)
+            // ----------------------------------------------------
+            
+            // 1. Hand-off (Transferência Humana por frustração ou pedido)
+            if (activeIntent === 'HUMAN_TRANSFER' || activeIntent === 'FRUSTRATION') {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
-                const resp = configDb?.msgTransferencia || "Vou transferir você para nossa equipe agora mesmo. Só um instante.";
+                const resp = "Entendi. Vou transferir você para nossa equipe agora mesmo. Só um instante.";
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
                 await whatsappService.sendText(senderNumber, resp);
-                
-                await prisma.notaInterna.create({ data: { texto: `Transferência solicitada pelo paciente. Motivo: Intervenção Humana requerida.`, clienteId: senderNumber, usuarioId: 1 } });
                 if (global.io) global.io.emit('atualizar_fila');
                 return;
             }
 
-            // Se é uma dúvida explícita, responde primeiro, mesmo no meio do funil de agendamento
+            // 2. Proteção de Contexto (O paciente mandou "Oi" no meio de um agendamento)
+            if (activeIntent === 'GREETING' && userState.step !== 'IDLE') {
+                const prompt = "Diga: Olá novamente! Estávamos no meio do seu agendamento. Deseja continuar escolhendo a data e horário ou prefere cancelar?";
+                const resp = await aiService.gerarRespostaNatural(prompt, [], {}, configDb);
+                await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
+                await whatsappService.sendText(senderNumber, resp);
+                return;
+            }
+
+            // 3. Fallback Contextual (Não entendeu nada, mas estava no meio de um processo)
+            if (activeIntent === 'UNKNOWN' && userState.step !== 'IDLE') {
+                const prompt = `Diga: Desculpe, não entendi bem. Nós estávamos no passo ${userState.step.replace('AGENDAMENTO_', '')} do seu agendamento. Você poderia repetir ou clicar em um dos botões anteriores?`;
+                const resp = await aiService.gerarRespostaNatural(prompt, [], {}, configDb);
+                await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
+                await whatsappService.sendText(senderNumber, resp);
+                return;
+            }
+
+            const bookingIntents = ['BOOK_APPOINTMENT', 'SELECT_TREATMENT', 'SELECT_DATE', 'SELECT_TIME', 'REQUEST_MORE_TIMES', 'REQUEST_MORE_DATES', 'REQUEST_SPECIFIC_TIME', 'CONFIRM_APPOINTMENT', 'REJECT_APPOINTMENT'];
+            const cancelIntents = ['CANCEL_APPOINTMENT', 'RESCHEDULE_APPOINTMENT'];
+            const queryIntents = ['TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST', 'CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS'];
+
+            // 4. Tratamento de "Side-Quests" (Perguntas paralelas durante um agendamento)
             if (queryIntents.includes(activeIntent)) {
                 const flowConsultas = require('./flowConsultas');
                 await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient);
-            } 
-            else if (bookingIntents.includes(activeIntent) || userState.step.startsWith('AGENDAMENTO_')) {
+                // NOTA IMPORTANTE: processarDuvidas não altera o userState.step! O paciente continua de onde parou.
+                return;
+            }
+
+            // 5. Funil Principal
+            stateMachine.set(senderNumber, userState);
+
+            if (bookingIntents.includes(activeIntent) || userState.step.startsWith('AGENDAMENTO_')) {
                 const flowAgendamento = require('./flowAgendamento');
                 await flowAgendamento.processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, isNewPatient);
             } 
@@ -198,14 +169,9 @@ async function processarMensagemEntrante(message) {
                 await flowCancelamento.processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao, cliente, isNewPatient);
             } 
             else {
-                // Fallback (UNKNOWN, GREETING, etc)
-                if (userState.step.startsWith('AGENDAMENTO_')) {
-                    const flowAgendamento = require('./flowAgendamento');
-                    await flowAgendamento.processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, isNewPatient);
-                } else {
-                    const flowConsultas = require('./flowConsultas');
-                    await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient);
-                }
+                // Último caso: Caiu aqui, responde organicamente.
+                const flowConsultas = require('./flowConsultas');
+                await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient);
             }
 
         } catch (error) {

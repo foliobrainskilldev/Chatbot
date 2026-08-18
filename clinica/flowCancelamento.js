@@ -4,7 +4,6 @@ const { format } = require('date-fns');
 const whatsappService = require('../whatsappService');
 const automationEngine = require('../services/automationEngine');
 const webhookService = require('../services/webhookService');
-const aiService = require('../aiService');
 const { processarAgendamento } = require('./flowAgendamento');
 
 async function processarCancelamento(jid, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao = false, cliente, isNewPatient) {
@@ -18,7 +17,7 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
     
     if (intent === 'REJECT_APPOINTMENT') {
         stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
-        await whatsappService.sendText(jid, 'Tudo bem, a operação foi interrompida. Como mais posso ajudar hoje?');
+        await whatsappService.sendText(jid, 'Tudo bem, a operação foi abortada. Como mais posso ajudar hoje?');
         return;
     }
 
@@ -37,11 +36,7 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
     });
 
     if (agendamentos.length === 0) {
-        const contextoFake = { paciente_nome: cliente.nome, paciente_novo: isNewPatient, dados_crm: { aviso: "O paciente não possui consultas futuras pendentes no sistema." } };
-        const msgAusencia = "Alerte de forma leve que o paciente não tem consultas marcadas em aberto na agenda. NUNCA use saudações, vá direto ao ponto.";
-        
-        const resp = await aiService.gerarRespostaNatural(msgAusencia, [], contextoFake, configDb);
-        await whatsappService.sendText(jid, resp);
+        await whatsappService.sendText(jid, "Você não possui consultas futuras marcadas na nossa agenda.");
         stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
         return;
     }
@@ -76,19 +71,12 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
             include: { cliente: true, tratamento: true, profissionalSaude: true }
         });
         
-        const contextoIA = {
-            paciente_nome: cliente.nome,
-            paciente_novo: isNewPatient,
-            dados_crm: { consulta_alterada: agAtualizado }
-        };
-
         if (isRemarcacao) {
             await automationEngine.dispararAutomacoes('CONSULTA_REMARCADA', agAtualizado);
             await webhookService.dispararEvento('appointment.updated', agAtualizado);
             
-            const promptRemarcacao = "Avise o paciente que a consulta antiga foi suspensa. E diga que agora vocês vão escolher um novo horário juntos. NUNCA use saudações. Seja direto e amigável.";
-            const resp = await aiService.gerarRespostaNatural(promptRemarcacao, [], contextoIA, configDb);
-            await whatsappService.sendText(jid, resp);
+            // Template Fixo para Remarcação
+            await whatsappService.sendText(jid, "Sua consulta anterior foi suspensa na agenda. Vamos agora escolher um novo horário para você!");
             
             stateMachine.set(senderNumber, { 
                 step: 'AGENDAMENTO_COLLECTING_DATE', 
@@ -97,14 +85,14 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
                 pageData: 0,
                 pageHora: 0
             });
+            // Delega para o fluxo de agendamento puxar as novas datas
             return processarAgendamento(jid, null, senderNumber, stateMachine, { intent: 'UNKNOWN' }, false, configDb, cliente, isNewPatient);
         } else {
             await automationEngine.dispararAutomacoes('CONSULTA_CANCELADA', agAtualizado);
             await webhookService.dispararEvento('appointment.cancelled', agAtualizado);
             
-            const promptCancelamento = "Confirme gentilmente que a consulta foi cancelada na agenda. Diga que esperamos vê-lo no futuro. Vá direto ao ponto e NÃO use saudações.";
-            const resp = await aiService.gerarRespostaNatural(promptCancelamento, [], contextoIA, configDb);
-            await whatsappService.sendText(jid, resp);
+            // Template Fixo para Cancelamento
+            await whatsappService.sendText(jid, "✅ Sua consulta foi cancelada com sucesso no sistema. Agradecemos por nos avisar com antecedência. Esperamos vê-lo em breve!");
             stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
         }
     } catch (error) {
