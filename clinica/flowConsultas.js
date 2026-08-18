@@ -75,9 +75,8 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         dadosCrmContexto.dados_basicos = { nome_clinica: configDb?.nomeClinica || "Clínica", faq: configDb?.faq || "" };
     }
 
-    // O segredo do State Persist: A IA responde à dúvida e puxa o paciente de volta ao fluxo onde ele parou.
     if (userState && userState.step.startsWith('AGENDAMENTO_')) {
-        dadosCrmContexto.aviso_sistema_prioridade = `INSTRUÇÃO CRÍTICA: O paciente está atualmente no MEIO de um fluxo de agendamento (Passo: ${userState.step}). Responda a dúvida de forma orgânica e, OBRIGATORIAMENTE no final, diga algo como: 'Voltando ao nosso agendamento, deseja continuar com a escolha de data e horário?'`;
+        dadosCrmContexto.aviso_sistema_prioridade = `INSTRUÇÃO CRÍTICA: O paciente está atualmente no MEIO de um fluxo de agendamento (Passo: ${userState.step}). Responda a dúvida de forma orgânica e, OBRIGATORIAMENTE no final, diga algo como: 'Voltando ao nosso agendamento, deseja continuar com a escolha?'`;
     } else if (intent === 'TREATMENT_PRICE' || intent === 'TREATMENT_INFO') {
         dadosCrmContexto.aviso_sistema_prioridade = "DICA: Após responder a dúvida, pergunte casualmente se o paciente deseja verificar os horários disponíveis para esse procedimento.";
     }

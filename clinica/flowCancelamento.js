@@ -21,9 +21,7 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
         return;
     }
 
-    if (intent === 'CANCEL_APPOINTMENT' && entities.appointment_id) {
-        userState.resolvedAppointmentId = parseInt(entities.appointment_id);
-    }
+    if (intent === 'CANCEL_APPOINTMENT' && entities.appointment_id) userState.resolvedAppointmentId = parseInt(entities.appointment_id);
     if (intent === 'RESCHEDULE_APPOINTMENT' && entities.appointment_id) {
         userState.resolvedAppointmentId = parseInt(entities.appointment_id);
         isRemarcacao = true;
@@ -75,7 +73,6 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
             await automationEngine.dispararAutomacoes('CONSULTA_REMARCADA', agAtualizado);
             await webhookService.dispararEvento('appointment.updated', agAtualizado);
             
-            // Template Fixo para Remarcação
             await whatsappService.sendText(jid, "Sua consulta anterior foi suspensa na agenda. Vamos agora escolher um novo horário para você!");
             
             stateMachine.set(senderNumber, { 
@@ -85,13 +82,11 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
                 pageData: 0,
                 pageHora: 0
             });
-            // Delega para o fluxo de agendamento puxar as novas datas
             return processarAgendamento(jid, null, senderNumber, stateMachine, { intent: 'UNKNOWN' }, false, configDb, cliente, isNewPatient);
         } else {
             await automationEngine.dispararAutomacoes('CONSULTA_CANCELADA', agAtualizado);
             await webhookService.dispararEvento('appointment.cancelled', agAtualizado);
             
-            // Template Fixo para Cancelamento
             await whatsappService.sendText(jid, "✅ Sua consulta foi cancelada com sucesso no sistema. Agradecemos por nos avisar com antecedência. Esperamos vê-lo em breve!");
             stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
         }

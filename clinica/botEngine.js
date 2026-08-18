@@ -31,7 +31,6 @@ async function getOrCreateCliente(numero, nomePushName = null) {
 
 async function processarMensagemEntrante(message) {
     if (!message || !message.from) return; 
-
     if (demoService.isDemoActive()) return;
 
     setTimeout(async () => {
@@ -90,7 +89,7 @@ async function processarMensagemEntrante(message) {
             let isInteractive = message.type === 'interactive';
             let nlpResult = { intent: "UNKNOWN", confidence: 1, entities: {} };
 
-            // Extração de Intenções e Entidades via NLU
+            // Extração de Intenções via NLU
             if (!isInteractive && textoProcessado) {
                 nlpResult = await aiService.analisarMensagemNLP(textoProcessado, historico, userState, configDb);
                 console.log(`🧠 [NLP] Intenção: ${nlpResult.intent} | Entidades:`, JSON.stringify(nlpResult.entities));
@@ -112,11 +111,7 @@ async function processarMensagemEntrante(message) {
 
             let activeIntent = nlpResult.intent || 'UNKNOWN';
             
-            // ----------------------------------------------------
-            // MATRIZ DE ESTADO VS INTENÇÃO (O CÉREBRO REAL DO SISTEMA)
-            // ----------------------------------------------------
-            
-            // 1. Hand-off (Transferência Humana por frustração ou pedido)
+            // Hand-off
             if (activeIntent === 'HUMAN_TRANSFER' || activeIntent === 'FRUSTRATION') {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
                 const resp = "Entendi. Vou transferir você para nossa equipe agora mesmo. Só um instante.";
@@ -126,7 +121,7 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // 2. Proteção de Contexto (O paciente mandou "Oi" no meio de um agendamento)
+            // Fallback Contextual (Proteção "Oi")
             if (activeIntent === 'GREETING' && userState.step !== 'IDLE') {
                 const prompt = "Diga: Olá novamente! Estávamos no meio do seu agendamento. Deseja continuar escolhendo a data e horário ou prefere cancelar?";
                 const resp = await aiService.gerarRespostaNatural(prompt, [], {}, configDb);
@@ -135,28 +130,18 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // 3. Fallback Contextual (Não entendeu nada, mas estava no meio de um processo)
-            if (activeIntent === 'UNKNOWN' && userState.step !== 'IDLE') {
-                const prompt = `Diga: Desculpe, não entendi bem. Nós estávamos no passo ${userState.step.replace('AGENDAMENTO_', '')} do seu agendamento. Você poderia repetir ou clicar em um dos botões anteriores?`;
-                const resp = await aiService.gerarRespostaNatural(prompt, [], {}, configDb);
-                await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
-                await whatsappService.sendText(senderNumber, resp);
-                return;
-            }
-
-            const bookingIntents = ['BOOK_APPOINTMENT', 'SELECT_TREATMENT', 'SELECT_DATE', 'SELECT_TIME', 'REQUEST_MORE_TIMES', 'REQUEST_MORE_DATES', 'REQUEST_SPECIFIC_TIME', 'CONFIRM_APPOINTMENT', 'REJECT_APPOINTMENT'];
+            const bookingIntents = ['BOOK_APPOINTMENT', 'SELECT_TREATMENT', 'SELECT_DATE', 'SELECT_TIME', 'REQUEST_MORE_TIMES', 'REQUEST_MORE_DATES', 'REQUEST_SPECIFIC_TIME', 'CONFIRM_APPOINTMENT', 'REJECT_APPOINTMENT', 'CHANGE_TREATMENT', 'CHANGE_DATE', 'CHANGE_TIME'];
             const cancelIntents = ['CANCEL_APPOINTMENT', 'RESCHEDULE_APPOINTMENT'];
             const queryIntents = ['TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST', 'CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS'];
 
-            // 4. Tratamento de "Side-Quests" (Perguntas paralelas durante um agendamento)
+            // "Side-Quests" (Perguntas paralelas durante o agendamento)
             if (queryIntents.includes(activeIntent)) {
                 const flowConsultas = require('./flowConsultas');
                 await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient);
-                // NOTA IMPORTANTE: processarDuvidas não altera o userState.step! O paciente continua de onde parou.
                 return;
             }
 
-            // 5. Funil Principal
+            // Funil Principal
             stateMachine.set(senderNumber, userState);
 
             if (bookingIntents.includes(activeIntent) || userState.step.startsWith('AGENDAMENTO_')) {
@@ -169,7 +154,6 @@ async function processarMensagemEntrante(message) {
                 await flowCancelamento.processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao, cliente, isNewPatient);
             } 
             else {
-                // Último caso: Caiu aqui, responde organicamente.
                 const flowConsultas = require('./flowConsultas');
                 await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient);
             }

@@ -49,25 +49,25 @@ async function analisarMensagemNLP(mensagem, historico, userState, configDb) {
 
     try {
         const prompt = `
-Você é o motor de NLU (Natural Language Understanding) de um HealthCRM (Clínica Médica).
+Você é o motor de NLU (Natural Language Understanding) de um HealthCRM.
 Sua tarefa é analisar a mensagem do paciente e extrair a intenção (intent) e as entidades (entities).
 
 Intenções permitidas:
 - CLINIC_HOURS (perguntas sobre horário de funcionamento)
 - CLINIC_LOCATION (onde fica, endereço)
 - CLINIC_CONTACT (telefone, contato)
-- CLINIC_PAYMENT_METHODS (aceita plano, cartão, convênio)
+- CLINIC_PAYMENT_METHODS (pagamento)
 - TREATMENT_LIST (quais serviços fazem)
-- TREATMENT_INFO (como funciona um tratamento específico)
-- TREATMENT_PRICE (quanto custa, qual o valor)
+- TREATMENT_INFO (informação sobre serviço)
+- TREATMENT_PRICE (preço)
 - BOOK_APPOINTMENT (quer marcar consulta, agendar)
 - CHECK_UPCOMING_APPOINTMENTS (quando é minha consulta)
-- RESCHEDULE_APPOINTMENT (quero mudar o dia, remarcar)
+- RESCHEDULE_APPOINTMENT (quero mudar o dia, remarcar uma que já existe)
 - CANCEL_APPOINTMENT (quero cancelar, desistir da consulta)
-- HUMAN_TRANSFER (falar com pessoa, atendente, humano)
-- FRUSTRATION (paciente irritado, "você não entende", "que saco", reclamação)
-- GREETING (oi, olá, bom dia)
-- GOODBYE (tchau, obrigado)
+- HUMAN_TRANSFER (falar com atendente humano)
+- FRUSTRATION (paciente irritado, "você não entende", "que saco")
+- GREETING (saudação genérica)
+- GOODBYE (despedida)
 - CONFIRM_APPOINTMENT (sim, pode confirmar, isso mesmo, ok)
 - REJECT_APPOINTMENT (não, deixa pra lá, não quero)
 - REQUEST_MORE_TIMES (tem outros horários? tem mais tarde?)
@@ -75,19 +75,22 @@ Intenções permitidas:
 - REQUEST_SPECIFIC_TIME (tem depois das 10? pode ser às 14h? antes do almoço?)
 - SELECT_TIME (às 9h, as 14:00, as duas da tarde)
 - SELECT_DATE (amanhã, sexta, dia 20)
-- UNKNOWN (não se encaixa em nenhuma das acima)
+- CHANGE_TREATMENT (quero mudar o tratamento, escolhi errado)
+- CHANGE_DATE (quero mudar o dia/data)
+- CHANGE_TIME (quero mudar a hora)
+- UNKNOWN (não entendi)
 
-INFORMAÇÃO TEMPORAL IMPORTANTE E FUSO HORÁRIO LOCAL:
+INFORMAÇÃO TEMPORAL E FUSO HORÁRIO:
 Hoje é: ${diaDeHoje}.
-Sempre que o usuário mencionar dias relativos ("amanhã", "sexta"), converta a entidade 'date' EXATAMENTE para o formato "DD/MM/YYYY" usando como base a data de hoje.
+Sempre que mencionar dias relativos ("amanhã", "sexta"), converta a entidade 'date' EXATAMENTE para o formato "DD/MM/YYYY" usando como base hoje.
 Sempre que mencionar horas ("10h", "três da tarde"), converta a entidade 'time' EXATAMENTE para "HH:mm".
 
 MODIFICADORES DE TEMPO (CRÍTICO PARA REQUEST_SPECIFIC_TIME):
-Se o paciente disser "depois das 10", defina "time": "10:00" e "time_modifier": "after".
-Se o paciente disser "antes das 12h", defina "time": "12:00" e "time_modifier": "before".
-Se o paciente apenas passar a hora exata, defina "time_modifier": "exact".
+"depois das 10" -> "time": "10:00", "time_modifier": "after".
+"antes das 12h" -> "time": "12:00", "time_modifier": "before".
+"hora exata" -> "time_modifier": "exact".
 
-Estado atual da conversa (Funil): ${userState?.step || 'IDLE'}
+Estado atual (Funil): ${userState?.step || 'IDLE'}
 
 Responda APENAS com um JSON válido no formato exato:
 {
@@ -114,11 +117,10 @@ Responda APENAS com um JSON válido no formato exato:
             headers: { 'Authorization': `Bearer ${GROQ_API_KEY}` }
         });
 
-        const rawContent = response.data.choices[0].message.content;
-        return JSON.parse(rawContent);
+        return JSON.parse(response.data.choices[0].message.content);
         
     } catch (error) {
-        console.error("❌ [NLP ERRO] Falha ao analisar intenção:", error.response ? JSON.stringify(error.response.data) : error.message);
+        console.error("❌ [NLP ERRO] Falha ao analisar intenção:", error.message);
         return fallbackNLP(mensagem);
     }
 }
@@ -131,12 +133,13 @@ function fallbackNLP(mensagem) {
     else if (msg === "não" || msg.includes("desisto") || msg.includes("deixa pra lá")) intent = "REJECT_APPOINTMENT";
     else if (msg.includes("depois das") || msg.includes("antes das")) intent = "REQUEST_SPECIFIC_TIME";
     else if (msg.includes("mais") || msg.includes("outros horários") || msg.includes("tem outro")) intent = "REQUEST_MORE_TIMES";
+    else if (msg.includes("mudar o dia") || msg.includes("outra data")) intent = "CHANGE_DATE";
+    else if (msg.includes("mudar a hora") || msg.includes("outro horário")) intent = "CHANGE_TIME";
     else if (msg.includes("agendar") || msg.includes("marcar") || msg.includes("dia ") || msg.includes("às ")) intent = "BOOK_APPOINTMENT";
     else if (msg.includes("cancelar consulta") || msg.includes("desmarcar")) intent = "CANCEL_APPOINTMENT";
     else if (msg.includes("remarcar")) intent = "RESCHEDULE_APPOINTMENT";
-    else if (msg.includes("preço") || msg.includes("valor") || msg.includes("custa")) intent = "TREATMENT_PRICE";
+    else if (msg.includes("preço") || msg.includes("valor")) intent = "TREATMENT_PRICE";
     else if (msg.includes("humano") || msg.includes("atendente") || msg.includes("pessoa")) intent = "HUMAN_TRANSFER";
-    else if (msg.includes("horário") || msg.includes("funcionamento")) intent = "CLINIC_HOURS";
     else if (msg.includes("histórico") || msg.includes("já feita")) intent = "CHECK_PAST_APPOINTMENTS";
     else if (msg === "oi" || msg === "olá" || msg === "boa tarde" || msg === "bom dia") intent = "GREETING";
     
@@ -166,7 +169,6 @@ Tom de voz: ${configDb?.tomDeVoz || 'Profissional e acolhedor'}.
 
 PROTEÇÃO CONTRA ALUCINAÇÃO (REGRA DE OURO - CRÍTICO):
 Você está ESTRITAMENTE PROIBIDO de inventar horários, vagas disponíveis, preços de tratamentos ou se a consulta foi marcada.
-Nunca diga "sua consulta foi marcada". Quem diz isso é o sistema.
 Se o usuário perguntar preços ou horários de funcionamento, baseie-se APENAS nos dados fornecidos abaixo.
 
 REGRAS DE MOEDA E SAUDAÇÃO:
