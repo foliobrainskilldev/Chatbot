@@ -101,6 +101,8 @@ async function processarMensagemEntrante(message) {
                 console.log(`🧠 [NLP] Intenção: ${nlpResult.intent} | Entidades:`, JSON.stringify(nlpResult.entities));
             } else if (isInteractive) {
                 if (textoProcessado === 'cmd_agendar') nlpResult.intent = 'BOOK_APPOINTMENT';
+                else if (textoProcessado === 'cmd_menu_tratamentos') nlpResult.intent = 'TREATMENT_LIST';
+                else if (textoProcessado === 'cmd_humano') nlpResult.intent = 'HUMAN_TRANSFER';
                 else if (textoProcessado.startsWith('trat_')) { nlpResult.intent = 'SELECT_TREATMENT'; nlpResult.entities = { treatment_id: textoProcessado.replace('trat_', '') }; }
                 else if (textoProcessado.startsWith('prof_')) { nlpResult.intent = 'SELECT_PROFESSIONAL'; nlpResult.entities = { professional_id: textoProcessado.replace('prof_', '') }; }
                 else if (textoProcessado.startsWith('data_')) { nlpResult.intent = 'SELECT_DATE'; nlpResult.entities = { date: textoProcessado.replace('data_', '') }; }
@@ -132,6 +134,7 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
+            // LÓGICA DE BOAS-VINDAS INTELIGENTE
             if (activeIntent === 'GREETING') {
                 userState.frustrationCount = 0;
                 if (userState.step !== 'IDLE') {
@@ -141,15 +144,24 @@ async function processarMensagemEntrante(message) {
                         { id: 'cmd_cancelar_fluxo', title: 'Cancelar' }
                     ]);
                     return;
+                } else {
+                    // Se estiver IDLE, envia o Menu Principal de Boas-Vindas
+                    const nomeClinica = configDb?.nomeClinica || 'nossa clínica';
+                    const resp = `Olá! Seja bem-vindo(a) à ${nomeClinica}. Como posso ajudar hoje?`;
+                    await whatsappService.sendInteractiveMenu(senderNumber, resp, [
+                        { id: 'cmd_agendar', title: 'Marcar consulta' },
+                        { id: 'cmd_menu_tratamentos', title: 'Ver tratamentos' },
+                        { id: 'cmd_humano', title: 'Falar com a equipe' }
+                    ]);
+                    return;
                 }
             }
 
-            // CORREÇÃO: Adicionado GREETING, GOODBYE e ASK_DATE_REFERENCE na lista de intenções de consulta
             const queryIntents = [
                 'TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST', 
                 'CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS', 
                 'CHECK_UPCOMING_APPOINTMENTS', 'CHECK_PAST_APPOINTMENTS', 
-                'UNKNOWN', 'GREETING', 'GOODBYE', 'ASK_DATE_REFERENCE'
+                'UNKNOWN', 'GOODBYE', 'ASK_DATE_REFERENCE'
             ];
 
             if (queryIntents.includes(activeIntent)) {
@@ -173,7 +185,6 @@ async function processarMensagemEntrante(message) {
                 await flowCancelamento.processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao, cliente, isNewPatient);
             }
             else {
-                // CATCH-ALL DE SEGURANÇA: Se a intenção não caiu em nenhum fluxo acima (impossível, mas previne falhas), manda para a IA responder naturalmente
                 const flowConsultas = require('./flowConsultas');
                 await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historicoLimpo, cliente, isNewPatient);
             }

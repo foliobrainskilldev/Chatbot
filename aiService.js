@@ -56,13 +56,14 @@ Intenções possíveis:
 - UNKNOWN (não se encaixa em nada ou fugiu do assunto)
 
 REGRAS CRÍTICAS DE CLASSIFICAÇÃO:
-1. Se o usuário pedir "menu", "lista de serviços", "quais procedimentos vocês fazem", classifique OBRIGATORIAMENTE como TREATMENT_LIST.
-2. Se o usuário perguntar "quais horários tem disponível?" ou "tem vaga que horas?", classifique como REQUEST_MORE_TIMES.
-3. Se o usuário perguntar o horário de funcionamento de forma genérica (sem especificar que quer agendar), classifique como CLINIC_HOURS.
-4. Se o usuário disser múltiplos dados de agendamento de uma vez (ex: "harmonização na sexta as 10h"), extraia TODAS as entidades (treatment, date, time).
-5. Converta 'date' OBRIGATORIAMENTE para o formato de STRING "DD/MM/YYYY".
-6. Converta 'time' OBRIGATORIAMENTE para o formato de STRING "HH:mm".
-7. TODAS as entidades devem ser devolvidas como texto simples (String). NUNCA array ou object.
+1. Se a mensagem contiver uma saudação E um pedido de agendamento (Ex: "Olá, quero marcar consulta"), a intenção principal é OBRIGATORIAMENTE BOOK_APPOINTMENT, ignorando o Greeting.
+2. Se o usuário pedir "menu", "lista de serviços", "quais procedimentos vocês fazem", classifique OBRIGATORIAMENTE como TREATMENT_LIST.
+3. Se o usuário perguntar "quais horários tem disponível?" ou "tem vaga que horas?", classifique como REQUEST_MORE_TIMES.
+4. Se o usuário perguntar o horário de funcionamento de forma genérica (sem especificar que quer agendar), classifique como CLINIC_HOURS.
+5. Se o usuário disser múltiplos dados de agendamento de uma vez (ex: "harmonização na sexta as 10h"), extraia TODAS as entidades (treatment, date, time).
+6. Converta 'date' OBRIGATORIAMENTE para o formato de STRING "DD/MM/YYYY".
+7. Converta 'time' OBRIGATORIAMENTE para o formato de STRING "HH:mm".
+8. TODAS as entidades devem ser devolvidas como texto simples (String). NUNCA array ou object.
 
 Estado do usuário no sistema: ${userState?.step || 'IDLE'}
 
@@ -120,7 +121,6 @@ async function gerarRespostaNatural(mensagem, historico, contexto, configDb) {
 
     const moedaGlobal = configDb?.moeda || 'MT';
 
-    // Extrai o aviso de prioridade para não ir junto com o JSON de dados
     let avisoPrioridade = "";
     if (contexto.dados_crm && contexto.dados_crm.aviso_sistema_prioridade) {
         avisoPrioridade = contexto.dados_crm.aviso_sistema_prioridade;
