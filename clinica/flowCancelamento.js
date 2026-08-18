@@ -10,9 +10,7 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
     const intent = nlpResult.intent;
     const entities = nlpResult.entities || {};
 
-    if (userState.step === 'IDLE') {
-        userState.step = 'CANCELAMENTO_AWAITING_SELECTION';
-    }
+    if (userState.step === 'IDLE') userState.step = 'CANCELAMENTO_AWAITING_SELECTION';
     
     if (intent === 'REJECT_APPOINTMENT') {
         stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
@@ -20,9 +18,7 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
         return;
     }
 
-    if (intent === 'CANCEL_APPOINTMENT' && entities.appointment_id) {
-        userState.resolvedAppointmentId = parseInt(entities.appointment_id);
-    }
+    if (intent === 'CANCEL_APPOINTMENT' && entities.appointment_id) userState.resolvedAppointmentId = parseInt(entities.appointment_id);
     if (intent === 'RESCHEDULE_APPOINTMENT' && entities.appointment_id) {
         userState.resolvedAppointmentId = parseInt(entities.appointment_id);
         isRemarcacao = true;
@@ -53,9 +49,7 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
             let opcoes = agendamentos.slice(0, 9).map(ag => ({ id: `canc_${ag.id}`, title: ag.tratamento.nome.substring(0, 24), description: format(ag.dataHora, 'dd/MM/yyyy HH:mm') }));
             opcoes.push({ id: 'cmd_cancelar_fluxo', title: 'Voltar / Desistir' });
             
-            const textoMenu = isRemarcacao 
-                ? "Vi que você tem estas consultas ativas. Qual delas você gostaria de reagendar?" 
-                : "Encontrei estas consultas. Qual delas você deseja cancelar?";
+            const textoMenu = isRemarcacao ? "Vi que você tem estas consultas ativas. Qual delas você gostaria de reagendar?" : "Encontrei estas consultas. Qual delas você deseja cancelar?";
             
             await whatsappService.sendInteractiveMenu(jid, textoMenu, opcoes);
             stateMachine.set(senderNumber, userState);

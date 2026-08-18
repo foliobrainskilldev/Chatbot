@@ -1,4 +1,3 @@
-// aiService.js
 const axios = require('axios');
 
 async function transcreverAudio(audioBuffer) {
@@ -50,40 +49,40 @@ async function analisarMensagemNLP(mensagem, historico, userState, configDb) {
     try {
         const prompt = `
 Você é o motor de NLU (Natural Language Understanding) de um HealthCRM.
-Sua tarefa é analisar a mensagem do paciente e extrair a intenção (intent) e as entidades (entities).
+Sua tarefa é classificar a intenção (intent) e extrair entidades (entities).
 
 Intenções permitidas:
-- CLINIC_HOURS (perguntas sobre horário de funcionamento)
-- CLINIC_LOCATION (onde fica, endereço)
+- CLINIC_HOURS (horário de funcionamento da clínica)
+- CLINIC_LOCATION (endereço, onde fica)
 - CLINIC_CONTACT (telefone, contato)
-- CLINIC_PAYMENT_METHODS (pagamento)
-- TREATMENT_LIST (quais serviços fazem)
-- TREATMENT_INFO (informação sobre serviço)
-- TREATMENT_PRICE (preço)
+- CLINIC_PAYMENT_METHODS (pagamento, convênio)
+- TREATMENT_LIST (quais serviços oferecem)
+- TREATMENT_INFO (informações sobre um serviço)
+- TREATMENT_PRICE (quanto custa, preço)
 - BOOK_APPOINTMENT (quer marcar consulta, agendar)
-- CHECK_UPCOMING_APPOINTMENTS (quando é minha consulta)
-- RESCHEDULE_APPOINTMENT (quero mudar o dia, remarcar uma que já existe)
-- CANCEL_APPOINTMENT (quero cancelar, desistir da consulta)
+- CHECK_UPCOMING_APPOINTMENTS (perguntando sobre uma consulta que ELE JÁ MARCOU no passado, ex: "que horas é minha consulta?")
+- RESCHEDULE_APPOINTMENT (remarcar)
+- CANCEL_APPOINTMENT (cancelar consulta)
 - HUMAN_TRANSFER (falar com atendente humano)
-- FRUSTRATION (paciente irritado, "você não entende", "que saco")
+- FRUSTRATION (paciente irritado, "você não entende")
 - GREETING (saudação genérica)
 - GOODBYE (despedida)
 - CONFIRM_APPOINTMENT (sim, pode confirmar, isso mesmo, ok)
 - REJECT_APPOINTMENT (não, deixa pra lá, não quero)
-- REQUEST_MORE_TIMES (tem outros horários? quais mais horários?)
+- REQUEST_MORE_TIMES (tem outros horários? quais mais? e depois?)
 - REQUEST_MORE_DATES (tem outros dias? e semana que vem?)
-- REQUEST_SPECIFIC_TIME (tem depois das 10? pode ser às 14h? antes do almoço?)
+- REQUEST_SPECIFIC_TIME (perguntando DISPONIBILIDADE de um horário específico, ex: "tem depois das 10?", "pode ser às 14?")
 - SELECT_TIME (às 9h, as 14:00, as duas da tarde)
 - SELECT_DATE (amanhã, sexta, dia 20)
-- CHANGE_TREATMENT (quero mudar o tratamento, escolhi errado)
-- CHANGE_DATE (quero mudar o dia/data)
-- CHANGE_TIME (quero mudar a hora)
+- CHANGE_TREATMENT (mudar tratamento)
+- CHANGE_DATE (mudar o dia)
+- CHANGE_TIME (mudar a hora)
 - UNKNOWN (não entendi)
 
-INFORMAÇÃO TEMPORAL E FUSO HORÁRIO:
+REGRAS DE TEMPO:
 Hoje é: ${diaDeHoje}.
-Sempre que mencionar dias relativos ("amanhã", "sexta"), converta a entidade 'date' EXATAMENTE para o formato "DD/MM/YYYY" usando como base hoje.
-Sempre que mencionar horas ("10h", "três da tarde"), converta a entidade 'time' EXATAMENTE para "HH:mm".
+Converta entidades 'date' para "DD/MM/YYYY".
+Converta entidades 'time' para "HH:mm".
 
 MODIFICADORES DE TEMPO (CRÍTICO PARA REQUEST_SPECIFIC_TIME):
 "depois das 10" -> "time": "10:00", "time_modifier": "after".
@@ -92,7 +91,7 @@ MODIFICADORES DE TEMPO (CRÍTICO PARA REQUEST_SPECIFIC_TIME):
 
 Estado atual (Funil): ${userState?.step || 'IDLE'}
 
-Responda APENAS com um JSON válido no formato exato:
+Responda APENAS com JSON:
 {
   "intent": "...",
   "confidence": 0.95,
@@ -132,7 +131,7 @@ function fallbackNLP(mensagem) {
     if (msg === "sim" || msg.includes("pode confirmar") || msg.includes("confirmo") || msg === "ok") intent = "CONFIRM_APPOINTMENT";
     else if (msg === "não" || msg.includes("desisto") || msg.includes("deixa pra lá")) intent = "REJECT_APPOINTMENT";
     else if (msg.includes("depois das") || msg.includes("antes das") || msg.includes("partir das")) intent = "REQUEST_SPECIFIC_TIME";
-    else if (msg.includes("quais mais") || msg.includes("mais horários") || msg.includes("tem outro")) intent = "REQUEST_MORE_TIMES";
+    else if (msg.includes("quais mais") || msg.includes("mais horários") || msg.includes("tem outro") || msg.includes("são só esses")) intent = "REQUEST_MORE_TIMES";
     else if (msg.includes("mudar o dia") || msg.includes("outra data")) intent = "CHANGE_DATE";
     else if (msg.includes("mudar a hora") || msg.includes("outro horário")) intent = "CHANGE_TIME";
     else if (msg.includes("agendar") || msg.includes("marcar") || msg.includes("dia ") || msg.includes("às ")) intent = "BOOK_APPOINTMENT";
@@ -140,7 +139,7 @@ function fallbackNLP(mensagem) {
     else if (msg.includes("remarcar")) intent = "RESCHEDULE_APPOINTMENT";
     else if (msg.includes("preço") || msg.includes("valor")) intent = "TREATMENT_PRICE";
     else if (msg.includes("humano") || msg.includes("atendente") || msg.includes("pessoa")) intent = "HUMAN_TRANSFER";
-    else if (msg.includes("histórico") || msg.includes("já feita")) intent = "CHECK_PAST_APPOINTMENTS";
+    else if (msg.includes("histórico") || msg.includes("minha consulta")) intent = "CHECK_UPCOMING_APPOINTMENTS";
     else if (msg === "oi" || msg === "olá" || msg === "boa tarde" || msg === "bom dia") intent = "GREETING";
     
     return { intent, confidence: 0.6, entities: {} };
@@ -155,40 +154,26 @@ async function gerarRespostaNatural(mensagem, historico, contexto, configDb) {
 
     const fusoHorario = configDb?.fusoHorario || 'Africa/Maputo';
     const moedaGlobal = configDb?.moeda || 'MT';
-    const formatter = new Intl.DateTimeFormat('pt-BR', { 
-        timeZone: fusoHorario,
-        year: 'numeric', month: 'long', day: 'numeric',
-        hour: '2-digit', minute: '2-digit', second: '2-digit'
-    });
-    const dataHoraAtual = formatter.format(new Date());
 
     try {
         const prompt = `
 Você é ${configDb?.nomeAssistente || 'o assistente virtual'} da clínica ${configDb?.nomeClinica || 'HealthCRM'}.
-Tom de voz: ${configDb?.tomDeVoz || 'Profissional e acolhedor'}.
 
-PROTEÇÃO CONTRA ALUCINAÇÃO (REGRA DE OURO - CRÍTICO):
-Você está ESTRITAMENTE PROIBIDO de inventar horários, vagas disponíveis, preços de tratamentos ou se a consulta foi marcada.
-Se o usuário perguntar preços ou horários de funcionamento, baseie-se APENAS nos dados fornecidos abaixo.
-
-REGRAS DE MOEDA E SAUDAÇÃO:
-- A moeda da clínica é ${moedaGlobal}. Nunca fale em Reais ou Dólares.
-- NUNCA inicie sua resposta com saudações (Bom dia/Olá) se já estiver no meio da conversa.
+REGRA ABSOLUTA:
+Você está ESTRITAMENTE PROIBIDO de inventar horários da agenda, preços ou confirmar consultas.
+Se o usuário perguntar preços, endereço ou horários de funcionamento, baseie-se APENAS nos dados fornecidos abaixo.
+A moeda é ${moedaGlobal}. Nunca fale em Reais ou Dólares.
 
 INFORMAÇÕES DO PACIENTE:
 - Nome: ${contexto.paciente_nome || 'Paciente'}
 
-DADOS DE CONTEXTO DO CRM (USE APENAS ISTO COMO VERDADE ABSOLUTA):
+DADOS DA CLÍNICA PARA RESPONDER À DÚVIDA:
 ${JSON.stringify(contexto.dados_crm || {}, null, 2)}
 
-Sua tarefa: Formule uma resposta conversacional e gentil que entregue a informação solicitada ou resolva o problema apontado no contexto acima.
+Sua tarefa: Formule uma resposta conversacional curta que entregue a informação solicitada. Se houver uma AVISO DE PRIORIDADE no contexto, inclua-o organicamente no final.
 `;
 
-        const rawMessages = [
-            ...(historico || []),
-            { role: "user", content: mensagem }
-        ];
-
+        const rawMessages = [...(historico || []), { role: "user", content: mensagem }];
         const mergedMessages = [];
         let lastRole = null;
 

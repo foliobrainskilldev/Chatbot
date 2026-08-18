@@ -1,6 +1,7 @@
 const { prisma } = require('../db');
 const aiService = require('../aiService');
 const whatsappService = require('../whatsappService');
+const { format } = require('date-fns');
 
 function formatarMoeda(valor, moeda) {
     if (!valor) return '';
@@ -11,55 +12,58 @@ function formatarMoeda(valor, moeda) {
 }
 
 async function processarDuvidas(jid, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient) {
-    let dadosCrmContexto = {};
     const intent = nlpResult?.intent || "UNKNOWN";
     const moedaGlobal = configDb?.moeda || 'MT'; 
 
-    try {
-        const historicoAgendamentos = await prisma.agendamento.findMany({
-            where: { clienteId: senderNumber, tratamentoId: { not: null } },
+    // AÇÃO ESTRITAMENTE DETERMINÍSTICA (A IA NÃO ENTRA AQUI)
+    if (intent === 'CHECK_UPCOMING_APPOINTMENTS' || intent === 'CHECK_PAST_APPOINTMENTS') {
+        const agendamentos = await prisma.agendamento.findMany({
+            where: { clienteId: senderNumber, status: { in: ['AGENDADO', 'CONFIRMADA'] }, dataHora: { gte: new Date() } },
             include: { tratamento: true, profissionalSaude: true },
-            orderBy: { dataHora: 'desc' },
-            take: 5 
+            orderBy: { dataHora: 'asc' }
         });
-        
-        if (historicoAgendamentos.length > 0) {
-            dadosCrmContexto.historico_consultas_paciente = historicoAgendamentos.map(ag => ({
-                id_consulta: ag.id,
-                dataHora: ag.dataHora,
-                status: ag.status,
-                tratamento: ag.tratamento?.nome,
-                medico: ag.profissionalSaude?.nome || "Equipe Médica"
-            }));
+
+        if (agendamentos.length === 0) {
+            await whatsappService.sendText(jid, "Você não possui nenhuma consulta futura marcada no sistema.");
         } else {
-            dadosCrmContexto.historico_consultas_paciente = "Este paciente é novo ou não possui nenhuma consulta lançada no sistema.";
+            let texto = "📅 *SUAS PRÓXIMAS CONSULTAS:*\n\n";
+            agendamentos.forEach((ag, index) => {
+                const nomeProf = ag.profissionalSaude ? ag.profissionalSaude.nome : 'Equipe Médica';
+                const tratNome = ag.tratamento ? ag.tratamento.nome : 'Consulta';
+                texto += `*${index + 1}. ${tratNome}*\n`;
+                texto += `🕑 ${format(ag.dataHora, "dd/MM/yyyy 'às' HH:mm")}\n`;
+                texto += `👨‍⚕️ Profissional: ${nomeProf}\n\n`;
+            });
+            await whatsappService.sendText(jid, texto.trim());
         }
-    } catch (e) {
-        console.error("Aviso: Falha ao carregar histórico de consultas no fluxo de dúvidas.");
+
+        // Context Bridge
+        if (userState && userState.step.startsWith('AGENDAMENTO_')) {
+            await whatsappService.sendInteractiveMenu(jid, "Voltando ao nosso agendamento... deseja continuar de onde paramos?", [
+                { id: 'cmd_agendar', title: 'Continuar agendamento' },
+                { id: 'cmd_cancelar_fluxo', title: 'Cancelar' }
+            ]);
+        }
+        return;
     }
 
+    // AÇÃO DE DÚVIDA ORGÂNICA (A IA ENTRA AQUI COM CONTEXTO RESTRITO)
+    let dadosCrmContexto = {};
     const treatmentIntents = ['TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST'];
     const clinicIntents = ['CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS'];
 
     if (treatmentIntents.includes(intent)) {
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' }});
-        
         const mapearTratamento = (t) => ({
-            nome: t.nome,
-            categoria: t.categoria,
+            nome: t.nome, categoria: t.categoria,
             preco: t.preco ? formatarMoeda(t.preco, moedaGlobal) : 'Sob Avaliação',
-            tipoPreco: t.tipoPreco,
             informacoes_adicionais: t.informacoesIA
         });
 
         if (nlpResult?.entities?.treatment && intent !== 'TREATMENT_LIST') {
             const search = nlpResult.entities.treatment.toLowerCase();
             const match = tratamentos.find(t => t.nome.toLowerCase().includes(search));
-            if (match) {
-                dadosCrmContexto.tratamento_solicitado = mapearTratamento(match);
-            } else {
-                dadosCrmContexto.tratamentos_cadastrados_no_catalogo = tratamentos.map(mapearTratamento);
-            }
+            dadosCrmContexto.tratamento_solicitado = match ? mapearTratamento(match) : tratamentos.map(mapearTratamento);
         } else {
             dadosCrmContexto.tratamentos_cadastrados_no_catalogo = tratamentos.map(mapearTratamento);
         }
@@ -74,18 +78,12 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         dadosCrmContexto.dados_basicos = { nome_clinica: configDb?.nomeClinica || "Clínica", faq: configDb?.faq || "" };
     }
 
+    // Context Bridge Instructions para a IA
     if (userState && userState.step.startsWith('AGENDAMENTO_')) {
         dadosCrmContexto.aviso_sistema_prioridade = `INSTRUÇÃO CRÍTICA: O paciente está atualmente no MEIO de um fluxo de agendamento (Passo: ${userState.step}). Responda a dúvida de forma orgânica e, OBRIGATORIAMENTE no final, diga algo como: 'Voltando ao nosso agendamento, deseja continuar com a escolha?'`;
-    } else if (intent === 'TREATMENT_PRICE' || intent === 'TREATMENT_INFO') {
-        dadosCrmContexto.aviso_sistema_prioridade = "DICA: Após responder a dúvida, pergunte casualmente se o paciente deseja verificar os horários disponíveis para esse procedimento.";
     }
 
-    const contextoIA = {
-        paciente_nome: cliente.nome || 'Paciente',
-        paciente_novo: isNewPatient,
-        dados_crm: dadosCrmContexto
-    };
-
+    const contextoIA = { paciente_nome: cliente.nome || 'Paciente', dados_crm: dadosCrmContexto };
     const respostaIA = await aiService.gerarRespostaNatural(textoProcessado, historico, contextoIA, configDb);
     
     await prisma.mensagemIA.create({ data: { role: 'assistant', content: respostaIA, clienteId: senderNumber } });
