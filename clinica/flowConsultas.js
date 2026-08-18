@@ -101,8 +101,14 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
     } 
     else {
         dadosCrmContexto.dados_basicos = { nome_clinica: configDb?.nomeClinica || "Clínica", faq: configDb?.faq || "" };
+        
+        // Instruções específicas para saudações e falhas
         if (intent === 'UNKNOWN') {
             dadosCrmContexto.aviso_sistema_prioridade = "Você não conseguiu classificar a última mensagem. Peça desculpas gentilmente e pergunte em que pode ajudar.";
+        } else if (intent === 'GREETING') {
+            dadosCrmContexto.aviso_sistema_prioridade = "O usuário está saudando você. Responda de forma amigável, apresente-se como assistente da clínica e pergunte como pode ajudar.";
+        } else if (intent === 'GOODBYE') {
+            dadosCrmContexto.aviso_sistema_prioridade = "O usuário está se despedindo. Despeça-se educadamente e diga que a clínica está à disposição.";
         }
     }
 

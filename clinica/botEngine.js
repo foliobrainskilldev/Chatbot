@@ -144,7 +144,13 @@ async function processarMensagemEntrante(message) {
                 }
             }
 
-            const queryIntents = ['TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST', 'CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS', 'CHECK_UPCOMING_APPOINTMENTS', 'CHECK_PAST_APPOINTMENTS', 'UNKNOWN'];
+            // CORREÇÃO: Adicionado GREETING, GOODBYE e ASK_DATE_REFERENCE na lista de intenções de consulta
+            const queryIntents = [
+                'TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST', 
+                'CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS', 
+                'CHECK_UPCOMING_APPOINTMENTS', 'CHECK_PAST_APPOINTMENTS', 
+                'UNKNOWN', 'GREETING', 'GOODBYE', 'ASK_DATE_REFERENCE'
+            ];
 
             if (queryIntents.includes(activeIntent)) {
                 const flowConsultas = require('./flowConsultas');
@@ -165,6 +171,11 @@ async function processarMensagemEntrante(message) {
                 const isRemarcacao = activeIntent === 'RESCHEDULE_APPOINTMENT';
                 const flowCancelamento = require('./flowCancelamento');
                 await flowCancelamento.processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao, cliente, isNewPatient);
+            }
+            else {
+                // CATCH-ALL DE SEGURANÇA: Se a intenção não caiu em nenhum fluxo acima (impossível, mas previne falhas), manda para a IA responder naturalmente
+                const flowConsultas = require('./flowConsultas');
+                await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historicoLimpo, cliente, isNewPatient);
             }
 
         } catch (error) {
