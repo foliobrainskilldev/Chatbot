@@ -44,9 +44,11 @@ Intenções possíveis:
 - TREATMENT_LIST, TREATMENT_INFO, TREATMENT_PRICE
 - BOOK_APPOINTMENT (quer agendar algo genérico ou específico)
 - CHECK_UPCOMING_APPOINTMENTS, RESCHEDULE_APPOINTMENT, CANCEL_APPOINTMENT
-- HUMAN_TRANSFER (quer falar com atendente), FRUSTRATION (irritado)
+- HUMAN_TRANSFER (quer falar com atendente explicitamente)
+- FRUSTRATION (irritado, xingamentos - NÃO use para "esqueça" ou "deixa pra lá")
 - GREETING, GOODBYE
-- CONFIRM_APPOINTMENT (sim, confirme), REJECT_APPOINTMENT (não, cancelar)
+- CONFIRM_APPOINTMENT (sim, confirme)
+- REJECT_APPOINTMENT (não, cancelar, esqueça, deixa pra lá, não quero mais)
 - REQUEST_MORE_TIMES, REQUEST_MORE_DATES, REQUEST_SPECIFIC_TIME (ex: "tem depois das 10?")
 - SELECT_TIME (ex: "às 9h", "14:00")
 - SELECT_DATE (ex: "amanhã", "sexta")
@@ -57,13 +59,12 @@ Intenções possíveis:
 
 REGRAS CRÍTICAS DE CLASSIFICAÇÃO:
 1. Se a mensagem contiver uma saudação E um pedido de agendamento (Ex: "Olá, quero marcar consulta"), a intenção principal é OBRIGATORIAMENTE BOOK_APPOINTMENT, ignorando o Greeting.
-2. Se o usuário pedir "menu", "lista de serviços", "quais procedimentos vocês fazem", classifique OBRIGATORIAMENTE como TREATMENT_LIST.
-3. Se o usuário perguntar "quais horários tem disponível?" ou "tem vaga que horas?", classifique como REQUEST_MORE_TIMES.
-4. Se o usuário perguntar o horário de funcionamento de forma genérica (sem especificar que quer agendar), classifique como CLINIC_HOURS.
-5. Se o usuário disser múltiplos dados de agendamento de uma vez (ex: "harmonização na sexta as 10h"), extraia TODAS as entidades (treatment, date, time).
-6. Converta 'date' OBRIGATORIAMENTE para o formato de STRING "DD/MM/YYYY".
-7. Converta 'time' OBRIGATORIAMENTE para o formato de STRING "HH:mm".
-8. TODAS as entidades devem ser devolvidas como texto simples (String). NUNCA array ou object.
+2. Se o usuário disser "esqueça", "deixa pra lá", "não quero mais", classifique OBRIGATORIAMENTE como REJECT_APPOINTMENT.
+3. Se o usuário pedir "menu", "lista de serviços", "quais procedimentos vocês fazem", classifique OBRIGATORIAMENTE como TREATMENT_LIST.
+4. Se o usuário disser múltiplos dados de agendamento de uma vez (ex: "harmonização na sexta as 10h"), extraia TODAS as entidades (treatment, date, time).
+5. Converta 'date' OBRIGATORIAMENTE para o formato de STRING "DD/MM/YYYY".
+6. Converta 'time' OBRIGATORIAMENTE para o formato de STRING "HH:mm".
+7. TODAS as entidades devem ser devolvidas como texto simples (String). NUNCA array ou object.
 
 Estado do usuário no sistema: ${userState?.step || 'IDLE'}
 
@@ -103,7 +104,7 @@ function fallbackNLP(mensagem) {
     let intent = "UNKNOWN";
     
     if (msg === "sim" || msg.includes("confirmo") || msg === "ok") intent = "CONFIRM_APPOINTMENT";
-    else if (msg === "não" || msg.includes("desisto") || msg.includes("cancela")) intent = "REJECT_APPOINTMENT";
+    else if (msg === "não" || msg.includes("desisto") || msg.includes("cancela") || msg.includes("esqueça") || msg.includes("deixa pra lá")) intent = "REJECT_APPOINTMENT";
     else if (msg.includes("menu") || msg.includes("serviços") || msg.includes("procedimentos")) intent = "TREATMENT_LIST";
     else if (msg.includes("horário") || msg.includes("disponível") || msg.includes("vaga")) intent = "REQUEST_MORE_TIMES";
     else if (msg.includes("funcionamento")) intent = "CLINIC_HOURS";

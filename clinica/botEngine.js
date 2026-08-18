@@ -63,13 +63,20 @@ async function processarMensagemEntrante(message) {
             let textoProcessado = "";
             let isTranscribed = false;
 
+            // TRATAMENTO DE ÁUDIO COM INTERCEPTAÇÃO DE FALHA
             if (message.type === 'audio') {
                 const mediaId = message.audio.id;
                 try { 
                     const audioBuffer = await whatsappService.downloadMedia(mediaId);
                     textoProcessado = await aiService.transcreverAudio(audioBuffer);
                     isTranscribed = true;
-                } catch(e) { textoProcessado = "[Falha na transcrição do áudio]"; }
+                    
+                    if (textoProcessado.includes("Não foi possível compreender") || textoProcessado.trim() === "") {
+                        textoProcessado = "[FALHA_AUDIO]";
+                    }
+                } catch(e) { 
+                    textoProcessado = "[FALHA_AUDIO]"; 
+                }
             } else if (['image', 'video', 'document'].includes(message.type)) {
                 textoProcessado = message[message.type].caption || "[Mídia Recebida]"; 
             } else if (message.type === 'text') {
@@ -79,6 +86,15 @@ async function processarMensagemEntrante(message) {
             }
 
             if (!textoProcessado) return;
+
+            // SE O ÁUDIO FALHOU, ABORTA O FLUXO AQUI E PEDE PARA REPETIR
+            if (textoProcessado === "[FALHA_AUDIO]") {
+                await prisma.mensagemIA.create({ data: { role: 'user', content: '[Áudio Recebido - Incompreensível]', clienteId: senderNumber } });
+                const respFalha = "Desculpe, não consegui ouvir direito o seu áudio. Você poderia gravar novamente ou digitar a mensagem?";
+                await prisma.mensagemIA.create({ data: { role: 'assistant', content: respFalha, clienteId: senderNumber } });
+                await whatsappService.sendText(senderNumber, respFalha);
+                return;
+            }
 
             let contentToSave = isTranscribed ? `[Áudio Transcrito]: ${textoProcessado}` : textoProcessado;
             await prisma.mensagemIA.create({ data: { role: 'user', content: contentToSave, clienteId: senderNumber } });
@@ -123,18 +139,18 @@ async function processarMensagemEntrante(message) {
                 userState.frustrationCount = 0;
             }
 
+            // TRANSFERÊNCIA PARA HUMANO
             if (userState.frustrationCount >= 3 || activeIntent === 'HUMAN_TRANSFER' || activeIntent === 'FRUSTRATION') {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
                 limparMemoriaEstado(senderNumber);
                 
-                const resp = "Percebi que precisa de uma ajuda mais específica. Vou transferir você para a nossa equipe humana agora mesmo. Só um instante!";
+                const resp = "Atendimento transferido. A partir de agora, você está falando diretamente com a nossa equipe humana. Como podemos ajudar?";
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: `[SISTEMA] ${resp}`, clienteId: senderNumber } });
                 await whatsappService.sendText(senderNumber, resp);
                 if (global.io) global.io.emit('atualizar_fila');
                 return;
             }
 
-            // LÓGICA DE BOAS-VINDAS INTELIGENTE
             if (activeIntent === 'GREETING') {
                 userState.frustrationCount = 0;
                 if (userState.step !== 'IDLE') {
@@ -145,7 +161,6 @@ async function processarMensagemEntrante(message) {
                     ]);
                     return;
                 } else {
-                    // Se estiver IDLE, envia o Menu Principal de Boas-Vindas
                     const nomeClinica = configDb?.nomeClinica || 'nossa clínica';
                     const resp = `Olá! Seja bem-vindo(a) à ${nomeClinica}. Como posso ajudar hoje?`;
                     await whatsappService.sendInteractiveMenu(senderNumber, resp, [

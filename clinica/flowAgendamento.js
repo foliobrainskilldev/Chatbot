@@ -28,7 +28,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
 
     if (intent === 'REJECT_APPOINTMENT' || intent === 'CANCEL_APPOINTMENT') {
         stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
-        await whatsappService.sendText(jid, 'Tudo bem! O processo de agendamento foi cancelado. Como posso te ajudar agora?');
+        await whatsappService.sendText(jid, 'Tudo bem! O processo de agendamento foi cancelado. Se precisar de mais alguma coisa, é só me chamar.');
         return;
     }
 
@@ -115,25 +115,26 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
                 return;
             }
             
-            // LINGUAGEM NATURAL + OPÇÃO DE MENU: O usuário pode clicar ou digitar livremente
-            let introText = "";
             if (searchedButNotFound) {
-                introText = `Não encontrei o tratamento solicitado. Por favor, digite novamente ou escolha uma das opções cadastradas abaixo:`;
+                let introText = `Não encontrei o tratamento solicitado. Por favor, digite novamente ou escolha uma das opções cadastradas abaixo:`;
+                const moedaGlobal = configDb?.moeda || 'MT';
+                const rows = tratamentos.slice(0, 10).map(t => ({ 
+                    id: `trat_${t.id}`, title: t.nome.substring(0, 24), description: t.preco ? `Valor: ${formatarMoeda(t.preco, moedaGlobal)}` : 'Consulte valor' 
+                }));
+                await whatsappService.sendInteractiveList(jid, introText, "Ver procedimentos", [{ title: "Tratamentos", rows: rows }]);
             } else {
-                introText = "Claro, vamos iniciar o seu agendamento! Qual procedimento você deseja realizar? Você pode digitar o nome ou escolher na lista abaixo:";
+                let introText = "Claro, vamos iniciar o seu agendamento! Qual procedimento você deseja realizar? Você pode digitar o nome ou escolher na lista abaixo:";
                 if (userState.timeFilter || intent === 'REQUEST_SPECIFIC_TIME' || intent === 'REQUEST_MORE_TIMES') {
                     introText = "Consigo olhar os horários livres sim! Mas como cada procedimento tem um tempo de duração, eu preciso saber primeiro: qual tratamento você quer agendar? Escolha na lista ou digite:";
                 } else if (userState.resolvedDate) {
                     introText = `Perfeito, posso olhar a agenda para essa data! Qual procedimento vamos agendar? Escolha na lista ou digite:`;
                 }
+                const moedaGlobal = configDb?.moeda || 'MT';
+                const rows = tratamentos.slice(0, 10).map(t => ({ 
+                    id: `trat_${t.id}`, title: t.nome.substring(0, 24), description: t.preco ? `Valor: ${formatarMoeda(t.preco, moedaGlobal)}` : 'Consulte valor' 
+                }));
+                await whatsappService.sendInteractiveList(jid, introText, "Ver procedimentos", [{ title: "Tratamentos", rows: rows }]);
             }
-
-            const moedaGlobal = configDb?.moeda || 'MT';
-            const rows = tratamentos.slice(0, 10).map(t => ({ 
-                id: `trat_${t.id}`, title: t.nome.substring(0, 24), description: t.preco ? `Valor: ${formatarMoeda(t.preco, moedaGlobal)}` : 'Consulte valor' 
-            }));
-            
-            await whatsappService.sendInteractiveList(jid, introText, "Ver procedimentos", [{ title: "Tratamentos", rows: rows }]);
 
             userState.step = 'AGENDAMENTO_COLLECTING_TREATMENT';
             stateMachine.set(senderNumber, userState);
