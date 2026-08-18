@@ -1,6 +1,6 @@
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
-const { getHorariosDisponiveis, getProximosDiasUteis, humanizarData } = require('../../dateUtils');
+const { getHorariosDisponiveis, getProximosDiasUteis, humanizarData } = require('../dateUtils');
 const automationEngine = require('../services/automationEngine');
 const webhookService = require('../services/webhookService');
 
@@ -13,7 +13,7 @@ function formatarMoeda(valor, moeda) {
 }
 
 function normalizeTime(t) {
-    if (!t) return null;
+    if (!t || t === 'undefined' || t === 'null') return null;
     let match = String(t).match(/(\d{1,2})[:hH](\d{2})/);
     if (match) return `${match[1].padStart(2, '0')}:${match[2]}`;
     match = String(t).match(/(\d{1,2})/);
@@ -26,7 +26,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
     const intent = nlpResult.intent;
     const entities = nlpResult.entities || {};
 
-    // CORREÇÃO: Qualquer intenção de cancelamento aborta o fluxo imediatamente
     if (intent === 'REJECT_APPOINTMENT' || intent === 'CANCEL_APPOINTMENT') {
         stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
         await whatsappService.sendText(jid, 'Tudo bem! O processo de agendamento foi cancelado. Como posso te ajudar agora?');
@@ -55,7 +54,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
 
     userState.entities = { ...userState.entities, ...entities };
 
-    // Fallback manual para garantir que não perca dia e hora se o NLP falhar
+    // Fallback manual de segurança para extrair data e hora se a IA falhar
     if (!userState.entities.date) {
         const dateMatch = textoProcessado.match(/dia (\d{1,2})/i);
         if (dateMatch) userState.entities.date = dateMatch[1].padStart(2, '0');
@@ -86,7 +85,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         else userState.resolvedProfissional = await prisma.profissionalSaude.findUnique({ where: { id: parseInt(entities.professional_id) }});
     }
     
-    // CORREÇÃO: Captura data e hora imediatamente do userState
     if (userState.entities.date && !userState.resolvedDate) {
         const searchDate = String(userState.entities.date);
         const diasValidos = await getProximosDiasUteis(30);
@@ -118,7 +116,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
                 return;
             }
             
-            // CORREÇÃO: Resposta natural sem forçar o menu, a menos que não encontre o que o usuário digitou
             if (searchedButNotFound) {
                 let introText = `Não encontrei o tratamento solicitado. Por favor, escolha uma das opções cadastradas abaixo:`;
                 const moedaGlobal = configDb?.moeda || 'MT';
@@ -292,7 +289,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         const resumo = `*Resumo da Consulta*\n🩺 Procedimento: ${userState.resolvedTreatment.nome}\n👨‍⚕️ Profissional: ${userState.resolvedProfissional.nome}\n📅 Data: ${dateH.longo}\n🕐 Hora: ${userState.resolvedTime}\n\nPosso confirmar esse horário para você?`;
         await whatsappService.sendInteractiveMenu(jid, resumo, [
             { id: 'cmd_confirmar_reserva', title: 'Sim, Confirmar' }, 
-            { id: 'cmd_cancelar_fluxo', title: 'Cancelar/Alterar' }
+            { id: 'cmd_cancelar_fluxo', title: 'Cancelar' }
         ]);
         userState.step = 'AGENDAMENTO_AWAITING_CONFIRMATION';
         stateMachine.set(senderNumber, userState);

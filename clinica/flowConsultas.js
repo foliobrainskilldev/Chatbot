@@ -46,7 +46,6 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         return;
     }
 
-    // ENVIO DO MENU INTERATIVO (Evita tabelas feias geradas pela IA)
     if (intent === 'TREATMENT_LIST') {
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO', podeAgendarIA: true }});
         if (tratamentos.length > 0) {
@@ -107,7 +106,6 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         }
     }
 
-    // CONTEXT BRIDGE: Mantém o usuário no fluxo sem prendê-lo
     if (userState && userState.step.startsWith('AGENDAMENTO_')) {
         let passoFaltante = "continuar com o agendamento";
         if (userState.step === 'AGENDAMENTO_COLLECTING_TREATMENT') passoFaltante = "Qual procedimento você deseja realizar?";

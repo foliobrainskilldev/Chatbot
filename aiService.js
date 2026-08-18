@@ -40,17 +40,14 @@ Você é o motor NLU (Natural Language Understanding) de um sistema de Saúde.
 Sua tarefa é analisar a ÚLTIMA MENSAGEM DO USUÁRIO e extrair a intenção e entidades de forma precisa.
 
 Intenções possíveis:
-- CLINIC_HOURS (horário de funcionamento geral da clínica)
-- CLINIC_LOCATION, CLINIC_CONTACT, CLINIC_PAYMENT_METHODS
-- TREATMENT_LIST (pedir lista de serviços, menu)
-- TREATMENT_INFO, TREATMENT_PRICE
+- CLINIC_HOURS, CLINIC_LOCATION, CLINIC_CONTACT, CLINIC_PAYMENT_METHODS
+- TREATMENT_LIST, TREATMENT_INFO, TREATMENT_PRICE
 - BOOK_APPOINTMENT (quer agendar algo genérico ou específico)
 - CHECK_UPCOMING_APPOINTMENTS, RESCHEDULE_APPOINTMENT, CANCEL_APPOINTMENT
 - HUMAN_TRANSFER (quer falar com atendente), FRUSTRATION (irritado)
 - GREETING, GOODBYE
 - CONFIRM_APPOINTMENT (sim, confirme), REJECT_APPOINTMENT (não, cancelar)
-- REQUEST_MORE_TIMES (perguntar "quais horários tem disponível?", "tem vaga que horas?")
-- REQUEST_MORE_DATES, REQUEST_SPECIFIC_TIME (ex: "tem depois das 10?")
+- REQUEST_MORE_TIMES, REQUEST_MORE_DATES, REQUEST_SPECIFIC_TIME (ex: "tem depois das 10?")
 - SELECT_TIME (ex: "às 9h", "14:00")
 - SELECT_DATE (ex: "amanhã", "sexta")
 - SELECT_TREATMENT (ex: "quero fazer harmonização facial")
@@ -112,6 +109,7 @@ function fallbackNLP(mensagem) {
     else if (msg.includes("depois das") || msg.includes("antes das")) intent = "REQUEST_SPECIFIC_TIME";
     else if (msg.includes("agendar") || msg.includes("marcar") || msg.includes("consulta")) intent = "BOOK_APPOINTMENT";
     else if (msg.includes("humano") || msg.includes("atendente")) intent = "HUMAN_TRANSFER";
+    else if (msg === "oi" || msg === "olá" || msg === "ola" || msg === "bom dia" || msg === "boa tarde") intent = "GREETING";
     
     return { intent, confidence: 0.6, entities: {} };
 }

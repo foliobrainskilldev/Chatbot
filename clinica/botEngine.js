@@ -83,7 +83,6 @@ async function processarMensagemEntrante(message) {
             let contentToSave = isTranscribed ? `[Áudio Transcrito]: ${textoProcessado}` : textoProcessado;
             await prisma.mensagemIA.create({ data: { role: 'user', content: contentToSave, clienteId: senderNumber } });
 
-            // LIMPEZA DE HISTÓRICO: Pega apenas as últimas 4 mensagens e remove avisos do sistema para não confundir a IA
             const historicoRaw = await prisma.mensagemIA.findMany({ where: { clienteId: senderNumber }, take: 4, orderBy: { criadoEm: 'desc' } });
             historicoRaw.reverse();
             
@@ -116,7 +115,6 @@ async function processarMensagemEntrante(message) {
 
             let activeIntent = nlpResult.intent || 'UNKNOWN';
 
-            // TRAVA DE FRUSTRAÇÃO: Se a IA não entender 3 vezes seguidas, transfere para humano
             if (activeIntent === 'UNKNOWN') {
                 userState.frustrationCount = (userState.frustrationCount || 0) + 1;
             } else {
@@ -134,13 +132,16 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            if (activeIntent === 'GREETING' && userState.step !== 'IDLE') {
-                const resp = "Olá novamente! Estávamos no meio do seu agendamento. Deseja continuar com a reserva ou prefere cancelar?";
-                await whatsappService.sendInteractiveMenu(senderNumber, resp, [
-                    { id: 'cmd_agendar', title: 'Continuar agendando' },
-                    { id: 'cmd_cancelar_fluxo', title: 'Cancelar' }
-                ]);
-                return;
+            if (activeIntent === 'GREETING') {
+                userState.frustrationCount = 0;
+                if (userState.step !== 'IDLE') {
+                    const resp = "Olá novamente! Estávamos no meio do seu agendamento. Deseja continuar com a reserva ou prefere cancelar?";
+                    await whatsappService.sendInteractiveMenu(senderNumber, resp, [
+                        { id: 'cmd_agendar', title: 'Continuar' },
+                        { id: 'cmd_cancelar_fluxo', title: 'Cancelar' }
+                    ]);
+                    return;
+                }
             }
 
             const queryIntents = ['TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST', 'CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS', 'CHECK_UPCOMING_APPOINTMENTS', 'CHECK_PAST_APPOINTMENTS', 'UNKNOWN'];
@@ -156,8 +157,7 @@ async function processarMensagemEntrante(message) {
             const bookingIntents = ['BOOK_APPOINTMENT', 'SELECT_TREATMENT', 'SELECT_PROFESSIONAL', 'SELECT_DATE', 'SELECT_TIME', 'REQUEST_MORE_TIMES', 'REQUEST_MORE_DATES', 'REQUEST_SPECIFIC_TIME', 'CONFIRM_APPOINTMENT', 'REJECT_APPOINTMENT', 'CHANGE_TREATMENT', 'CHANGE_DATE', 'CHANGE_TIME'];
             const cancelIntents = ['CANCEL_APPOINTMENT', 'RESCHEDULE_APPOINTMENT'];
 
-            // Roteamento robusto: Se está no meio do agendamento, o flowAgendamento assume (inclusive para abortar se o usuário disser "Cancele")
-            if (userState.step.startsWith('AGENDAMENTO_') || bookingIntents.includes(activeIntent)) {
+            if (bookingIntents.includes(activeIntent) || userState.step.startsWith('AGENDAMENTO_')) {
                 const flowAgendamento = require('./flowAgendamento');
                 await flowAgendamento.processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, isNewPatient);
             } 
