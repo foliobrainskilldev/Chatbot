@@ -26,7 +26,7 @@ async function processarMensagemEntrante(message) {
             console.log(`===========================================`);
 
             let pushName = message.profile?.name || null;
-            let cliente = await getOrCreateCliente(senderNumber, pushName);
+            let { cliente, isNewPatient } = await getOrCreateCliente(senderNumber, pushName);
             
             if (cliente.falarHumano) {
                 console.log(`🛑 [MOTOR BARBEARIA] Cliente em atendimento humano. Ignorando bot.`);
@@ -43,12 +43,10 @@ async function processarMensagemEntrante(message) {
 
             if (message.type === 'audio') {
                 const mediaId = message.audio.id;
-                console.log(`🎙️ [WHISPER] Baixando áudio do WhatsApp...`);
                 try {
                     const audioBuffer = await whatsappService.downloadMedia(mediaId);
                     textoProcessado = await aiService.transcreverAudio(audioBuffer);
                     isTranscribed = true;
-                    console.log(`🎙️ [WHISPER] Texto Transcrito (Barbearia): "${textoProcessado}"`);
                 } catch (e) {
                     textoProcessado = "[Áudio Recebido - Falha na Transcrição]";
                 }
@@ -58,23 +56,15 @@ async function processarMensagemEntrante(message) {
                 textoProcessado = message.interactive.button_reply?.id || message.interactive.list_reply?.id;
             }
             
-            if (!textoProcessado) {
-                console.log(`⚠️ [MOTOR BARBEARIA] Mensagem sem texto ignorada.`);
-                return;
-            }
+            if (!textoProcessado) return;
 
-            let userState = stateMachine.get(senderNumber) || { step: 'IDLE', intent: null, entities: {} };
+            let userState = stateMachine.get(senderNumber) || { step: 'IDLE', entities: {} };
             const configDb = await prisma.configSistema.findFirst();
 
             const contentToSave = isTranscribed ? `[Áudio Transcrito]: ${textoProcessado}` : textoProcessado;
-            await prisma.mensagemIA.create({ 
-                data: { role: 'user', content: contentToSave, clienteId: senderNumber } 
-            });
+            await prisma.mensagemIA.create({ data: { role: 'user', content: contentToSave, clienteId: senderNumber } });
 
-            const historicoRaw = await prisma.mensagemIA.findMany({ 
-                where: { clienteId: senderNumber }, 
-                take: 8, orderBy: { criadoEm: 'desc' } 
-            });
+            const historicoRaw = await prisma.mensagemIA.findMany({ where: { clienteId: senderNumber }, take: 8, orderBy: { criadoEm: 'desc' } });
             historicoRaw.reverse();
             const historico = historicoRaw.map(h => ({ role: h.role, content: h.content }));
 
@@ -104,13 +94,8 @@ async function processarMensagemEntrante(message) {
             }
 
             let activeIntent = nlpResult.intent || 'UNKNOWN';
-            stateMachine.set(senderNumber, userState);
 
-            const bookingIntents = ['BOOK_APPOINTMENT', 'SELECT_TREATMENT', 'SELECT_PROFESSIONAL', 'SELECT_DATE', 'SELECT_TIME', 'REQUEST_MORE_TIMES', 'REQUEST_MORE_DATES', 'CONFIRM_APPOINTMENT', 'REJECT_APPOINTMENT'];
-            const cancelIntents = ['CANCEL_APPOINTMENT', 'RESCHEDULE_APPOINTMENT'];
-            const queryIntents = ['TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST', 'CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS'];
-
-            if (activeIntent === 'HUMAN_TRANSFER') {
+            if (activeIntent === 'HUMAN_TRANSFER' || activeIntent === 'FRUSTRATION') {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
                 const resp = "Vou transferir você para nossa equipe agora mesmo. Só um instante.";
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
@@ -118,22 +103,44 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // O mesmo roteamento resistente criado na Clínica
-            if (queryIntents.includes(activeIntent)) {
-                await processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, false);
-            } 
-            else if (bookingIntents.includes(activeIntent) || userState.step.startsWith('AGENDAMENTO_')) {
-                await processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, false);
+            if (activeIntent === 'GREETING' && userState.step !== 'IDLE') {
+                const prompt = "Diga: Olá novamente! Estávamos no meio do seu agendamento. Deseja continuar escolhendo a data e horário ou prefere cancelar?";
+                const resp = await aiService.gerarRespostaNatural(prompt, [], {}, configDb);
+                await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
+                await whatsappService.sendText(senderNumber, resp);
+                return;
+            }
+
+            if (activeIntent === 'UNKNOWN' && userState.step !== 'IDLE') {
+                const contextoFase = userState.step === 'AGENDAMENTO_COLLECTING_SERVICE' ? 'qual o serviço desejado' :
+                                     userState.step === 'AGENDAMENTO_COLLECTING_BARBER' ? 'qual barbeiro você prefere' :
+                                     userState.step === 'AGENDAMENTO_COLLECTING_DATE' ? 'a data da reserva' :
+                                     userState.step === 'AGENDAMENTO_AWAITING_TIME' ? 'o horário do corte' : 'a confirmação final';
+                                     
+                const prompt = `Nós estamos no meio do agendamento, aguardando que o cliente informe ${contextoFase}. O cliente disse algo que o sistema não conseguiu classificar diretamente: "${textoProcessado}". Responda de forma extremamente gentil, diga que não entendeu muito bem e peça para ele fornecer ${contextoFase} para continuarmos. Seja breve.`;
+                
+                const resp = await aiService.gerarRespostaNatural(prompt, [], {}, configDb);
+                await prisma.mensagemIA.create({ data: { role: 'assistant', content: resp, clienteId: senderNumber } });
+                await whatsappService.sendText(senderNumber, resp);
+                return;
+            }
+
+            stateMachine.set(senderNumber, userState);
+
+            const bookingIntents = ['BOOK_APPOINTMENT', 'SELECT_TREATMENT', 'SELECT_PROFESSIONAL', 'SELECT_DATE', 'SELECT_TIME', 'REQUEST_MORE_TIMES', 'REQUEST_MORE_DATES', 'REQUEST_SPECIFIC_TIME', 'CONFIRM_APPOINTMENT', 'REJECT_APPOINTMENT', 'CHANGE_TREATMENT', 'CHANGE_DATE', 'CHANGE_TIME'];
+            const cancelIntents = ['CANCEL_APPOINTMENT', 'RESCHEDULE_APPOINTMENT'];
+
+            if (bookingIntents.includes(activeIntent) || userState.step.startsWith('AGENDAMENTO_')) {
+                const flowAgendamento = require('./flowAgendamento');
+                await flowAgendamento.processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, isNewPatient);
             } 
             else if (cancelIntents.includes(activeIntent) || userState.step.startsWith('CANCELAMENTO_')) {
-                await processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, false, cliente, false);
+                const flowCancelamento = require('./flowCancelamento');
+                await flowCancelamento.processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, false, cliente, isNewPatient);
             } 
             else {
-                if (userState.step.startsWith('AGENDAMENTO_')) {
-                    await processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, false);
-                } else {
-                    await processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, false);
-                }
+                const flowConsultas = require('./flowConsultas');
+                await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient);
             }
             
         } catch (error) {
