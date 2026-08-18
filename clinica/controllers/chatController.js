@@ -5,7 +5,7 @@ const automationEngine = require('../../services/automationEngine');
 const webhookService = require('../../services/webhookService');
 const aiService = require('../../aiService');
 const audioConverter = require('../../services/audioConverter');
-const botEngine = require('../botEngine'); // Importante para limpar o estado da IA
+const botEngine = require('../botEngine'); 
 
 exports.getConversasPendentes = async (req, res) => {
     try {
@@ -40,7 +40,7 @@ exports.assumirAtendimentoHumano = async (req, res) => {
         const clienteId = req.params.clienteId;
         const lead = await prisma.cliente.update({ where: { id: clienteId }, data: { falarHumano: true, leadStatus: 'EM_CONVERSA' } });
         
-        botEngine.limparMemoriaEstado(clienteId); // Previne retenção de fluxo
+        botEngine.limparMemoriaEstado(clienteId); 
         
         const msgTexto = `Agora você está falando com um atendente.\nOlá, ${lead.nome || 'paciente'}. A partir deste momento, nossa equipe continuará seu atendimento por aqui.`;
         await whatsappService.sendText(clienteId, msgTexto);
@@ -66,7 +66,7 @@ exports.resolverAtendimentoHumano = async (req, res) => {
         const clienteId = req.params.clienteId;
         const lead = await prisma.cliente.update({ where: { id: clienteId }, data: { falarHumano: false } });
         
-        botEngine.limparMemoriaEstado(clienteId); // <--- CORREÇÃO CRÍTICA AQUI
+        botEngine.limparMemoriaEstado(clienteId); 
         
         const msgFim = `Atendimento encerrado.\nObrigado pelo contato. Se precisar de mais alguma coisa, estamos à disposição.`;
         await whatsappService.sendText(clienteId, msgFim);

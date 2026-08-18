@@ -83,12 +83,13 @@ async function processarMensagemEntrante(message) {
             let contentToSave = isTranscribed ? `[Áudio Transcrito]: ${textoProcessado}` : textoProcessado;
             await prisma.mensagemIA.create({ data: { role: 'user', content: contentToSave, clienteId: senderNumber } });
 
-            // LIMPA O HISTÓRICO: Ignora avisos de automação e alertas técnicos do bot para a IA não se confundir
-            const historicoRaw = await prisma.mensagemIA.findMany({ where: { clienteId: senderNumber }, take: 10, orderBy: { criadoEm: 'desc' } });
+            // LIMPEZA DE HISTÓRICO PARA EVITAR ALUCINAÇÃO: Não lê mensagens automáticas do sistema
+            const historicoRaw = await prisma.mensagemIA.findMany({ where: { clienteId: senderNumber }, take: 5, orderBy: { criadoEm: 'desc' } });
             historicoRaw.reverse();
             
-            const historicoLimpo = historicoRaw.filter(h => !h.content.includes('[SISTEMA AUTOMÁTICO]') && !h.content.includes('[MEDIA:'))
-                .map(h => ({ role: h.role, content: h.content.replace('[SISTEMA]', '').trim() }));
+            const historicoLimpo = historicoRaw
+                .filter(h => !h.content.includes('[SISTEMA AUTOMÁTICO]') && !h.content.includes('[MEDIA:'))
+                .map(h => ({ role: h.role, content: h.content.replace(/\[.*?\]/g, '').trim() }));
 
             let userState = stateMachine.get(senderNumber) || { step: 'IDLE', entities: {} };
             const configDb = await prisma.configSistema.findFirst();
@@ -96,7 +97,6 @@ async function processarMensagemEntrante(message) {
             let isInteractive = message.type === 'interactive';
             let nlpResult = { intent: "UNKNOWN", confidence: 1, entities: {} };
 
-            // Extração de Intenções e Entidades
             if (!isInteractive && textoProcessado) {
                 nlpResult = await aiService.analisarMensagemNLP(textoProcessado, historicoLimpo, userState, configDb);
                 console.log(`🧠 [NLP] Intenção: ${nlpResult.intent} | Entidades:`, JSON.stringify(nlpResult.entities));
@@ -116,10 +116,9 @@ async function processarMensagemEntrante(message) {
 
             let activeIntent = nlpResult.intent || 'UNKNOWN';
             
-            // Transferência Humana (Limpa a Memória Imediatamente)
             if (activeIntent === 'HUMAN_TRANSFER' || activeIntent === 'FRUSTRATION') {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
-                limparMemoriaEstado(senderNumber); // <--- CORREÇÃO AQUI
+                limparMemoriaEstado(senderNumber);
                 
                 const resp = "Entendi. Vou transferir você para nossa equipe agora mesmo. Só um instante.";
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: `[SISTEMA] ${resp}`, clienteId: senderNumber } });
@@ -128,7 +127,6 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // Proteção se o usuário mandar "Oi" no meio de um Agendamento
             if (activeIntent === 'GREETING' && userState.step !== 'IDLE') {
                 const resp = "Olá novamente! Estávamos no meio do seu agendamento. Deseja continuar com a reserva ou prefere cancelar?";
                 await whatsappService.sendInteractiveMenu(senderNumber, resp, [
@@ -138,7 +136,6 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // Permite a Context Bridge Natural responder à dúvidas que surjam no meio do agendamento
             const queryIntents = ['TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST', 'CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS', 'CHECK_UPCOMING_APPOINTMENTS', 'CHECK_PAST_APPOINTMENTS', 'UNKNOWN'];
 
             if (queryIntents.includes(activeIntent)) {
@@ -147,7 +144,6 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // Se for comando de agendamento, salva no estado e vai pro fluxo
             stateMachine.set(senderNumber, userState);
 
             const bookingIntents = ['BOOK_APPOINTMENT', 'SELECT_TREATMENT', 'SELECT_PROFESSIONAL', 'SELECT_DATE', 'SELECT_TIME', 'REQUEST_MORE_TIMES', 'REQUEST_MORE_DATES', 'REQUEST_SPECIFIC_TIME', 'CONFIRM_APPOINTMENT', 'REJECT_APPOINTMENT', 'CHANGE_TREATMENT', 'CHANGE_DATE', 'CHANGE_TIME'];

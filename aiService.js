@@ -37,7 +37,7 @@ async function analisarMensagemNLP(mensagem, historico, userState, configDb) {
     try {
         const prompt = `
 Você é o motor NLU (Natural Language Understanding) de um sistema de Saúde.
-Sua tarefa é analisar a ÚLTIMA MENSAGEM DO USUÁRIO e extrair a intenção e entidades.
+Sua tarefa é analisar a ÚLTIMA MENSAGEM DO USUÁRIO e extrair a intenção e entidades de forma precisa.
 
 Se o usuário disser múltiplos dados de uma vez (ex: "harmonização na sexta as 10h"), extraia TODAS as entidades (treatment, date, time).
 Se o usuário responder à uma pergunta do bot com apenas uma data ou hora (ex: "Para as 14h"), classifique obrigatoriamente como SELECT_TIME ou SELECT_DATE.
@@ -58,16 +58,11 @@ Intenções possíveis:
 - ASK_DATE_REFERENCE (que dia é hoje?)
 - UNKNOWN (não se encaixa em nada ou fugiu do assunto)
 
-REGRAS:
+REGRAS CRÍTICAS:
 Hoje é: ${diaDeHoje}.
-Converta 'date' OBRIGATORIAMENTE para o formato "DD/MM/YYYY".
-Converta 'time' OBRIGATORIAMENTE para o formato "HH:mm".
-
-MODIFICADORES DE TEMPO (time_modifier):
-"depois das 10" -> "time": "10:00", "time_modifier": "after".
-"a partir das 10" -> "time": "10:00", "time_modifier": "starting".
-"antes das 12h" -> "time": "12:00", "time_modifier": "before".
-"às 10" (hora exata) -> "time_modifier": "exact".
+Converta 'date' OBRIGATORIAMENTE para o formato de STRING "DD/MM/YYYY".
+Converta 'time' OBRIGATORIAMENTE para o formato de STRING "HH:mm".
+TODAS as entidades devem ser devolvidas como texto simples (String). NUNCA array ou object.
 
 Estado do usuário no sistema: ${userState?.step || 'IDLE'}
 
@@ -126,21 +121,21 @@ async function gerarRespostaNatural(mensagem, historico, contexto, configDb) {
 Você é ${configDb?.nomeAssistente || 'o assistente virtual'} da clínica ${configDb?.nomeClinica || 'Saúde'}.
 
 REGRA ABSOLUTA DE INTEGRIDADE:
-1. NUNCA faça duas perguntas ao mesmo tempo na sua resposta.
-2. Seja EXTRAMAMENTE direto e objetivo. Não junte mensagens antigas.
+1. NUNCA faça mais de uma pergunta na mesma resposta.
+2. NUNCA junte perguntas ou respostas de mensagens antigas. Seja EXTRAMAMENTE direto e focado APENAS no que o usuário acabou de dizer.
 3. A moeda da clínica é ${moedaGlobal}.
 4. NUNCA invente preços ou horários que não estejam fornecidos abaixo.
-5. Se o paciente perguntar algo que não está nos DADOS DA CLÍNICA, diga que não sabe.
+5. Se o paciente perguntar algo que não está nos DADOS DA CLÍNICA, diga que não tem essa informação e ofereça falar com um atendente.
 
 DADOS DA CLÍNICA PARA ESTA RESPOSTA:
 ${JSON.stringify(contexto.dados_crm || {}, null, 2)}
 
-Sua tarefa: Responda APENAS à dúvida atual do paciente com base no histórico recente e nos dados fornecidos. Se houver um 'aviso_sistema_prioridade' nos DADOS, aplique-o OBRIGATORIAMENTE na última frase da sua resposta.
+Sua tarefa: Responda APENAS à dúvida atual com base nos dados fornecidos. Se houver um 'aviso_sistema_prioridade' nos DADOS, você deve segui-lo OBRIGATORIAMENTE, colocando-o como a última frase da sua resposta.
 `;
 
         const messages = [
             { role: "system", content: prompt },
-            ...(historico || []).slice(-4), // Pega apenas as últimas 4 para não alucinar com perguntas velhas
+            ...(historico || []).slice(-3),
             { role: "user", content: mensagem }
         ];
 
