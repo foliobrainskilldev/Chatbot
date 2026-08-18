@@ -12,10 +12,11 @@ function formatarMoeda(valor, moeda) {
 }
 
 async function processarDuvidas(jid, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient) {
+    let dadosCrmContexto = {};
     const intent = nlpResult?.intent || "UNKNOWN";
     const moedaGlobal = configDb?.moeda || 'MT'; 
 
-    // AÇÃO ESTRITAMENTE DETERMINÍSTICA (A IA NÃO ENTRA AQUI)
+    // AÇÃO ESTRITAMENTE DETERMINÍSTICA
     if (intent === 'CHECK_UPCOMING_APPOINTMENTS' || intent === 'CHECK_PAST_APPOINTMENTS') {
         const agendamentos = await prisma.agendamento.findMany({
             where: { clienteId: senderNumber, status: { in: ['AGENDADO', 'CONFIRMADA'] }, dataHora: { gte: new Date() } },
@@ -37,7 +38,6 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
             await whatsappService.sendText(jid, texto.trim());
         }
 
-        // Context Bridge
         if (userState && userState.step.startsWith('AGENDAMENTO_')) {
             await whatsappService.sendInteractiveMenu(jid, "Voltando ao nosso agendamento... deseja continuar de onde paramos?", [
                 { id: 'cmd_agendar', title: 'Continuar agendamento' },
@@ -47,12 +47,24 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         return;
     }
 
-    // AÇÃO DE DÚVIDA ORGÂNICA (A IA ENTRA AQUI COM CONTEXTO RESTRITO)
-    let dadosCrmContexto = {};
+    // AÇÃO DE DÚVIDA ORGÂNICA
     const treatmentIntents = ['TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST'];
     const clinicIntents = ['CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS'];
 
-    if (treatmentIntents.includes(intent)) {
+    if (intent === 'ASK_DATE_REFERENCE') {
+        const fuso = configDb?.fusoHorario || 'Africa/Maputo';
+        const formatterLongo = new Intl.DateTimeFormat('pt-BR', { timeZone: fuso, weekday: 'long', day: 'numeric', month: 'long' });
+        
+        const hojeObj = new Date();
+        const amanhaObj = new Date(hojeObj.getTime() + 86400000);
+        
+        dadosCrmContexto.calendario_referencia = {
+            hoje: formatterLongo.format(hojeObj),
+            amanha: formatterLongo.format(amanhaObj)
+        };
+        dadosCrmContexto.aviso_sistema_prioridade = "Responda à pergunta do usuário sobre datas ou dias da semana usando EXATAMENTE os dados de 'calendario_referencia' acima. Não invente as datas.";
+    } 
+    else if (treatmentIntents.includes(intent)) {
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO' }});
         const mapearTratamento = (t) => ({
             nome: t.nome, categoria: t.categoria,
@@ -78,9 +90,9 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         dadosCrmContexto.dados_basicos = { nome_clinica: configDb?.nomeClinica || "Clínica", faq: configDb?.faq || "" };
     }
 
-    // Context Bridge Instructions para a IA
+    // A MÁGICA DA CONTEXT BRIDGE (Lembrar a IA do estado atual da conversa sem fazer ela alucinar e repetir infos)
     if (userState && userState.step.startsWith('AGENDAMENTO_')) {
-        dadosCrmContexto.aviso_sistema_prioridade = `INSTRUÇÃO CRÍTICA: O paciente está atualmente no MEIO de um fluxo de agendamento (Passo: ${userState.step}). Responda a dúvida de forma orgânica e, OBRIGATORIAMENTE no final, diga algo como: 'Voltando ao nosso agendamento, deseja continuar com a escolha?'`;
+        dadosCrmContexto.aviso_sistema_prioridade = `INSTRUÇÃO CRÍTICA: O paciente está no meio de um agendamento. Responda EXCLUSIVAMENTE à dúvida dele de forma direta e breve. NÃO repita informações sobre o tratamento ou preços, a menos que a dúvida dele seja especificamente sobre isso. Ao final, diga algo como: 'Voltando ao nosso agendamento, deseja continuar com a escolha?'`;
     }
 
     const contextoIA = { paciente_nome: cliente.nome || 'Paciente', dados_crm: dadosCrmContexto };

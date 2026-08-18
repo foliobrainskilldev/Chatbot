@@ -50,7 +50,7 @@ async function analisarMensagemNLP(mensagem, historico, userState, configDb) {
         const prompt = `
 Você é o motor de NLU (Natural Language Understanding) de um HealthCRM.
 Sua tarefa é classificar a intenção (intent) e extrair entidades (entities). 
-IMPORTANTE: Se a mensagem contiver múltiplas informações (ex: "harmonização amanhã às 10"), extraia TODAS elas de uma vez.
+Se houver múltiplas informações (ex: "harmonização amanhã às 10"), extraia TODAS elas.
 
 Intenções permitidas:
 - CLINIC_HOURS (horário de funcionamento da clínica)
@@ -58,10 +58,10 @@ Intenções permitidas:
 - CLINIC_CONTACT (telefone, contato)
 - CLINIC_PAYMENT_METHODS (pagamento, convênio)
 - TREATMENT_LIST (quais serviços oferecem)
-- TREATMENT_INFO (informações sobre um serviço)
+- TREATMENT_INFO (informações sobre um serviço ou perguntas como "aceitam crianças?", "dói?")
 - TREATMENT_PRICE (quanto custa, preço)
 - BOOK_APPOINTMENT (quer marcar consulta, agendar)
-- CHECK_UPCOMING_APPOINTMENTS (perguntando sobre uma consulta que ELE JÁ MARCOU no passado)
+- CHECK_UPCOMING_APPOINTMENTS (perguntando sobre uma consulta já marcada)
 - RESCHEDULE_APPOINTMENT (remarcar)
 - CANCEL_APPOINTMENT (cancelar consulta)
 - HUMAN_TRANSFER (falar com atendente humano)
@@ -78,19 +78,19 @@ Intenções permitidas:
 - CHANGE_TREATMENT (mudar tratamento)
 - CHANGE_DATE (mudar o dia)
 - CHANGE_TIME (mudar a hora)
-- ASK_DATE_REFERENCE (que dia é amanhã?, amanhã cai que dia?, que dia é hoje?)
+- ASK_DATE_REFERENCE (que dia é amanhã?, amanhã cai que dia?)
 - UNKNOWN (não entendi)
 
 REGRAS DE TEMPO:
 Hoje é: ${diaDeHoje}.
-Converta entidades 'date' para "DD/MM/YYYY".
-Converta entidades 'time' para "HH:mm".
+Converta 'date' para "DD/MM/YYYY".
+Converta 'time' OBRIGATORIAMENTE para "HH:mm" (ex: 10 horas vira 10:00).
 
-MODIFICADORES DE TEMPO (CRÍTICO):
+MODIFICADORES DE TEMPO:
 "depois das 10" ou "após as 10" -> "time": "10:00", "time_modifier": "after".
 "a partir das 10" -> "time": "10:00", "time_modifier": "starting".
 "antes das 12h" -> "time": "12:00", "time_modifier": "before".
-"hora exata" -> "time_modifier": "exact".
+"às 10", "para as 10" (hora exata) -> "time_modifier": "exact".
 
 Estado atual (Funil): ${userState?.step || 'IDLE'}
 
@@ -133,16 +133,16 @@ function fallbackNLP(mensagem) {
     
     if (msg === "sim" || msg.includes("pode confirmar") || msg.includes("confirmo") || msg === "ok") intent = "CONFIRM_APPOINTMENT";
     else if (msg === "não" || msg.includes("desisto") || msg.includes("deixa pra lá")) intent = "REJECT_APPOINTMENT";
-    else if (msg.includes("que dia é") || msg.includes("dia é amanhã") || msg.includes("dia cai")) intent = "ASK_DATE_REFERENCE";
+    else if (msg.includes("que dia é") || msg.includes("dia é amanhã")) intent = "ASK_DATE_REFERENCE";
     else if (msg.includes("depois das") || msg.includes("antes das") || msg.includes("partir das")) intent = "REQUEST_SPECIFIC_TIME";
-    else if (msg.includes("quais mais") || msg.includes("mais horários") || msg.includes("tem outro") || msg.includes("são só esses")) intent = "REQUEST_MORE_TIMES";
+    else if (msg.includes("quais mais") || msg.includes("mais horários") || msg.includes("tem outro")) intent = "REQUEST_MORE_TIMES";
     else if (msg.includes("mudar o dia") || msg.includes("outra data")) intent = "CHANGE_DATE";
     else if (msg.includes("mudar a hora") || msg.includes("outro horário")) intent = "CHANGE_TIME";
     else if (msg.includes("agendar") || msg.includes("marcar") || msg.includes("dia ") || msg.includes("às ")) intent = "BOOK_APPOINTMENT";
     else if (msg.includes("cancelar consulta") || msg.includes("desmarcar")) intent = "CANCEL_APPOINTMENT";
     else if (msg.includes("remarcar")) intent = "RESCHEDULE_APPOINTMENT";
     else if (msg.includes("preço") || msg.includes("valor")) intent = "TREATMENT_PRICE";
-    else if (msg.includes("humano") || msg.includes("atendente") || msg.includes("pessoa")) intent = "HUMAN_TRANSFER";
+    else if (msg.includes("humano") || msg.includes("atendente") || msg.includes("pessoa") || msg.includes("entendendo")) intent = "HUMAN_TRANSFER";
     else if (msg.includes("histórico") || msg.includes("minha consulta")) intent = "CHECK_UPCOMING_APPOINTMENTS";
     else if (msg === "oi" || msg === "olá" || msg === "boa tarde" || msg === "bom dia") intent = "GREETING";
     
@@ -165,7 +165,7 @@ Você é ${configDb?.nomeAssistente || 'o assistente virtual'} da clínica ${con
 
 REGRA ABSOLUTA:
 Você está ESTRITAMENTE PROIBIDO de inventar horários da agenda, preços ou confirmar consultas.
-Se o usuário perguntar preços, endereço, horários de funcionamento ou que dia é hoje, baseie-se APENAS nos dados fornecidos abaixo.
+Se o usuário perguntar preços, endereço ou horários, baseie-se APENAS nos dados fornecidos abaixo.
 A moeda é ${moedaGlobal}. Nunca fale em Reais ou Dólares.
 
 INFORMAÇÕES DO PACIENTE:
@@ -174,7 +174,8 @@ INFORMAÇÕES DO PACIENTE:
 DADOS DA CLÍNICA PARA RESPONDER À DÚVIDA:
 ${JSON.stringify(contexto.dados_crm || {}, null, 2)}
 
-Sua tarefa: Formule uma resposta conversacional curta que entregue a informação solicitada. Se houver um AVISO DE PRIORIDADE no contexto, inclua-o organicamente no final da sua frase.
+Sua tarefa: Formule uma resposta conversacional curta que entregue a informação solicitada. 
+MUITO IMPORTANTE: Seja direto. Responda EXCLUSIVAMENTE à dúvida atual do paciente. Não repita informações sobre tratamentos, preços ou consultas a menos que o paciente tenha perguntado isso na última mensagem. Se houver um AVISO DE PRIORIDADE no contexto, inclua-o organicamente no final.
 `;
 
         const rawMessages = [...(historico || []), { role: "user", content: mensagem }];
