@@ -60,7 +60,7 @@ Intenções permitidas:
 - TREATMENT_INFO (informações sobre um serviço)
 - TREATMENT_PRICE (quanto custa, preço)
 - BOOK_APPOINTMENT (quer marcar consulta, agendar)
-- CHECK_UPCOMING_APPOINTMENTS (perguntando sobre uma consulta que ELE JÁ MARCOU no passado, ex: "que horas é minha consulta?")
+- CHECK_UPCOMING_APPOINTMENTS (perguntando sobre uma consulta que ELE JÁ MARCOU no passado)
 - RESCHEDULE_APPOINTMENT (remarcar)
 - CANCEL_APPOINTMENT (cancelar consulta)
 - HUMAN_TRANSFER (falar com atendente humano)
@@ -85,7 +85,8 @@ Converta entidades 'date' para "DD/MM/YYYY".
 Converta entidades 'time' para "HH:mm".
 
 MODIFICADORES DE TEMPO (CRÍTICO PARA REQUEST_SPECIFIC_TIME):
-"depois das 10" -> "time": "10:00", "time_modifier": "after".
+"depois das 10" ou "após as 10" -> "time": "10:00", "time_modifier": "after" (exclui as 10:00).
+"a partir das 10" -> "time": "10:00", "time_modifier": "starting" (inclui as 10:00).
 "antes das 12h" -> "time": "12:00", "time_modifier": "before".
 "hora exata" -> "time_modifier": "exact".
 
@@ -99,7 +100,7 @@ Responda APENAS com JSON:
     "treatment": "...",
     "date": "DD/MM/YYYY",
     "time": "HH:mm",
-    "time_modifier": "after|before|exact"
+    "time_modifier": "after|starting|before|exact"
   }
 }
 `;

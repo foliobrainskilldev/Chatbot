@@ -1,5 +1,5 @@
-// dateUtils.js
-const { addMinutes, format, startOfDay, endOfDay, addDays, getDay, parse } = require('date-fns');
+const { addMinutes, format, startOfDay, endOfDay, addDays, getDay, isToday, isTomorrow, isThisWeek } = require('date-fns');
+const { ptBR } = require('date-fns/locale');
 const { prisma } = require('./db');
 
 function obterDiasTrabalhoGlobais() {
@@ -49,12 +49,10 @@ async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, prof
                 if (medico && medico.horaFimTrabalho) horaFecho = parseInt(medico.horaFimTrabalho);
             } else {
                 const barbeiro = await prisma.barbeiro.findUnique({ where: { id: parseInt(profissionalSaudeId) } });
-                // Aqui podemos adicionar lógica específica de horas para barbeiros no futuro
             }
         } catch (e) { console.error("Aviso: Configuração de hora do profissional não encontrada."); }
     }
 
-    // O NLP extrai a data puramente como "DD/MM/YYYY". Montamos a data cravada no fuso.
     const [dia, mes, ano] = dataString.split('/');
     const hrAStr = horaAbertura.toString().padStart(2, '0');
     const hrFStr = horaFecho.toString().padStart(2, '0');
@@ -102,7 +100,6 @@ async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, prof
             const duracaoDb = ag.tratamento ? ag.tratamento.duracaoMin : (ag.servico ? ag.servico.duracaoMin : 30);
             const fimAg = new Date(inicioAg.getTime() + duracaoDb * 60000);
             
-            // Verifica sobreposição estrita
             if ((horarioAtual >= inicioAg && horarioAtual < fimAg) || 
                 (fimHorarioAtual > inicioAg && fimHorarioAtual <= fimAg) ||
                 (horarioAtual <= inicioAg && fimHorarioAtual >= fimAg)) {
@@ -120,4 +117,37 @@ async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, prof
     return horariosLivres;
 }
 
-module.exports = { getProximosDiasUteis, getHorariosDisponiveis };
+// NOVA FUNÇÃO: Traduz a data de máquina (19/08/2026) para formato humano
+function humanizarData(dataStringDDMMYYYY) {
+    if (!dataStringDDMMYYYY) return { curto: '', longo: '' };
+    const [dia, mes, ano] = dataStringDDMMYYYY.split('/');
+    const dateObj = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
+    
+    const hoje = new Date();
+    hoje.setHours(0,0,0,0);
+    const diffTime = dateObj - hoje;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    let longo = format(dateObj, "dd 'de' MMMM", { locale: ptBR });
+    const diaSemana = format(dateObj, "EEEE", { locale: ptBR }).split('-')[0];
+
+    let curto = '';
+    
+    if (diffDays === 0) {
+        curto = 'hoje';
+        longo = `hoje, ${longo}`;
+    } else if (diffDays === 1) {
+        curto = 'amanhã';
+        longo = `amanhã, ${longo}`;
+    } else if (diffDays > 1 && diffDays < 7) {
+        curto = diaSemana;
+        longo = `${diaSemana}, ${longo}`;
+    } else {
+        curto = dataStringDDMMYYYY;
+        longo = `${dataStringDDMMYYYY}`;
+    }
+
+    return { curto, longo };
+}
+
+module.exports = { getProximosDiasUteis, getHorariosDisponiveis, humanizarData };
