@@ -83,15 +83,15 @@ async function processarMensagemEntrante(message) {
             let contentToSave = isTranscribed ? `[Áudio Transcrito]: ${textoProcessado}` : textoProcessado;
             await prisma.mensagemIA.create({ data: { role: 'user', content: contentToSave, clienteId: senderNumber } });
 
-            // LIMPEZA DE HISTÓRICO PARA EVITAR ALUCINAÇÃO: Não lê mensagens automáticas do sistema
-            const historicoRaw = await prisma.mensagemIA.findMany({ where: { clienteId: senderNumber }, take: 5, orderBy: { criadoEm: 'desc' } });
+            // LIMPEZA DE HISTÓRICO: Pega apenas as últimas 4 mensagens e remove avisos do sistema para não confundir a IA
+            const historicoRaw = await prisma.mensagemIA.findMany({ where: { clienteId: senderNumber }, take: 4, orderBy: { criadoEm: 'desc' } });
             historicoRaw.reverse();
             
             const historicoLimpo = historicoRaw
                 .filter(h => !h.content.includes('[SISTEMA AUTOMÁTICO]') && !h.content.includes('[MEDIA:'))
                 .map(h => ({ role: h.role, content: h.content.replace(/\[.*?\]/g, '').trim() }));
 
-            let userState = stateMachine.get(senderNumber) || { step: 'IDLE', entities: {} };
+            let userState = stateMachine.get(senderNumber) || { step: 'IDLE', entities: {}, frustrationCount: 0 };
             const configDb = await prisma.configSistema.findFirst();
 
             let isInteractive = message.type === 'interactive';
@@ -115,12 +115,19 @@ async function processarMensagemEntrante(message) {
             }
 
             let activeIntent = nlpResult.intent || 'UNKNOWN';
-            
-            if (activeIntent === 'HUMAN_TRANSFER' || activeIntent === 'FRUSTRATION') {
+
+            // TRAVA DE FRUSTRAÇÃO: Se a IA não entender 3 vezes seguidas, transfere para humano
+            if (activeIntent === 'UNKNOWN') {
+                userState.frustrationCount = (userState.frustrationCount || 0) + 1;
+            } else {
+                userState.frustrationCount = 0;
+            }
+
+            if (userState.frustrationCount >= 3 || activeIntent === 'HUMAN_TRANSFER' || activeIntent === 'FRUSTRATION') {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
                 limparMemoriaEstado(senderNumber);
                 
-                const resp = "Entendi. Vou transferir você para nossa equipe agora mesmo. Só um instante.";
+                const resp = "Percebi que precisa de uma ajuda mais específica. Vou transferir você para a nossa equipe humana agora mesmo. Só um instante!";
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: `[SISTEMA] ${resp}`, clienteId: senderNumber } });
                 await whatsappService.sendText(senderNumber, resp);
                 if (global.io) global.io.emit('atualizar_fila');
