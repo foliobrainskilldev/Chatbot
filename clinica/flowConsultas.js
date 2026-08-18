@@ -1,6 +1,6 @@
-const { prisma } = require('../db');
-const aiService = require('../aiService');
-const whatsappService = require('../whatsappService');
+const { prisma } = require('../../db');
+const aiService = require('../../aiService');
+const whatsappService = require('../../whatsappService');
 const { format } = require('date-fns');
 
 function formatarMoeda(valor, moeda) {
@@ -16,7 +16,7 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
     const intent = nlpResult?.intent || "UNKNOWN";
     const moedaGlobal = configDb?.moeda || 'MT'; 
 
-    // AÇÃO ESTRITAMENTE DETERMINÍSTICA
+    // AÇÃO ESTRITAMENTE DETERMINÍSTICA: Consultar as próprias consultas
     if (intent === 'CHECK_UPCOMING_APPOINTMENTS' || intent === 'CHECK_PAST_APPOINTMENTS') {
         const agendamentos = await prisma.agendamento.findMany({
             where: { clienteId: senderNumber, status: { in: ['AGENDADO', 'CONFIRMADA'] }, dataHora: { gte: new Date() } },
@@ -47,14 +47,13 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         return;
     }
 
-    // AÇÃO DE DÚVIDA ORGÂNICA
+    // AÇÃO DE DÚVIDA ORGÂNICA OU FALHA DE ENTENDIMENTO (UNKNOWN)
     const treatmentIntents = ['TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST'];
     const clinicIntents = ['CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS'];
 
     if (intent === 'ASK_DATE_REFERENCE') {
         const fuso = configDb?.fusoHorario || 'Africa/Maputo';
         const formatterLongo = new Intl.DateTimeFormat('pt-BR', { timeZone: fuso, weekday: 'long', day: 'numeric', month: 'long' });
-        
         const hojeObj = new Date();
         const amanhaObj = new Date(hojeObj.getTime() + 86400000);
         
@@ -79,20 +78,32 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         } else {
             dadosCrmContexto.tratamentos_cadastrados_no_catalogo = tratamentos.map(mapearTratamento);
         }
-    } else if (clinicIntents.includes(intent)) {
+    } 
+    else if (clinicIntents.includes(intent)) {
         dadosCrmContexto.dados_operacionais = {
-            horarios: configDb?.horarioFuncionamento || "Disponibilidade comercial.",
+            horarios: configDb?.horarioFuncionamento || "Disponibilidade comercial padrão.",
             endereco: configDb?.endereco || "Endereço principal da clínica.",
             telefone: configDb?.telefone || "",
             faq: configDb?.faq || ""
         };
-    } else {
+    } 
+    else {
+        // UNKNOWN ou intenção solta
         dadosCrmContexto.dados_basicos = { nome_clinica: configDb?.nomeClinica || "Clínica", faq: configDb?.faq || "" };
+        if (intent === 'UNKNOWN') {
+            dadosCrmContexto.aviso_sistema_prioridade = "Você não entendeu a última mensagem do paciente. Peça desculpas educadamente e seja bem rápido nisso.";
+        }
     }
 
-    // A MÁGICA DA CONTEXT BRIDGE (Lembrar a IA do estado atual da conversa sem fazer ela alucinar e repetir infos)
+    // A MÁGICA DA CONTEXT BRIDGE (Lembrar a IA do estado atual da conversa sem perder os dados da reserva)
     if (userState && userState.step.startsWith('AGENDAMENTO_')) {
-        dadosCrmContexto.aviso_sistema_prioridade = `INSTRUÇÃO CRÍTICA: O paciente está no meio de um agendamento. Responda EXCLUSIVAMENTE à dúvida dele de forma direta e breve. NÃO repita informações sobre o tratamento ou preços, a menos que a dúvida dele seja especificamente sobre isso. Ao final, diga algo como: 'Voltando ao nosso agendamento, deseja continuar com a escolha?'`;
+        let passoFaltante = "continuar com o agendamento";
+        if (userState.step === 'AGENDAMENTO_COLLECTING_TREATMENT') passoFaltante = "qual tratamento o paciente deseja agendar";
+        if (userState.step === 'AGENDAMENTO_COLLECTING_PROFESSIONAL') passoFaltante = "se ele tem preferência de profissional";
+        if (userState.step === 'AGENDAMENTO_COLLECTING_DATE') passoFaltante = "para qual data o paciente quer a consulta";
+        if (userState.step === 'AGENDAMENTO_AWAITING_TIME') passoFaltante = "qual o horário que o paciente prefere";
+        
+        dadosCrmContexto.aviso_sistema_prioridade = `INSTRUÇÃO CRÍTICA: O paciente está no meio de um agendamento, e você estava aguardando ele informar: ${passoFaltante}. Responda rapidamente à dúvida (ou diga que não entendeu se for o caso) e, OBRIGATORIAMENTE, termine a sua resposta perguntando ${passoFaltante}.`;
     }
 
     const contextoIA = { paciente_nome: cliente.nome || 'Paciente', dados_crm: dadosCrmContexto };

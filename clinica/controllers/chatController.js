@@ -4,7 +4,8 @@ const supabaseService = require('../../services/supabaseService');
 const automationEngine = require('../../services/automationEngine');
 const webhookService = require('../../services/webhookService');
 const aiService = require('../../aiService');
-const audioConverter = require('../../services/audioConverter'); // NOVO CONVERSOR
+const audioConverter = require('../../services/audioConverter');
+const botEngine = require('../botEngine'); // Importante para limpar o estado da IA
 
 exports.getConversasPendentes = async (req, res) => {
     try {
@@ -39,6 +40,8 @@ exports.assumirAtendimentoHumano = async (req, res) => {
         const clienteId = req.params.clienteId;
         const lead = await prisma.cliente.update({ where: { id: clienteId }, data: { falarHumano: true, leadStatus: 'EM_CONVERSA' } });
         
+        botEngine.limparMemoriaEstado(clienteId); // Previne retenção de fluxo
+        
         const msgTexto = `Agora você está falando com um atendente.\nOlá, ${lead.nome || 'paciente'}. A partir deste momento, nossa equipe continuará seu atendimento por aqui.`;
         await whatsappService.sendText(clienteId, msgTexto);
         
@@ -47,14 +50,14 @@ exports.assumirAtendimentoHumano = async (req, res) => {
         });
         
         await prisma.notaInterna.create({
-            data: { texto: `Atendimento assumido por humano. Tempo de espera e métricas iniciadas.`, clienteId, usuarioId: 1 }
+            data: { texto: `Atendimento assumido por humano.`, clienteId, usuarioId: 1 }
         });
 
         await automationEngine.dispararAutomacoes('TRANSFERIDO_HUMANO', lead);
         await webhookService.dispararEvento('lead.updated', lead);
         
         if (global.io) global.io.emit('atualizar_fila');
-        res.status(200).json({ message: "Atendimento humano assumido com sucesso." });
+        res.status(200).json({ message: "Atendimento assumido." });
     } catch (error) { res.status(500).json({ error: "Erro ao assumir atendimento." }); }
 };
 
@@ -62,6 +65,8 @@ exports.resolverAtendimentoHumano = async (req, res) => {
     try {
         const clienteId = req.params.clienteId;
         const lead = await prisma.cliente.update({ where: { id: clienteId }, data: { falarHumano: false } });
+        
+        botEngine.limparMemoriaEstado(clienteId); // <--- CORREÇÃO CRÍTICA AQUI
         
         const msgFim = `Atendimento encerrado.\nObrigado pelo contato. Se precisar de mais alguma coisa, estamos à disposição.`;
         await whatsappService.sendText(clienteId, msgFim);
@@ -74,14 +79,14 @@ exports.resolverAtendimentoHumano = async (req, res) => {
         });
 
         await prisma.notaInterna.create({
-            data: { texto: `Atendimento humano encerrado. Aguardando a avaliação do paciente.`, clienteId, usuarioId: 1 }
+            data: { texto: `Atendimento humano encerrado. Devolvido ao Bot.`, clienteId, usuarioId: 1 }
         });
 
         await automationEngine.dispararAutomacoes('ATENDIMENTO_ENCERRADO', lead);
         await webhookService.dispararEvento('conversation.closed', lead); 
         
         if (global.io) global.io.emit('atualizar_fila');
-        res.status(200).json({ message: "Conversa devolvida para a IA e CSAT enviado." });
+        res.status(200).json({ message: "Conversa devolvida para a IA." });
     } catch (error) { res.status(500).json({ error: "Erro ao devolver para IA." }); }
 };
 
@@ -111,12 +116,10 @@ exports.enviarMensagemManual = async (req, res) => {
                 dbSaveType = 'video'; waSendType = 'video';
             } else if (isAudio) {
                 try {
-                    // CONVERSÃO NATIVA PARA OGG/OPUS ATIVADA
                     fileBuffer = await audioConverter.convertToOggOpus(fileBuffer);
                     dbSaveType = 'audio';
                     waSendType = 'audio'; 
                 } catch (err) {
-                    console.error("⚠️ Fallback: Conversão OPUS falhou, enviando como documento.");
                     dbSaveType = 'document';
                     waSendType = 'document';
                 }
@@ -127,7 +130,6 @@ exports.enviarMensagemManual = async (req, res) => {
             typeMsg = waSendType;
             
             if (waSendType === 'audio') {
-                // Envia a Nota de Voz PTT oficial da Meta
                 await whatsappService.sendMediaUrl(clienteId, 'audio', supabaseUrl);
                 if (texto) await whatsappService.sendText(clienteId, texto);
             } else {
@@ -194,23 +196,18 @@ exports.testarIA = async (req, res) => {
 
         let respostaIA = "";
 
-        if (nlpResult.intent === 'appointment.create') {
-            respostaIA = `[AÇÃO DE BACKEND]\nO motor identificou a intenção de AGENDAR.\nEntidades extraídas: ${JSON.stringify(nlpResult.entities)}\nO sistema iniciaria o fluxo de botões para escolher data e horário.`;
-        } else if (nlpResult.intent === 'appointment.cancel' || nlpResult.intent === 'appointment.reschedule') {
+        if (nlpResult.intent === 'BOOK_APPOINTMENT' || nlpResult.intent === 'SELECT_TREATMENT') {
+            respostaIA = `[AÇÃO DE BACKEND]\nO motor identificou a intenção de AGENDAR.\nEntidades extraídas: ${JSON.stringify(nlpResult.entities)}\nO sistema iniciaria o fluxo de agendamento aqui.`;
+        } else if (nlpResult.intent === 'CANCEL_APPOINTMENT' || nlpResult.intent === 'RESCHEDULE_APPOINTMENT') {
             respostaIA = `[AÇÃO DE BACKEND]\nO motor identificou a intenção de CANCELAR/REMARCAR.\nEntidades extraídas: ${JSON.stringify(nlpResult.entities)}\nO sistema buscaria as consultas ativas do paciente.`;
-        } else if (nlpResult.intent === 'human.transfer') {
+        } else if (nlpResult.intent === 'HUMAN_TRANSFER') {
             respostaIA = `[AÇÃO DE BACKEND]\nTransferindo para a fila de atendimento humano...`;
         } else {
             let dadosContexto = {};
-            if (nlpResult.intent.startsWith('treatment.')) {
-                dadosContexto.catologo_servicos = tratamentos.map(t => ({ nome: t.nome, preco: t.preco, tipoPreco: t.tipoPreco, info: t.informacoesIA }));
+            if (nlpResult.intent.startsWith('TREATMENT_')) {
+                dadosContexto.catologo_servicos = tratamentos.map(t => ({ nome: t.nome, preco: t.preco, info: t.informacoesIA }));
             } else {
-                dadosContexto.dados_operacionais = {
-                    horarios: configDb?.horarioFuncionamento || "Segunda a Sexta",
-                    endereco: configDb?.endereco || "Endereço cadastrado",
-                    telefone: configDb?.telefone || "",
-                    faq: configDb?.faq || ""
-                };
+                dadosContexto.dados_operacionais = { horarios: configDb?.horarioFuncionamento, endereco: configDb?.endereco, telefone: configDb?.telefone, faq: configDb?.faq };
             }
             const textoResposta = await aiService.gerarRespostaNatural(mensagem, [], dadosContexto, configDb);
             respostaIA = textoResposta;
