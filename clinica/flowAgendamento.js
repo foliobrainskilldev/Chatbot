@@ -1,6 +1,6 @@
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
-const { getHorariosDisponiveis, getProximosDiasUteis, humanizarData } = require('../dateUtils');
+const { getHorariosDisponiveis, getProximosDiasUteis, humanizarData } = require('../../dateUtils');
 const automationEngine = require('../services/automationEngine');
 const webhookService = require('../services/webhookService');
 
@@ -26,6 +26,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
     const intent = nlpResult.intent;
     const entities = nlpResult.entities || {};
 
+    // CORREÇÃO: Qualquer intenção de cancelamento aborta o fluxo imediatamente
     if (intent === 'REJECT_APPOINTMENT' || intent === 'CANCEL_APPOINTMENT') {
         stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
         await whatsappService.sendText(jid, 'Tudo bem! O processo de agendamento foi cancelado. Como posso te ajudar agora?');
@@ -54,8 +55,18 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
 
     userState.entities = { ...userState.entities, ...entities };
 
-    let extractedTime = entities.time ? normalizeTime(String(entities.time)) : null;
-    let extractedModifier = entities.time_modifier ? String(entities.time_modifier) : 'exact';
+    // Fallback manual para garantir que não perca dia e hora se o NLP falhar
+    if (!userState.entities.date) {
+        const dateMatch = textoProcessado.match(/dia (\d{1,2})/i);
+        if (dateMatch) userState.entities.date = dateMatch[1].padStart(2, '0');
+    }
+    if (!userState.entities.time) {
+        const timeMatch = textoProcessado.match(/(?:às|as|ás) (\d{1,2})(?:h| horas|:\d{2})?/i);
+        if (timeMatch) userState.entities.time = `${timeMatch[1].padStart(2, '0')}:00`;
+    }
+
+    let extractedTime = userState.entities.time ? normalizeTime(String(userState.entities.time)) : null;
+    let extractedModifier = userState.entities.time_modifier ? String(userState.entities.time_modifier) : 'exact';
 
     if (intent === 'REQUEST_SPECIFIC_TIME' && !extractedTime) {
         if (textoProcessado.match(/(?:depois|após) das (\d{1,2})/i)) { extractedTime = `${textoProcessado.match(/(?:depois|após) das (\d{1,2})/i)[1].padStart(2, '0')}:00`; extractedModifier = 'after'; }
@@ -75,15 +86,16 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         else userState.resolvedProfissional = await prisma.profissionalSaude.findUnique({ where: { id: parseInt(entities.professional_id) }});
     }
     
-    if (entities.date && !userState.resolvedDate) {
-        const searchDate = String(entities.date);
-        const diasValidos = await getProximosDiasUteis(14);
-        const matchDia = diasValidos.find(d => d === searchDate || d.includes(searchDate));
+    // CORREÇÃO: Captura data e hora imediatamente do userState
+    if (userState.entities.date && !userState.resolvedDate) {
+        const searchDate = String(userState.entities.date);
+        const diasValidos = await getProximosDiasUteis(30);
+        const matchDia = diasValidos.find(d => d === searchDate || d.includes(searchDate) || d.startsWith(searchDate.padStart(2, '0') + '/'));
         if (matchDia) userState.resolvedDate = matchDia;
     }
     
-    if (entities.time && !userState.resolvedTime) {
-        userState.resolvedTime = normalizeTime(String(entities.time));
+    if (userState.entities.time && !userState.resolvedTime) {
+        userState.resolvedTime = normalizeTime(String(userState.entities.time));
         userState.needsTimeValidation = true; 
     }
 
@@ -106,7 +118,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
                 return;
             }
             
-            // LINGUAGEM NATURAL: Só envia o menu se a IA não achou o que o cara digitou.
+            // CORREÇÃO: Resposta natural sem forçar o menu, a menos que não encontre o que o usuário digitou
             if (searchedButNotFound) {
                 let introText = `Não encontrei o tratamento solicitado. Por favor, escolha uma das opções cadastradas abaixo:`;
                 const moedaGlobal = configDb?.moeda || 'MT';
@@ -116,8 +128,11 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
                 await whatsappService.sendInteractiveList(jid, introText, "Ver procedimentos", [{ title: "Tratamentos", rows: rows }]);
             } else {
                 let introText = "Claro, vamos iniciar o seu agendamento! Qual procedimento você deseja realizar?";
-                if (userState.timeFilter || intent === 'REQUEST_SPECIFIC_TIME') introText = "Consigo olhar se tem horário livre sim! Mas como cada procedimento tem um tempo de duração, eu preciso saber primeiro: qual tratamento você quer?";
-                else if (userState.resolvedDate) introText = `Perfeito, posso olhar a agenda para essa data! Qual procedimento vamos agendar?`;
+                if (userState.timeFilter || intent === 'REQUEST_SPECIFIC_TIME' || intent === 'REQUEST_MORE_TIMES') {
+                    introText = "Consigo olhar os horários livres sim! Mas como cada procedimento tem um tempo de duração, eu preciso saber primeiro: qual tratamento você quer agendar?";
+                } else if (userState.resolvedDate) {
+                    introText = `Perfeito, posso olhar a agenda para essa data! Qual procedimento vamos agendar?`;
+                }
                 await whatsappService.sendText(jid, introText);
             }
 

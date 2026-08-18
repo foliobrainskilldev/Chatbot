@@ -83,6 +83,7 @@ async function processarMensagemEntrante(message) {
             let contentToSave = isTranscribed ? `[Áudio Transcrito]: ${textoProcessado}` : textoProcessado;
             await prisma.mensagemIA.create({ data: { role: 'user', content: contentToSave, clienteId: senderNumber } });
 
+            // LIMPEZA DE HISTÓRICO: Pega apenas as últimas 4 mensagens e remove avisos do sistema para não confundir a IA
             const historicoRaw = await prisma.mensagemIA.findMany({ where: { clienteId: senderNumber }, take: 4, orderBy: { criadoEm: 'desc' } });
             historicoRaw.reverse();
             
@@ -115,6 +116,7 @@ async function processarMensagemEntrante(message) {
 
             let activeIntent = nlpResult.intent || 'UNKNOWN';
 
+            // TRAVA DE FRUSTRAÇÃO: Se a IA não entender 3 vezes seguidas, transfere para humano
             if (activeIntent === 'UNKNOWN') {
                 userState.frustrationCount = (userState.frustrationCount || 0) + 1;
             } else {
@@ -154,7 +156,8 @@ async function processarMensagemEntrante(message) {
             const bookingIntents = ['BOOK_APPOINTMENT', 'SELECT_TREATMENT', 'SELECT_PROFESSIONAL', 'SELECT_DATE', 'SELECT_TIME', 'REQUEST_MORE_TIMES', 'REQUEST_MORE_DATES', 'REQUEST_SPECIFIC_TIME', 'CONFIRM_APPOINTMENT', 'REJECT_APPOINTMENT', 'CHANGE_TREATMENT', 'CHANGE_DATE', 'CHANGE_TIME'];
             const cancelIntents = ['CANCEL_APPOINTMENT', 'RESCHEDULE_APPOINTMENT'];
 
-            if (bookingIntents.includes(activeIntent) || userState.step.startsWith('AGENDAMENTO_')) {
+            // Roteamento robusto: Se está no meio do agendamento, o flowAgendamento assume (inclusive para abortar se o usuário disser "Cancele")
+            if (userState.step.startsWith('AGENDAMENTO_') || bookingIntents.includes(activeIntent)) {
                 const flowAgendamento = require('./flowAgendamento');
                 await flowAgendamento.processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, isNewPatient);
             } 

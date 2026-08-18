@@ -37,7 +37,7 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
     }
 
     if (entities.treatment && agendamentos.length > 1) {
-        const search = entities.treatment.toLowerCase();
+        const search = String(entities.treatment).toLowerCase();
         const filtrados = agendamentos.filter(ag => ag.tratamento.nome.toLowerCase().includes(search));
         if (filtrados.length > 0) agendamentos = filtrados;
     }

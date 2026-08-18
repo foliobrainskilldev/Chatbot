@@ -40,14 +40,17 @@ Você é o motor NLU (Natural Language Understanding) de um sistema de Saúde.
 Sua tarefa é analisar a ÚLTIMA MENSAGEM DO USUÁRIO e extrair a intenção e entidades de forma precisa.
 
 Intenções possíveis:
-- CLINIC_HOURS, CLINIC_LOCATION, CLINIC_CONTACT, CLINIC_PAYMENT_METHODS
-- TREATMENT_LIST, TREATMENT_INFO, TREATMENT_PRICE
+- CLINIC_HOURS (horário de funcionamento geral da clínica)
+- CLINIC_LOCATION, CLINIC_CONTACT, CLINIC_PAYMENT_METHODS
+- TREATMENT_LIST (pedir lista de serviços, menu)
+- TREATMENT_INFO, TREATMENT_PRICE
 - BOOK_APPOINTMENT (quer agendar algo genérico ou específico)
 - CHECK_UPCOMING_APPOINTMENTS, RESCHEDULE_APPOINTMENT, CANCEL_APPOINTMENT
 - HUMAN_TRANSFER (quer falar com atendente), FRUSTRATION (irritado)
 - GREETING, GOODBYE
 - CONFIRM_APPOINTMENT (sim, confirme), REJECT_APPOINTMENT (não, cancelar)
-- REQUEST_MORE_TIMES, REQUEST_MORE_DATES, REQUEST_SPECIFIC_TIME (ex: "tem depois das 10?")
+- REQUEST_MORE_TIMES (perguntar "quais horários tem disponível?", "tem vaga que horas?")
+- REQUEST_MORE_DATES, REQUEST_SPECIFIC_TIME (ex: "tem depois das 10?")
 - SELECT_TIME (ex: "às 9h", "14:00")
 - SELECT_DATE (ex: "amanhã", "sexta")
 - SELECT_TREATMENT (ex: "quero fazer harmonização facial")
@@ -57,11 +60,12 @@ Intenções possíveis:
 
 REGRAS CRÍTICAS DE CLASSIFICAÇÃO:
 1. Se o usuário pedir "menu", "lista de serviços", "quais procedimentos vocês fazem", classifique OBRIGATORIAMENTE como TREATMENT_LIST.
-2. Se o usuário perguntar "que horários vocês tem disponível?", "qual o horário de funcionamento?" de forma genérica (sem especificar que quer agendar), classifique OBRIGATORIAMENTE como CLINIC_HOURS.
-3. Se o usuário disser múltiplos dados de agendamento de uma vez (ex: "harmonização na sexta as 10h"), extraia TODAS as entidades (treatment, date, time).
-4. Converta 'date' OBRIGATORIAMENTE para o formato de STRING "DD/MM/YYYY".
-5. Converta 'time' OBRIGATORIAMENTE para o formato de STRING "HH:mm".
-6. TODAS as entidades devem ser devolvidas como texto simples (String). NUNCA array ou object.
+2. Se o usuário perguntar "quais horários tem disponível?" ou "tem vaga que horas?", classifique como REQUEST_MORE_TIMES.
+3. Se o usuário perguntar o horário de funcionamento de forma genérica (sem especificar que quer agendar), classifique como CLINIC_HOURS.
+4. Se o usuário disser múltiplos dados de agendamento de uma vez (ex: "harmonização na sexta as 10h"), extraia TODAS as entidades (treatment, date, time).
+5. Converta 'date' OBRIGATORIAMENTE para o formato de STRING "DD/MM/YYYY".
+6. Converta 'time' OBRIGATORIAMENTE para o formato de STRING "HH:mm".
+7. TODAS as entidades devem ser devolvidas como texto simples (String). NUNCA array ou object.
 
 Estado do usuário no sistema: ${userState?.step || 'IDLE'}
 
@@ -103,9 +107,10 @@ function fallbackNLP(mensagem) {
     if (msg === "sim" || msg.includes("confirmo") || msg === "ok") intent = "CONFIRM_APPOINTMENT";
     else if (msg === "não" || msg.includes("desisto") || msg.includes("cancela")) intent = "REJECT_APPOINTMENT";
     else if (msg.includes("menu") || msg.includes("serviços") || msg.includes("procedimentos")) intent = "TREATMENT_LIST";
-    else if (msg.includes("horário") || msg.includes("funcionamento") || msg.includes("disponível")) intent = "CLINIC_HOURS";
+    else if (msg.includes("horário") || msg.includes("disponível") || msg.includes("vaga")) intent = "REQUEST_MORE_TIMES";
+    else if (msg.includes("funcionamento")) intent = "CLINIC_HOURS";
     else if (msg.includes("depois das") || msg.includes("antes das")) intent = "REQUEST_SPECIFIC_TIME";
-    else if (msg.includes("agendar") || msg.includes("marcar")) intent = "BOOK_APPOINTMENT";
+    else if (msg.includes("agendar") || msg.includes("marcar") || msg.includes("consulta")) intent = "BOOK_APPOINTMENT";
     else if (msg.includes("humano") || msg.includes("atendente")) intent = "HUMAN_TRANSFER";
     
     return { intent, confidence: 0.6, entities: {} };
