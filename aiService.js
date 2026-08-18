@@ -49,7 +49,8 @@ async function analisarMensagemNLP(mensagem, historico, userState, configDb) {
     try {
         const prompt = `
 Você é o motor de NLU (Natural Language Understanding) de um HealthCRM.
-Sua tarefa é classificar a intenção (intent) e extrair entidades (entities).
+Sua tarefa é classificar a intenção (intent) e extrair entidades (entities). 
+IMPORTANTE: Se a mensagem contiver múltiplas informações (ex: "harmonização amanhã às 10"), extraia TODAS elas de uma vez.
 
 Intenções permitidas:
 - CLINIC_HOURS (horário de funcionamento da clínica)
@@ -71,12 +72,13 @@ Intenções permitidas:
 - REJECT_APPOINTMENT (não, deixa pra lá, não quero)
 - REQUEST_MORE_TIMES (tem outros horários? quais mais? e depois?)
 - REQUEST_MORE_DATES (tem outros dias? e semana que vem?)
-- REQUEST_SPECIFIC_TIME (perguntando DISPONIBILIDADE de um horário específico, ex: "tem depois das 10?", "pode ser às 14?")
+- REQUEST_SPECIFIC_TIME (perguntando DISPONIBILIDADE de um horário, ex: "tem depois das 10?", "pode ser às 14?")
 - SELECT_TIME (às 9h, as 14:00, as duas da tarde)
 - SELECT_DATE (amanhã, sexta, dia 20)
 - CHANGE_TREATMENT (mudar tratamento)
 - CHANGE_DATE (mudar o dia)
 - CHANGE_TIME (mudar a hora)
+- ASK_DATE_REFERENCE (que dia é amanhã?, amanhã cai que dia?, que dia é hoje?)
 - UNKNOWN (não entendi)
 
 REGRAS DE TEMPO:
@@ -84,9 +86,9 @@ Hoje é: ${diaDeHoje}.
 Converta entidades 'date' para "DD/MM/YYYY".
 Converta entidades 'time' para "HH:mm".
 
-MODIFICADORES DE TEMPO (CRÍTICO PARA REQUEST_SPECIFIC_TIME):
-"depois das 10" ou "após as 10" -> "time": "10:00", "time_modifier": "after" (exclui as 10:00).
-"a partir das 10" -> "time": "10:00", "time_modifier": "starting" (inclui as 10:00).
+MODIFICADORES DE TEMPO (CRÍTICO):
+"depois das 10" ou "após as 10" -> "time": "10:00", "time_modifier": "after".
+"a partir das 10" -> "time": "10:00", "time_modifier": "starting".
 "antes das 12h" -> "time": "12:00", "time_modifier": "before".
 "hora exata" -> "time_modifier": "exact".
 
@@ -131,6 +133,7 @@ function fallbackNLP(mensagem) {
     
     if (msg === "sim" || msg.includes("pode confirmar") || msg.includes("confirmo") || msg === "ok") intent = "CONFIRM_APPOINTMENT";
     else if (msg === "não" || msg.includes("desisto") || msg.includes("deixa pra lá")) intent = "REJECT_APPOINTMENT";
+    else if (msg.includes("que dia é") || msg.includes("dia é amanhã") || msg.includes("dia cai")) intent = "ASK_DATE_REFERENCE";
     else if (msg.includes("depois das") || msg.includes("antes das") || msg.includes("partir das")) intent = "REQUEST_SPECIFIC_TIME";
     else if (msg.includes("quais mais") || msg.includes("mais horários") || msg.includes("tem outro") || msg.includes("são só esses")) intent = "REQUEST_MORE_TIMES";
     else if (msg.includes("mudar o dia") || msg.includes("outra data")) intent = "CHANGE_DATE";
@@ -162,7 +165,7 @@ Você é ${configDb?.nomeAssistente || 'o assistente virtual'} da clínica ${con
 
 REGRA ABSOLUTA:
 Você está ESTRITAMENTE PROIBIDO de inventar horários da agenda, preços ou confirmar consultas.
-Se o usuário perguntar preços, endereço ou horários de funcionamento, baseie-se APENAS nos dados fornecidos abaixo.
+Se o usuário perguntar preços, endereço, horários de funcionamento ou que dia é hoje, baseie-se APENAS nos dados fornecidos abaixo.
 A moeda é ${moedaGlobal}. Nunca fale em Reais ou Dólares.
 
 INFORMAÇÕES DO PACIENTE:
@@ -171,7 +174,7 @@ INFORMAÇÕES DO PACIENTE:
 DADOS DA CLÍNICA PARA RESPONDER À DÚVIDA:
 ${JSON.stringify(contexto.dados_crm || {}, null, 2)}
 
-Sua tarefa: Formule uma resposta conversacional curta que entregue a informação solicitada. Se houver uma AVISO DE PRIORIDADE no contexto, inclua-o organicamente no final.
+Sua tarefa: Formule uma resposta conversacional curta que entregue a informação solicitada. Se houver um AVISO DE PRIORIDADE no contexto, inclua-o organicamente no final da sua frase.
 `;
 
         const rawMessages = [...(historico || []), { role: "user", content: mensagem }];
