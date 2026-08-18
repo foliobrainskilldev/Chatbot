@@ -6,6 +6,8 @@ const aiService = require('../aiService');
 const automationEngine = require('../services/automationEngine');
 const webhookService = require('../services/webhookService');
 
+const normalizeStr = (str) => str ? str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() : '';
+
 function formatarMoeda(valor, moeda) {
     if (!valor) return '';
     const v = parseFloat(valor);
@@ -19,7 +21,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
     const intent = nlpResult.intent;
     const entities = nlpResult.entities || {};
 
-    if (intent === 'REJECT_APPOINTMENT') {
+    if (textoProcessado === '0' || textoProcessado === 'cmd_cancelar_fluxo' || normalizeStr(textoProcessado) === 'cancelar' || intent === 'REJECT_APPOINTMENT') {
         stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
         await whatsappService.sendText(jid, 'Sem problemas. O processo de agendamento foi cancelado. Posso ajudar em mais alguma coisa?');
         return;
@@ -47,15 +49,29 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         userState.resolvedTime = entities.time;
     }
 
-    // 1. EXTRAÇÃO DO TRATAMENTO
+    // 1. EXTRAÇÃO DO TRATAMENTO (Com Resiliência Fuzzy Match)
     if (!userState.resolvedTreatment) {
+        let msgFeedback = "";
+
         if (entities.treatment) {
             const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO', podeAgendarIA: true }});
-            const search = entities.treatment.toLowerCase();
-            const match = tratamentos.find(t => t.nome.toLowerCase().includes(search));
-            if (match) userState.resolvedTreatment = match;
+            const search = normalizeStr(entities.treatment);
+            
+            const match = tratamentos.find(t => {
+                const n = normalizeStr(t.nome);
+                if (n.includes(search) || search.includes(n)) return true;
+                const searchWords = search.split(' ').filter(w => w.length > 3);
+                return searchWords.some(w => n.includes(w));
+            });
+
+            if (match) {
+                userState.resolvedTreatment = match;
+            } else {
+                msgFeedback = `Desculpe, não localizei o procedimento "${entities.treatment}" no nosso catálogo.\n\n`;
+                userState.entities.treatment = null; 
+            }
         }
-        
+
         if (!userState.resolvedTreatment) {
             const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO', podeAgendarIA: true }});
             if (tratamentos.length === 0) {
@@ -72,7 +88,12 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
             }));
             const sections = [{ title: "Especialidades", rows: rows }];
             
-            await whatsappService.sendInteractiveList(jid, "Temos vários tratamentos disponíveis. Escolha uma categoria para continuar:", "Ver opções", sections);
+            let introText = msgFeedback ? msgFeedback : "Temos vários tratamentos disponíveis. Escolha uma categoria para continuar:";
+            if (!msgFeedback && (intent === 'GREETING' || intent === 'UNKNOWN') && !isInteractive) {
+                 introText = "Olá! Para continuarmos o seu agendamento, por favor, escolha um dos nossos serviços abaixo:";
+            }
+            
+            await whatsappService.sendInteractiveList(jid, introText, "Ver opções", sections);
             userState.step = 'AGENDAMENTO_COLLECTING_TREATMENT';
             stateMachine.set(senderNumber, userState);
             return;
@@ -90,9 +111,8 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
             const matchDia = diasValidos.find(d => d === entities.date || d.includes(entities.date));
             if (matchDia) {
                 userState.resolvedDate = matchDia;
-                // Deixa seguir para o próximo bloco de buscar horas
             } else {
-                await whatsappService.sendText(jid, `A agenda para a data solicitada (${entities.date}) está indisponível. Vamos ver as próximas opções.`);
+                await whatsappService.sendText(jid, `A agenda para a data solicitada (${entities.date}) está indisponível ou já passou. Vamos ver as próximas opções.`);
                 userState.entities.date = null; 
             }
         }
@@ -104,7 +124,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
 
             if (chunk.length === 0) {
                 userState.pageData = 0; 
-                return processarAgendamento(jid, textoProcessado, senderNumber, stateMachine, {intent: 'UNKNOWN'}, false, configDb, cliente, isNewPatient);
+                return processarAgendamento(jid, null, senderNumber, stateMachine, {intent:'UNKNOWN', entities:{}}, false, configDb, cliente, isNewPatient);
             }
 
             let optDias = chunk.map(d => ({ id: `data_${d}`, title: d }));
@@ -129,7 +149,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
             userState.resolvedDate = null; 
             stateMachine.set(senderNumber, userState);
             await whatsappService.sendText(jid, `Infelizmente a agenda acabou de encher para o dia ${userState.resolvedDate}. Vamos escolher outro dia?`);
-            return processarAgendamento(jid, textoProcessado, senderNumber, stateMachine, {intent: 'UNKNOWN'}, false, configDb, cliente, isNewPatient);
+            return processarAgendamento(jid, null, senderNumber, stateMachine, {intent:'UNKNOWN', entities:{}}, false, configDb, cliente, isNewPatient);
         }
         
         if (intent === 'REQUEST_MORE_TIMES') {
@@ -166,7 +186,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
 
             if (chunk.length === 0) {
                 userState.pageHora = 0; 
-                return processarAgendamento(jid, textoProcessado, senderNumber, stateMachine, {intent: 'UNKNOWN'}, false, configDb, cliente, isNewPatient);
+                return processarAgendamento(jid, null, senderNumber, stateMachine, {intent:'UNKNOWN', entities:{}}, false, configDb, cliente, isNewPatient);
             }
 
             let optHoras = chunk.map(h => ({ id: `hora_${h}`, title: h }));
@@ -195,21 +215,20 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         return;
     }
     
-    // 5. AÇÃO FINALIZADA PELO BACKEND E ENVIADA AO USUÁRIO
+    // 5. AÇÃO FINALIZADA
     if (intent === 'CONFIRM_APPOINTMENT' || intent === 'BOOK_APPOINTMENT') {
         const [dia, mes, ano] = userState.resolvedDate.split('/');
         const [hora, min] = userState.resolvedTime.split(':');
         const fusoOffset = configDb?.fusoHorario === 'America/Sao_Paulo' ? '-03:00' : '+02:00';
         const dataHoraDb = new Date(`${ano}-${mes}-${dia}T${hora}:${min}:00${fusoOffset}`);
 
-        // Verificação final de segurança atômica
         const horasLivresNow = await getHorariosDisponiveis(userState.resolvedDate, userState.resolvedTreatment.duracaoMin, null);
         if(!horasLivresNow.includes(userState.resolvedTime)) {
              await whatsappService.sendText(jid, `Ops, alguém acabou de ocupar esse horário. Vamos escolher outro.`);
              userState.resolvedTime = null;
              userState.step = 'AGENDAMENTO_AWAITING_TIME';
              stateMachine.set(senderNumber, userState);
-             return processarAgendamento(jid, null, senderNumber, stateMachine, {intent: 'UNKNOWN'}, false, configDb, cliente, isNewPatient);
+             return processarAgendamento(jid, null, senderNumber, stateMachine, {intent:'UNKNOWN', entities:{}}, false, configDb, cliente, isNewPatient);
         }
 
         const novoAgendamento = await prisma.agendamento.create({

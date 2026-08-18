@@ -183,7 +183,12 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            if (bookingIntents.includes(activeIntent) || userState.step.startsWith('AGENDAMENTO_')) {
+            // Se é uma dúvida explícita, responde primeiro, mesmo no meio do funil de agendamento
+            if (queryIntents.includes(activeIntent)) {
+                const flowConsultas = require('./flowConsultas');
+                await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient);
+            } 
+            else if (bookingIntents.includes(activeIntent) || userState.step.startsWith('AGENDAMENTO_')) {
                 const flowAgendamento = require('./flowAgendamento');
                 await flowAgendamento.processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, isNewPatient);
             } 
@@ -193,8 +198,14 @@ async function processarMensagemEntrante(message) {
                 await flowCancelamento.processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao, cliente, isNewPatient);
             } 
             else {
-                const flowConsultas = require('./flowConsultas');
-                await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient);
+                // Fallback (UNKNOWN, GREETING, etc)
+                if (userState.step.startsWith('AGENDAMENTO_')) {
+                    const flowAgendamento = require('./flowAgendamento');
+                    await flowAgendamento.processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, isNewPatient);
+                } else {
+                    const flowConsultas = require('./flowConsultas');
+                    await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, isNewPatient);
+                }
             }
 
         } catch (error) {

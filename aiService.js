@@ -103,7 +103,7 @@ Responda APENAS com um JSON válido no formato exato:
 `;
 
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-            model: "llama3-8b-8192", // Modelo leve para classificação de intenção
+            model: "openai/gpt-oss-120b",
             messages: [
                 { role: "system", content: prompt },
                 { role: "user", content: mensagem }
@@ -211,7 +211,7 @@ Sua tarefa: Leia a mensagem do usuário e responda de forma fluida e conversacio
         ];
 
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-            model: "llama3-70b-8192", // Modelo poderoso para geração de linguagem natural
+            model: "openai/gpt-oss-120b",
             messages: messages,
             temperature: 0.2
         }, {

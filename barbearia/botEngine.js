@@ -63,11 +63,9 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // Recupera Estado
             let userState = stateMachine.get(senderNumber) || { step: 'IDLE', intent: null, entities: {} };
             const configDb = await prisma.configSistema.findFirst();
 
-            // Salva a mensagem no histórico do BD
             const contentToSave = isTranscribed ? `[Áudio Transcrito]: ${textoProcessado}` : textoProcessado;
             await prisma.mensagemIA.create({ 
                 data: { role: 'user', content: contentToSave, clienteId: senderNumber } 
@@ -83,7 +81,6 @@ async function processarMensagemEntrante(message) {
             let isInteractive = message.type === 'interactive';
             let nlpResult = { intent: "UNKNOWN", confidence: 1, entities: {} };
 
-            // Extração de Intenção e Entidades via Action Engine
             if (!isInteractive && textoProcessado) {
                 nlpResult = await aiService.analisarMensagemNLP(textoProcessado, historico, userState, configDb);
                 console.log(`🧠 [NLP Barbearia] Intenção: ${nlpResult.intent} | Entidades:`, JSON.stringify(nlpResult.entities));
@@ -111,8 +108,8 @@ async function processarMensagemEntrante(message) {
 
             const bookingIntents = ['BOOK_APPOINTMENT', 'SELECT_TREATMENT', 'SELECT_PROFESSIONAL', 'SELECT_DATE', 'SELECT_TIME', 'REQUEST_MORE_TIMES', 'REQUEST_MORE_DATES', 'CONFIRM_APPOINTMENT', 'REJECT_APPOINTMENT'];
             const cancelIntents = ['CANCEL_APPOINTMENT', 'RESCHEDULE_APPOINTMENT'];
+            const queryIntents = ['TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST', 'CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS'];
 
-            // HANDOFF
             if (activeIntent === 'HUMAN_TRANSFER') {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
                 const resp = "Vou transferir você para nossa equipe agora mesmo. Só um instante.";
@@ -121,15 +118,22 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            // Roteamento
-            if (bookingIntents.includes(activeIntent) || userState.step.startsWith('AGENDAMENTO_')) {
+            // O mesmo roteamento resistente criado na Clínica
+            if (queryIntents.includes(activeIntent)) {
+                await processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, false);
+            } 
+            else if (bookingIntents.includes(activeIntent) || userState.step.startsWith('AGENDAMENTO_')) {
                 await processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, false);
             } 
             else if (cancelIntents.includes(activeIntent) || userState.step.startsWith('CANCELAMENTO_')) {
                 await processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, false, cliente, false);
             } 
             else {
-                await processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, false);
+                if (userState.step.startsWith('AGENDAMENTO_')) {
+                    await processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, false);
+                } else {
+                    await processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historico, cliente, false);
+                }
             }
             
         } catch (error) {
