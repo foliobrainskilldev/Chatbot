@@ -26,7 +26,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
     const intent = nlpResult.intent;
     const entities = nlpResult.entities || {};
 
-    // CORREÇÃO: Aceita qualquer variação de cancelamento para abortar o fluxo e não prender o usuário
     if (intent === 'REJECT_APPOINTMENT' || intent === 'CANCEL_APPOINTMENT') {
         stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
         await whatsappService.sendText(jid, 'Tudo bem! O processo de agendamento foi cancelado. Como posso te ajudar agora?');
@@ -76,7 +75,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         else userState.resolvedProfissional = await prisma.profissionalSaude.findUnique({ where: { id: parseInt(entities.professional_id) }});
     }
     
-    // CORREÇÃO: Captura data e hora imediatamente, independente da intenção ser BOOK_APPOINTMENT ou SELECT_TIME
     if (entities.date && !userState.resolvedDate) {
         const searchDate = String(entities.date);
         const diasValidos = await getProximosDiasUteis(14);
@@ -86,7 +84,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
     
     if (entities.time && !userState.resolvedTime) {
         userState.resolvedTime = normalizeTime(String(entities.time));
-        userState.needsTimeValidation = true; // Marca para validar se a hora está livre no passo 4
+        userState.needsTimeValidation = true; 
     }
 
     // 1. TRATAMENTO
@@ -108,16 +106,15 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
                 return;
             }
             
-            // CORREÇÃO: Só envia o Menu se o usuário pedir a lista ou se a IA não achar o que ele digitou.
-            if (intent === 'TREATMENT_LIST' || searchedButNotFound) {
-                let introText = searchedButNotFound ? `Não encontrei o tratamento solicitado. Por favor, escolha uma das opções cadastradas abaixo:` : "Aqui estão nossos procedimentos disponíveis:";
+            // LINGUAGEM NATURAL: Só envia o menu se a IA não achou o que o cara digitou.
+            if (searchedButNotFound) {
+                let introText = `Não encontrei o tratamento solicitado. Por favor, escolha uma das opções cadastradas abaixo:`;
                 const moedaGlobal = configDb?.moeda || 'MT';
                 const rows = tratamentos.slice(0, 10).map(t => ({ 
                     id: `trat_${t.id}`, title: t.nome.substring(0, 24), description: t.preco ? `Valor: ${formatarMoeda(t.preco, moedaGlobal)}` : 'Consulte valor' 
                 }));
                 await whatsappService.sendInteractiveList(jid, introText, "Ver procedimentos", [{ title: "Tratamentos", rows: rows }]);
             } else {
-                // Resposta em Linguagem Natural fluída
                 let introText = "Claro, vamos iniciar o seu agendamento! Qual procedimento você deseja realizar?";
                 if (userState.timeFilter || intent === 'REQUEST_SPECIFIC_TIME') introText = "Consigo olhar se tem horário livre sim! Mas como cada procedimento tem um tempo de duração, eu preciso saber primeiro: qual tratamento você quer?";
                 else if (userState.resolvedDate) introText = `Perfeito, posso olhar a agenda para essa data! Qual procedimento vamos agendar?`;
@@ -213,7 +210,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
             userState.hasExactConflict = hasExactConflict;
         }
 
-        // Valida se a hora que o usuário pediu na primeira frase está realmente livre
         if (userState.resolvedTime && userState.needsTimeValidation) {
             if (userState.availableTimes.includes(userState.resolvedTime)) {
                 userState.needsTimeValidation = false;

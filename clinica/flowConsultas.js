@@ -46,7 +46,25 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         return;
     }
 
-    const treatmentIntents = ['TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST'];
+    // ENVIO DO MENU INTERATIVO (Evita tabelas feias geradas pela IA)
+    if (intent === 'TREATMENT_LIST') {
+        const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO', podeAgendarIA: true }});
+        if (tratamentos.length > 0) {
+            const rows = tratamentos.slice(0, 10).map(t => ({
+                id: `trat_${t.id}`, title: t.nome.substring(0, 24), description: t.preco ? `Valor: ${formatarMoeda(t.preco, moedaGlobal)}` : 'Consulte valor'
+            }));
+            await whatsappService.sendInteractiveList(jid, "Aqui está o nosso menu de procedimentos disponíveis:", "Ver Menu", [{ title: "Tratamentos", rows: rows }]);
+        } else {
+            await whatsappService.sendText(jid, "No momento não temos procedimentos cadastrados no catálogo automático.");
+        }
+        
+        if (userState && userState.step.startsWith('AGENDAMENTO_')) {
+            await whatsappService.sendText(jid, "Qual procedimento você deseja realizar para continuarmos o seu agendamento?");
+        }
+        return;
+    }
+
+    const treatmentIntents = ['TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION'];
     const clinicIntents = ['CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS'];
 
     if (intent === 'ASK_DATE_REFERENCE') {
@@ -55,10 +73,7 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         const hojeObj = new Date();
         const amanhaObj = new Date(hojeObj.getTime() + 86400000);
         
-        dadosCrmContexto.calendario_referencia = {
-            hoje: formatterLongo.format(hojeObj),
-            amanha: formatterLongo.format(amanhaObj)
-        };
+        dadosCrmContexto.calendario_referencia = { hoje: formatterLongo.format(hojeObj), amanha: formatterLongo.format(amanhaObj) };
         dadosCrmContexto.aviso_sistema_prioridade = "Responda à pergunta do usuário usando os dados do 'calendario_referencia' acima.";
     } 
     else if (treatmentIntents.includes(intent)) {
@@ -69,7 +84,7 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
             informacoes_adicionais: t.informacoesIA
         });
 
-        if (nlpResult?.entities?.treatment && intent !== 'TREATMENT_LIST') {
+        if (nlpResult?.entities?.treatment) {
             const search = String(nlpResult.entities.treatment).toLowerCase();
             const match = tratamentos.find(t => t.nome.toLowerCase().includes(search));
             dadosCrmContexto.tratamento_solicitado = match ? mapearTratamento(match) : tratamentos.map(mapearTratamento);
@@ -92,7 +107,7 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         }
     }
 
-    // A MÁGICA DA CONTEXT BRIDGE (O paciente continua no fluxo, mesmo falando coisas soltas)
+    // CONTEXT BRIDGE: Mantém o usuário no fluxo sem prendê-lo
     if (userState && userState.step.startsWith('AGENDAMENTO_')) {
         let passoFaltante = "continuar com o agendamento";
         if (userState.step === 'AGENDAMENTO_COLLECTING_TREATMENT') passoFaltante = "Qual procedimento você deseja realizar?";

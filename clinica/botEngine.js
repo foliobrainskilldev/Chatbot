@@ -83,7 +83,6 @@ async function processarMensagemEntrante(message) {
             let contentToSave = isTranscribed ? `[Áudio Transcrito]: ${textoProcessado}` : textoProcessado;
             await prisma.mensagemIA.create({ data: { role: 'user', content: contentToSave, clienteId: senderNumber } });
 
-            // LIMPEZA DE HISTÓRICO: Pega apenas as últimas 4 mensagens e remove avisos do sistema para não confundir a IA
             const historicoRaw = await prisma.mensagemIA.findMany({ where: { clienteId: senderNumber }, take: 4, orderBy: { criadoEm: 'desc' } });
             historicoRaw.reverse();
             
@@ -116,7 +115,6 @@ async function processarMensagemEntrante(message) {
 
             let activeIntent = nlpResult.intent || 'UNKNOWN';
 
-            // TRAVA DE FRUSTRAÇÃO: Se a IA não entender 3 vezes seguidas, transfere para humano
             if (activeIntent === 'UNKNOWN') {
                 userState.frustrationCount = (userState.frustrationCount || 0) + 1;
             } else {
