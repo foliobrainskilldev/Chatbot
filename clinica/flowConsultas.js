@@ -1,6 +1,6 @@
-const { prisma } = require('../db');
-const aiService = require('../aiService');
-const whatsappService = require('../whatsappService');
+const { prisma } = require('../../db');
+const aiService = require('../../aiService');
+const whatsappService = require('../../whatsappService');
 const { format } = require('date-fns');
 
 function formatarMoeda(valor, moeda) {
@@ -15,6 +15,7 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
     let dadosCrmContexto = {};
     const intent = nlpResult?.intent || "UNKNOWN";
     const moedaGlobal = configDb?.moeda || 'MT'; 
+    const isEnglish = configDb?.idioma?.includes('Inglês');
 
     if (intent === 'CHECK_UPCOMING_APPOINTMENTS' || intent === 'CHECK_PAST_APPOINTMENTS') {
         const agendamentos = await prisma.agendamento.findMany({
@@ -24,23 +25,25 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         });
 
         if (agendamentos.length === 0) {
-            await whatsappService.sendText(jid, "Você não possui nenhuma consulta futura marcada no sistema.");
+            const msg = isEnglish ? "You have no upcoming appointments scheduled in the system." : "Você não possui nenhuma consulta futura marcada no sistema.";
+            await whatsappService.sendText(jid, msg);
         } else {
-            let texto = "📅 *SUAS PRÓXIMAS CONSULTAS:*\n\n";
+            let texto = isEnglish ? "📅 *YOUR UPCOMING APPOINTMENTS:*\n\n" : "📅 *SUAS PRÓXIMAS CONSULTAS:*\n\n";
             agendamentos.forEach((ag, index) => {
-                const nomeProf = ag.profissionalSaude ? ag.profissionalSaude.nome : 'Equipe Médica';
-                const tratNome = ag.tratamento ? ag.tratamento.nome : 'Consulta';
+                const nomeProf = ag.profissionalSaude ? ag.profissionalSaude.nome : (isEnglish ? 'Medical Team' : 'Equipe Médica');
+                const tratNome = ag.tratamento ? ag.tratamento.nome : (isEnglish ? 'Appointment' : 'Consulta');
                 texto += `*${index + 1}. ${tratNome}*\n`;
-                texto += `🕑 ${format(ag.dataHora, "dd/MM/yyyy 'às' HH:mm")}\n`;
-                texto += `👨‍⚕️ Profissional: ${nomeProf}\n\n`;
+                texto += `🕑 ${format(ag.dataHora, isEnglish ? "MM/dd/yyyy 'at' HH:mm" : "dd/MM/yyyy 'às' HH:mm")}\n`;
+                texto += `👨‍⚕️ ${isEnglish ? 'Professional' : 'Profissional'}: ${nomeProf}\n\n`;
             });
             await whatsappService.sendText(jid, texto.trim());
         }
 
         if (userState && userState.step.startsWith('AGENDAMENTO_')) {
-            await whatsappService.sendInteractiveMenu(jid, "Voltando ao nosso agendamento... deseja continuar com a sua reserva?", [
-                { id: 'cmd_agendar', title: 'Continuar agendamento' },
-                { id: 'cmd_cancelar_fluxo', title: 'Cancelar' }
+            const msg = isEnglish ? "Returning to our booking... do you want to continue with your reservation?" : "Voltando ao nosso agendamento... deseja continuar com a sua reserva?";
+            await whatsappService.sendInteractiveMenu(jid, msg, [
+                { id: 'cmd_agendar', title: isEnglish ? 'Continue booking' : 'Continuar agendamento' },
+                { id: 'cmd_cancelar_fluxo', title: isEnglish ? 'Cancel' : 'Cancelar' }
             ]);
         }
         return;
@@ -50,15 +53,18 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO', podeAgendarIA: true }});
         if (tratamentos.length > 0) {
             const rows = tratamentos.slice(0, 10).map(t => ({
-                id: `trat_${t.id}`, title: t.nome.substring(0, 24), description: t.preco ? `Valor: ${formatarMoeda(t.preco, moedaGlobal)}` : 'Consulte valor'
+                id: `trat_${t.id}`, title: t.nome.substring(0, 24), description: t.preco ? `${isEnglish ? 'Price' : 'Valor'}: ${formatarMoeda(t.preco, moedaGlobal)}` : (isEnglish ? 'Consult price' : 'Consulte valor')
             }));
-            await whatsappService.sendInteractiveList(jid, "Aqui está o nosso menu de procedimentos disponíveis:", "Ver Menu", [{ title: "Tratamentos", rows: rows }]);
+            const intro = isEnglish ? "Here is our menu of available procedures:" : "Aqui está o nosso menu de procedimentos disponíveis:";
+            await whatsappService.sendInteractiveList(jid, intro, isEnglish ? "View Menu" : "Ver Menu", [{ title: isEnglish ? "Treatments" : "Tratamentos", rows: rows }]);
         } else {
-            await whatsappService.sendText(jid, "No momento não temos procedimentos cadastrados no catálogo automático.");
+            const msg = isEnglish ? "At the moment we have no procedures registered in the automatic catalog." : "No momento não temos procedimentos cadastrados no catálogo automático.";
+            await whatsappService.sendText(jid, msg);
         }
         
         if (userState && userState.step.startsWith('AGENDAMENTO_')) {
-            await whatsappService.sendText(jid, "Qual procedimento você deseja realizar para continuarmos o seu agendamento?");
+            const msg = isEnglish ? "Which procedure do you want to perform to continue your booking?" : "Qual procedimento você deseja realizar para continuarmos o seu agendamento?";
+            await whatsappService.sendText(jid, msg);
         }
         return;
     }
@@ -101,25 +107,18 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
     } 
     else {
         dadosCrmContexto.dados_basicos = { nome_clinica: configDb?.nomeClinica || "Clínica", faq: configDb?.faq || "" };
-        
-        // Instruções específicas para saudações e falhas
-        if (intent === 'UNKNOWN') {
-            dadosCrmContexto.aviso_sistema_prioridade = "Você não conseguiu classificar a última mensagem. Peça desculpas gentilmente e pergunte em que pode ajudar.";
-        } else if (intent === 'GREETING') {
-            dadosCrmContexto.aviso_sistema_prioridade = "O usuário está saudando você. Responda de forma amigável, apresente-se como assistente da clínica e pergunte como pode ajudar.";
-        } else if (intent === 'GOODBYE') {
-            dadosCrmContexto.aviso_sistema_prioridade = "O usuário está se despedindo. Despeça-se educadamente e diga que a clínica está à disposição.";
-        }
     }
 
     if (userState && userState.step.startsWith('AGENDAMENTO_')) {
         let passoFaltante = "continuar com o agendamento";
-        if (userState.step === 'AGENDAMENTO_COLLECTING_TREATMENT') passoFaltante = "Qual procedimento você deseja realizar?";
-        if (userState.step === 'AGENDAMENTO_COLLECTING_PROFESSIONAL') passoFaltante = "Você tem preferência por algum profissional específico?";
-        if (userState.step === 'AGENDAMENTO_COLLECTING_DATE') passoFaltante = "Para qual data você quer agendar?";
-        if (userState.step === 'AGENDAMENTO_AWAITING_TIME') passoFaltante = "Qual o melhor horário para você?";
+        if (userState.step === 'AGENDAMENTO_COLLECTING_TREATMENT') passoFaltante = isEnglish ? "Which procedure do you want to perform?" : "Qual procedimento você deseja realizar?";
+        if (userState.step === 'AGENDAMENTO_COLLECTING_PROFESSIONAL') passoFaltante = isEnglish ? "Do you have a preference for a specific professional?" : "Você tem preferência por algum profissional específico?";
+        if (userState.step === 'AGENDAMENTO_COLLECTING_DATE') passoFaltante = isEnglish ? "For which date do you want to book?" : "Para qual data você quer agendar?";
+        if (userState.step === 'AGENDAMENTO_AWAITING_TIME') passoFaltante = isEnglish ? "What is the best time for you?" : "Qual o melhor horário para você?";
         
-        dadosCrmContexto.aviso_sistema_prioridade = `O paciente está no meio de um agendamento. Responda à dúvida dele de forma muito rápida e direta e, no final, retome o controle fazendo EXATAMENTE esta pergunta para não prendê-lo no sistema: "${passoFaltante}"`;
+        dadosCrmContexto.aviso_sistema_prioridade = isEnglish 
+            ? `The patient is in the middle of a booking. Answer their question very quickly and directly, and at the end, take back control by asking EXACTLY this question so they don't get stuck: "${passoFaltante}"`
+            : `O paciente está no meio de um agendamento. Responda à dúvida dele de forma muito rápida e direta e, no final, retome o controle fazendo EXATAMENTE esta pergunta para não prendê-lo no sistema: "${passoFaltante}"`;
     }
 
     const contextoIA = { paciente_nome: cliente.nome || 'Paciente', dados_crm: dadosCrmContexto };

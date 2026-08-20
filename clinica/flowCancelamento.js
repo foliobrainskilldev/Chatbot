@@ -1,20 +1,22 @@
-const { prisma } = require('../db');
+const { prisma } = require('../../db');
 const { format } = require('date-fns');
-const whatsappService = require('../whatsappService');
-const automationEngine = require('../services/automationEngine');
-const webhookService = require('../services/webhookService');
+const whatsappService = require('../../whatsappService');
+const automationEngine = require('../../services/automationEngine');
+const webhookService = require('../../services/webhookService');
 const { processarAgendamento } = require('./flowAgendamento');
 
 async function processarCancelamento(jid, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao = false, cliente, isNewPatient) {
     let userState = stateMachine.get(senderNumber) || { step: 'IDLE', entities: {} };
     const intent = nlpResult.intent;
     const entities = nlpResult.entities || {};
+    const isEnglish = configDb?.idioma?.includes('Inglês');
 
     if (userState.step === 'IDLE') userState.step = 'CANCELAMENTO_AWAITING_SELECTION';
     
     if (intent === 'REJECT_APPOINTMENT') {
         stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
-        await whatsappService.sendText(jid, 'Tudo bem, a operação foi abortada. Como mais posso ajudar hoje?');
+        const msg = isEnglish ? 'Alright, the operation was aborted. How else can I help today?' : 'Tudo bem, a operação foi abortada. Como mais posso ajudar hoje?';
+        await whatsappService.sendText(jid, msg);
         return;
     }
 
@@ -31,7 +33,8 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
     });
 
     if (agendamentos.length === 0) {
-        await whatsappService.sendText(jid, "Você não possui consultas futuras marcadas na nossa agenda.");
+        const msg = isEnglish ? "You have no upcoming appointments scheduled in our system." : "Você não possui consultas futuras marcadas na nossa agenda.";
+        await whatsappService.sendText(jid, msg);
         stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
         return;
     }
@@ -47,9 +50,14 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
             userState.resolvedAppointmentId = agendamentos[0].id;
         } else {
             let opcoes = agendamentos.slice(0, 9).map(ag => ({ id: `canc_${ag.id}`, title: ag.tratamento.nome.substring(0, 24), description: format(ag.dataHora, 'dd/MM/yyyy HH:mm') }));
-            opcoes.push({ id: 'cmd_cancelar_fluxo', title: 'Voltar / Desistir' });
+            opcoes.push({ id: 'cmd_cancelar_fluxo', title: isEnglish ? 'Back / Give up' : 'Voltar / Desistir' });
             
-            const textoMenu = isRemarcacao ? "Vi que você tem estas consultas ativas. Qual delas você gostaria de reagendar?" : "Encontrei estas consultas. Qual delas você deseja cancelar?";
+            let textoMenu = "";
+            if (isRemarcacao) {
+                textoMenu = isEnglish ? "I see you have these active appointments. Which one would you like to reschedule?" : "Vi que você tem estas consultas ativas. Qual delas você gostaria de reagendar?";
+            } else {
+                textoMenu = isEnglish ? "I found these appointments. Which one do you want to cancel?" : "Encontrei estas consultas. Qual delas você deseja cancelar?";
+            }
             
             await whatsappService.sendInteractiveMenu(jid, textoMenu, opcoes);
             stateMachine.set(senderNumber, userState);
@@ -68,7 +76,8 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
             await automationEngine.dispararAutomacoes('CONSULTA_REMARCADA', agAtualizado);
             await webhookService.dispararEvento('appointment.updated', agAtualizado);
             
-            await whatsappService.sendText(jid, "Sua consulta anterior foi suspensa na agenda. Vamos agora escolher um novo horário para você!");
+            const msg = isEnglish ? "Your previous appointment was suspended. Let's choose a new time for you now!" : "Sua consulta anterior foi suspensa na agenda. Vamos agora escolher um novo horário para você!";
+            await whatsappService.sendText(jid, msg);
             
             stateMachine.set(senderNumber, { 
                 step: 'AGENDAMENTO_COLLECTING_DATE', 
@@ -82,11 +91,13 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
             await automationEngine.dispararAutomacoes('CONSULTA_CANCELADA', agAtualizado);
             await webhookService.dispararEvento('appointment.cancelled', agAtualizado);
             
-            await whatsappService.sendText(jid, "✅ Sua consulta foi cancelada com sucesso no sistema. Agradecemos por nos avisar com antecedência. Esperamos vê-lo em breve!");
+            const msg = isEnglish ? "✅ Your appointment was successfully canceled. Thank you for letting us know in advance. We hope to see you soon!" : "✅ Sua consulta foi cancelada com sucesso no sistema. Agradecemos por nos avisar com antecedência. Esperamos vê-lo em breve!";
+            await whatsappService.sendText(jid, msg);
             stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
         }
     } catch (error) {
-        await whatsappService.sendText(jid, "Tivemos uma dificuldade interna ao processar seu pedido. Tente novamente mais tarde.");
+        const msg = isEnglish ? "We had an internal difficulty processing your request. Please try again later." : "Tivemos uma dificuldade interna ao processar seu pedido. Tente novamente mais tarde.";
+        await whatsappService.sendText(jid, msg);
         stateMachine.set(senderNumber, { step: 'IDLE', entities: {} });
     }
 }

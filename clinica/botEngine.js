@@ -60,15 +60,18 @@ async function processarMensagemEntrante(message) {
             const delayMs = Math.floor(Math.random() * (3000 - 1500 + 1)) + 1500;
             await new Promise(resolve => setTimeout(resolve, delayMs));
 
+            // Busca as configs antes para saber o idioma do áudio
+            const configDb = await prisma.configSistema.findFirst();
+            const isEnglish = configDb?.idioma?.includes('Inglês');
+
             let textoProcessado = "";
             let isTranscribed = false;
 
-            // TRATAMENTO DE ÁUDIO COM INTERCEPTAÇÃO DE FALHA
             if (message.type === 'audio') {
                 const mediaId = message.audio.id;
                 try { 
                     const audioBuffer = await whatsappService.downloadMedia(mediaId);
-                    textoProcessado = await aiService.transcreverAudio(audioBuffer);
+                    textoProcessado = await aiService.transcreverAudio(audioBuffer, configDb);
                     isTranscribed = true;
                     
                     if (textoProcessado.includes("Não foi possível compreender") || textoProcessado.trim() === "") {
@@ -87,10 +90,11 @@ async function processarMensagemEntrante(message) {
 
             if (!textoProcessado) return;
 
-            // SE O ÁUDIO FALHOU, ABORTA O FLUXO AQUI E PEDE PARA REPETIR
             if (textoProcessado === "[FALHA_AUDIO]") {
                 await prisma.mensagemIA.create({ data: { role: 'user', content: '[Áudio Recebido - Incompreensível]', clienteId: senderNumber } });
-                const respFalha = "Desculpe, não consegui ouvir direito o seu áudio. Você poderia gravar novamente ou digitar a mensagem?";
+                const respFalha = isEnglish 
+                    ? "Sorry, I couldn't hear your audio clearly. Could you record it again or type the message?" 
+                    : "Desculpe, não consegui ouvir direito o seu áudio. Você poderia gravar novamente ou digitar a mensagem?";
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: respFalha, clienteId: senderNumber } });
                 await whatsappService.sendText(senderNumber, respFalha);
                 return;
@@ -107,7 +111,6 @@ async function processarMensagemEntrante(message) {
                 .map(h => ({ role: h.role, content: h.content.replace(/\[.*?\]/g, '').trim() }));
 
             let userState = stateMachine.get(senderNumber) || { step: 'IDLE', entities: {}, frustrationCount: 0 };
-            const configDb = await prisma.configSistema.findFirst();
 
             let isInteractive = message.type === 'interactive';
             let nlpResult = { intent: "UNKNOWN", confidence: 1, entities: {} };
@@ -139,12 +142,13 @@ async function processarMensagemEntrante(message) {
                 userState.frustrationCount = 0;
             }
 
-            // TRANSFERÊNCIA PARA HUMANO
             if (userState.frustrationCount >= 3 || activeIntent === 'HUMAN_TRANSFER' || activeIntent === 'FRUSTRATION') {
                 await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
                 limparMemoriaEstado(senderNumber);
                 
-                const resp = "Atendimento transferido. A partir de agora, você está falando diretamente com a nossa equipe humana. Como podemos ajudar?";
+                const resp = isEnglish 
+                    ? "Chat transferred. From now on, you are talking directly to our human team. How can we help?" 
+                    : "Atendimento transferido. A partir de agora, você está falando diretamente com a nossa equipe humana. Como podemos ajudar?";
                 await prisma.mensagemIA.create({ data: { role: 'assistant', content: `[SISTEMA] ${resp}`, clienteId: senderNumber } });
                 await whatsappService.sendText(senderNumber, resp);
                 if (global.io) global.io.emit('atualizar_fila');
@@ -154,19 +158,23 @@ async function processarMensagemEntrante(message) {
             if (activeIntent === 'GREETING') {
                 userState.frustrationCount = 0;
                 if (userState.step !== 'IDLE') {
-                    const resp = "Olá novamente! Estávamos no meio do seu agendamento. Deseja continuar com a reserva ou prefere cancelar?";
+                    const resp = isEnglish 
+                        ? "Hello again! We were in the middle of your booking. Do you want to continue or cancel?" 
+                        : "Olá novamente! Estávamos no meio do seu agendamento. Deseja continuar com a reserva ou prefere cancelar?";
                     await whatsappService.sendInteractiveMenu(senderNumber, resp, [
-                        { id: 'cmd_agendar', title: 'Continuar' },
-                        { id: 'cmd_cancelar_fluxo', title: 'Cancelar' }
+                        { id: 'cmd_agendar', title: isEnglish ? 'Continue' : 'Continuar' },
+                        { id: 'cmd_cancelar_fluxo', title: isEnglish ? 'Cancel' : 'Cancelar' }
                     ]);
                     return;
                 } else {
-                    const nomeClinica = configDb?.nomeClinica || 'nossa clínica';
-                    const resp = `Olá! Seja bem-vindo(a) à ${nomeClinica}. Como posso ajudar hoje?`;
+                    const nomeClinica = configDb?.nomeClinica || (isEnglish ? 'our clinic' : 'nossa clínica');
+                    const resp = isEnglish 
+                        ? `Hello! Welcome to ${nomeClinica}. How can I help you today?` 
+                        : `Olá! Seja bem-vindo(a) à ${nomeClinica}. Como posso ajudar hoje?`;
                     await whatsappService.sendInteractiveMenu(senderNumber, resp, [
-                        { id: 'cmd_agendar', title: 'Marcar consulta' },
-                        { id: 'cmd_menu_tratamentos', title: 'Ver tratamentos' },
-                        { id: 'cmd_humano', title: 'Falar com a equipe' }
+                        { id: 'cmd_agendar', title: isEnglish ? 'Book appointment' : 'Marcar consulta' },
+                        { id: 'cmd_menu_tratamentos', title: isEnglish ? 'View treatments' : 'Ver tratamentos' },
+                        { id: 'cmd_humano', title: isEnglish ? 'Talk to staff' : 'Falar com a equipe' }
                     ]);
                     return;
                 }
@@ -206,7 +214,11 @@ async function processarMensagemEntrante(message) {
 
         } catch (error) {
             console.error("❌ ERRO CRÍTICO NO MOTOR DA CLÍNICA:", error);
-            await whatsappService.sendText(senderNumber, "Ocorreu uma pequena falha na nossa conexão agora. Você poderia mandar novamente?");
+            const isEnglish = (await prisma.configSistema.findFirst())?.idioma?.includes('Inglês');
+            const errMsg = isEnglish 
+                ? "A small connection error occurred. Could you send that again?" 
+                : "Ocorreu uma pequena falha na nossa conexão agora. Você poderia mandar novamente?";
+            await whatsappService.sendText(senderNumber, errMsg);
         }
     }, 0);
 }
