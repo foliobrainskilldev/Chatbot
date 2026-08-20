@@ -1,8 +1,8 @@
-const { prisma } = require('../../db');
-const whatsappService = require('../../whatsappService');
+const { prisma } = require('../db');
+const whatsappService = require('../whatsappService');
 const { getHorariosDisponiveis, getProximosDiasUteis, humanizarData } = require('../../dateUtils');
-const automationEngine = require('../../services/automationEngine');
-const webhookService = require('../../services/webhookService');
+const automationEngine = require('../services/automationEngine');
+const webhookService = require('../services/webhookService');
 
 function formatarMoeda(valor, moeda) {
     if (!valor) return '';
