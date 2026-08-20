@@ -1,8 +1,8 @@
-const { prisma } = require('../db');
-const whatsappService = require('../whatsappService');
-const { getHorariosDisponiveis, getProximosDiasUteis, humanizarData } = require('../dateUtils');
-const automationEngine = require('../services/automationEngine');
-const webhookService = require('../services/webhookService');
+const { prisma } = require('../../db');
+const whatsappService = require('../../whatsappService');
+const { getHorariosDisponiveis, getProximosDiasUteis, humanizarData } = require('../../dateUtils');
+const automationEngine = require('../../services/automationEngine');
+const webhookService = require('../../services/webhookService');
 
 function formatarMoeda(valor, moeda) {
     if (!valor) return '';
@@ -204,7 +204,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
                 saudacao = isEnglish ? `To check the availability you requested, for which day would your appointment be?` : `Para verificar a disponibilidade que você pediu, para qual dia seria a sua consulta?`;
             }
 
-            let optDias = chunk.map(d => ({ id: `data_${d}`, title: humanizarData(d).curto }));
+            let optDias = chunk.map(d => ({ id: `data_${d}`, title: humanizarData(d, isEnglish).curto }));
             if (hasMore) optDias.push({ id: 'ver_mais_data', title: isEnglish ? 'View more dates' : 'Ver mais datas' });
 
             await whatsappService.sendInteractiveMenu(jid, saudacao, optDias);
@@ -216,7 +216,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
 
     // 4. HORA E FILTRAGEM
     if (!userState.resolvedTime || userState.needsTimeValidation) {
-        const dateH = humanizarData(userState.resolvedDate);
+        const dateH = humanizarData(userState.resolvedDate, isEnglish);
         
         if (!userState.availableTimes) {
             const horasLivres = await getHorariosDisponiveis(userState.resolvedDate, userState.resolvedTreatment.duracaoMin, userState.resolvedProfissional.id, 'CLINICA');
@@ -319,7 +319,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
 
     // 5. CONFIRMAÇÃO
     if (userState.step !== 'AGENDAMENTO_AWAITING_CONFIRMATION') {
-        const dateH = humanizarData(userState.resolvedDate);
+        const dateH = humanizarData(userState.resolvedDate, isEnglish);
         const resumo = isEnglish 
             ? `*Booking Summary*\n🩺 Procedure: ${userState.resolvedTreatment.nome}\n👨‍⚕️ Professional: ${userState.resolvedProfissional.nome}\n📅 Date: ${dateH.longo}\n🕐 Time: ${userState.resolvedTime}\n\nCan I confirm this time for you?`
             : `*Resumo da Consulta*\n🩺 Procedimento: ${userState.resolvedTreatment.nome}\n👨‍⚕️ Profissional: ${userState.resolvedProfissional.nome}\n📅 Data: ${dateH.longo}\n🕐 Hora: ${userState.resolvedTime}\n\nPosso confirmar esse horário para você?`;
@@ -360,7 +360,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         
         await prisma.cliente.update({ where: { id: senderNumber }, data: { leadStatus: 'AGENDADO' } });
         
-        const dateH = humanizarData(userState.resolvedDate);
+        const dateH = humanizarData(userState.resolvedDate, isEnglish);
         const msg = isEnglish 
             ? `✅ *Appointment Confirmed!*\n\nYour reservation for *${userState.resolvedTreatment.nome}* is scheduled for *${dateH.longo}* at *${userState.resolvedTime}*.\n\nA reminder will be sent when the date is near. We look forward to seeing you!`
             : `✅ *Consulta Confirmada!*\n\nSua reserva de *${userState.resolvedTreatment.nome}* está agendada para *${dateH.longo}* às *${userState.resolvedTime}*.\n\nUm lembrete será enviado quando a data estiver próxima. Esperamos por você!`;

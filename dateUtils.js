@@ -1,5 +1,5 @@
 const { addMinutes, format, startOfDay, endOfDay, addDays, getDay, isToday, isTomorrow, isThisWeek } = require('date-fns');
-const { ptBR } = require('date-fns/locale');
+const { ptBR, enUS } = require('date-fns/locale');
 const { prisma } = require('./db');
 
 function obterDiasTrabalhoGlobais() {
@@ -117,8 +117,7 @@ async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, prof
     return horariosLivres;
 }
 
-// NOVA FUNÇÃO: Traduz a data de máquina (19/08/2026) para formato humano
-function humanizarData(dataStringDDMMYYYY) {
+function humanizarData(dataStringDDMMYYYY, isEnglish = false) {
     if (!dataStringDDMMYYYY) return { curto: '', longo: '' };
     const [dia, mes, ano] = dataStringDDMMYYYY.split('/');
     const dateObj = new Date(parseInt(ano), parseInt(mes) - 1, parseInt(dia));
@@ -128,17 +127,19 @@ function humanizarData(dataStringDDMMYYYY) {
     const diffTime = dateObj - hoje;
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-    let longo = format(dateObj, "dd 'de' MMMM", { locale: ptBR });
-    const diaSemana = format(dateObj, "EEEE", { locale: ptBR }).split('-')[0];
+    const localeToUse = isEnglish ? enUS : ptBR;
+    
+    let longo = format(dateObj, isEnglish ? "MMMM do" : "dd 'de' MMMM", { locale: localeToUse });
+    const diaSemana = format(dateObj, "EEEE", { locale: localeToUse }).split('-')[0];
 
     let curto = '';
     
     if (diffDays === 0) {
-        curto = 'hoje';
-        longo = `hoje, ${longo}`;
+        curto = isEnglish ? 'today' : 'hoje';
+        longo = isEnglish ? `today, ${longo}` : `hoje, ${longo}`;
     } else if (diffDays === 1) {
-        curto = 'amanhã';
-        longo = `amanhã, ${longo}`;
+        curto = isEnglish ? 'tomorrow' : 'amanhã';
+        longo = isEnglish ? `tomorrow, ${longo}` : `amanhã, ${longo}`;
     } else if (diffDays > 1 && diffDays < 7) {
         curto = diaSemana;
         longo = `${diaSemana}, ${longo}`;
