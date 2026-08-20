@@ -1,8 +1,8 @@
-const { prisma } = require('../../db');
+const { prisma } = require('../db');
 const { format } = require('date-fns');
-const whatsappService = require('../../whatsappService');
-const automationEngine = require('../../services/automationEngine');
-const webhookService = require('../../services/webhookService');
+const whatsappService = require('../whatsappService');
+const automationEngine = require('../services/automationEngine');
+const webhookService = require('../services/webhookService');
 const { processarAgendamento } = require('./flowAgendamento');
 
 async function processarCancelamento(jid, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao = false, cliente, isNewPatient) {

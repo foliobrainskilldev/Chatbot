@@ -1,6 +1,6 @@
-const { prisma } = require('../../db');
-const aiService = require('../../aiService');
-const whatsappService = require('../../whatsappService');
+const { prisma } = require('../db');
+const aiService = require('../aiService');
+const whatsappService = require('../whatsappService');
 const { format } = require('date-fns');
 
 function formatarMoeda(valor, moeda) {
