@@ -58,19 +58,22 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
 
     userState.entities = { ...userState.entities, ...entities };
 
-    if (!userState.entities.date) {
-        const dateMatch = textoProcessado.match(/dia (\d{1,2})/i);
-        if (dateMatch) userState.entities.date = dateMatch[1].padStart(2, '0');
-    }
-    if (!userState.entities.time) {
-        const timeMatch = textoProcessado.match(/(?:às|as|ás|at) (\d{1,2})(?:h| horas|:\d{2})?/i);
-        if (timeMatch) userState.entities.time = `${timeMatch[1].padStart(2, '0')}:00`;
+    // PREVENÇÃO DO ERRO DE NULL AQUI
+    if (textoProcessado) {
+        if (!userState.entities.date) {
+            const dateMatch = textoProcessado.match(/dia (\d{1,2})/i);
+            if (dateMatch) userState.entities.date = dateMatch[1].padStart(2, '0');
+        }
+        if (!userState.entities.time) {
+            const timeMatch = textoProcessado.match(/(?:às|as|ás|at) (\d{1,2})(?:h| horas|:\d{2})?/i);
+            if (timeMatch) userState.entities.time = `${timeMatch[1].padStart(2, '0')}:00`;
+        }
     }
 
     let extractedTime = userState.entities.time ? normalizeTime(String(userState.entities.time)) : null;
     let extractedModifier = userState.entities.time_modifier ? String(userState.entities.time_modifier) : 'exact';
 
-    if (intent === 'REQUEST_SPECIFIC_TIME' && !extractedTime) {
+    if (intent === 'REQUEST_SPECIFIC_TIME' && !extractedTime && textoProcessado) {
         if (textoProcessado.match(/(?:depois|após|after) das (\d{1,2})/i)) { extractedTime = `${textoProcessado.match(/(?:depois|após|after) das (\d{1,2})/i)[1].padStart(2, '0')}:00`; extractedModifier = 'after'; }
         else if (textoProcessado.match(/(?:a partir|starting) das (\d{1,2})/i)) { extractedTime = `${textoProcessado.match(/(?:a partir|starting) das (\d{1,2})/i)[1].padStart(2, '0')}:00`; extractedModifier = 'starting'; }
         else if (textoProcessado.match(/(?:antes|before) das (\d{1,2})/i)) { extractedTime = `${textoProcessado.match(/(?:antes|before) das (\d{1,2})/i)[1].padStart(2, '0')}:00`; extractedModifier = 'before'; }
