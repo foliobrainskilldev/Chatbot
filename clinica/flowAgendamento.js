@@ -1,6 +1,6 @@
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
-const { getHorariosDisponiveis, getProximosDiasUteis, humanizarData } = require('../../dateUtils');
+const { getHorariosDisponiveis, getProximosDiasUteis, humanizarData } = require('../dateUtils');
 const automationEngine = require('../services/automationEngine');
 const webhookService = require('../services/webhookService');
 
@@ -126,7 +126,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
                     : `Não encontrei o tratamento solicitado. Por favor, digite novamente ou escolha uma das opções cadastradas abaixo:`;
                 const moedaGlobal = configDb?.moeda || 'MT';
                 const rows = tratamentos.slice(0, 10).map(t => ({ 
-                    id: `trat_${t.id}`, title: t.nome.substring(0, 24), description: t.preco ? `${isEnglish ? 'Price' : 'Valor'}: ${formatarMoeda(t.preco, moedaGlobal)}` : (isEnglish ? 'Consult price' : 'Consulte valor') 
+                    id: `trat_${t.id}`, title: (t.nome || 'Tratamento').substring(0, 24), description: t.preco ? `${isEnglish ? 'Price' : 'Valor'}: ${formatarMoeda(t.preco, moedaGlobal)}` : (isEnglish ? 'Consult price' : 'Consulte valor') 
                 }));
                 await whatsappService.sendInteractiveList(jid, introText, isEnglish ? "View procedures" : "Ver procedimentos", [{ title: isEnglish ? "Treatments" : "Tratamentos", rows: rows }]);
             } else {
@@ -145,7 +145,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
                 }
                 const moedaGlobal = configDb?.moeda || 'MT';
                 const rows = tratamentos.slice(0, 10).map(t => ({ 
-                    id: `trat_${t.id}`, title: t.nome.substring(0, 24), description: t.preco ? `${isEnglish ? 'Price' : 'Valor'}: ${formatarMoeda(t.preco, moedaGlobal)}` : (isEnglish ? 'Consult price' : 'Consulte valor') 
+                    id: `trat_${t.id}`, title: (t.nome || 'Tratamento').substring(0, 24), description: t.preco ? `${isEnglish ? 'Price' : 'Valor'}: ${formatarMoeda(t.preco, moedaGlobal)}` : (isEnglish ? 'Consult price' : 'Consulte valor') 
                 }));
                 await whatsappService.sendInteractiveList(jid, introText, isEnglish ? "View procedures" : "Ver procedimentos", [{ title: isEnglish ? "Treatments" : "Tratamentos", rows: rows }]);
             }
@@ -160,7 +160,7 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
     if (!userState.resolvedProfissional) {
         const profissionais = await prisma.profissionalSaude.findMany();
         if (profissionais.length > 0) {
-            let optProfs = profissionais.slice(0, 8).map(p => ({ id: `prof_${p.id}`, title: `Dr(a). ${p.nome.substring(0, 13)}` }));
+            let optProfs = profissionais.slice(0, 8).map(p => ({ id: `prof_${p.id}`, title: `Dr(a). ${(p.nome || '').substring(0, 13)}` }));
             optProfs.push({ id: 'prof_qualquer', title: isEnglish ? 'Any professional' : 'Qualquer profissional' });
 
             const msg = isEnglish 

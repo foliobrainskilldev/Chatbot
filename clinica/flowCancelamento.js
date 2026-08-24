@@ -49,7 +49,7 @@ async function processarCancelamento(jid, textoProcessado, senderNumber, stateMa
         if (agendamentos.length === 1) {
             userState.resolvedAppointmentId = agendamentos[0].id;
         } else {
-            let opcoes = agendamentos.slice(0, 9).map(ag => ({ id: `canc_${ag.id}`, title: ag.tratamento.nome.substring(0, 24), description: format(ag.dataHora, 'dd/MM/yyyy HH:mm') }));
+            let opcoes = agendamentos.slice(0, 9).map(ag => ({ id: `canc_${ag.id}`, title: (ag.tratamento.nome || 'Consulta').substring(0, 24), description: format(ag.dataHora, 'dd/MM/yyyy HH:mm') }));
             opcoes.push({ id: 'cmd_cancelar_fluxo', title: isEnglish ? 'Back / Give up' : 'Voltar / Desistir' });
             
             let textoMenu = "";

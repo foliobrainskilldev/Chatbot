@@ -53,7 +53,7 @@ async function processarDuvidas(jid, textoProcessado, senderNumber, userState, n
         const tratamentos = await prisma.tratamento.findMany({ where: { status: 'ATIVO', podeAgendarIA: true }});
         if (tratamentos.length > 0) {
             const rows = tratamentos.slice(0, 10).map(t => ({
-                id: `trat_${t.id}`, title: t.nome.substring(0, 24), description: t.preco ? `${isEnglish ? 'Price' : 'Valor'}: ${formatarMoeda(t.preco, moedaGlobal)}` : (isEnglish ? 'Consult price' : 'Consulte valor')
+                id: `trat_${t.id}`, title: (t.nome || 'Tratamento').substring(0, 24), description: t.preco ? `${isEnglish ? 'Price' : 'Valor'}: ${formatarMoeda(t.preco, moedaGlobal)}` : (isEnglish ? 'Consult price' : 'Consulte valor')
             }));
             const intro = isEnglish ? "Here is our menu of available procedures:" : "Aqui está o nosso menu de procedimentos disponíveis:";
             await whatsappService.sendInteractiveList(jid, intro, isEnglish ? "View Menu" : "Ver Menu", [{ title: isEnglish ? "Treatments" : "Tratamentos", rows: rows }]);
