@@ -58,7 +58,6 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
 
     userState.entities = { ...userState.entities, ...entities };
 
-    // PREVENÇÃO DO ERRO DE NULL AQUI
     if (textoProcessado) {
         if (!userState.entities.date) {
             const dateMatch = textoProcessado.match(/dia (\d{1,2})/i);
@@ -178,9 +177,19 @@ async function processarAgendamento(jid, textoProcessado, senderNumber, stateMac
         }
     }
 
-    // 3. DATA
+    // 3. DATA (COM FILTRO INTELIGENTE DE VAGAS)
     if (!userState.resolvedDate) {
-        const diasValidos = await getProximosDiasUteis(14); 
+        const rawDiasValidos = await getProximosDiasUteis(30); 
+        
+        // NOVO: Filtra os dias, removendo os que não têm nenhum horário livre
+        const diasValidos = [];
+        for (let d of rawDiasValidos) {
+            const vagas = await getHorariosDisponiveis(d, userState.resolvedTreatment.duracaoMin, userState.resolvedProfissional.id, 'CLINICA');
+            if (vagas.length > 0) {
+                diasValidos.push(d);
+            }
+            if (diasValidos.length >= 10) break; // Limita a 10 dias com vagas para não pesar o banco
+        }
 
         if (intent === 'REQUEST_MORE_DATES') userState.pageData++;
         
