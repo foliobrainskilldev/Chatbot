@@ -19,74 +19,61 @@ exports.getDashboardStats = async (req, res) => {
         const inicioHoje = startOfDay(new Date());
         const fimHoje = endOfDay(new Date());
 
-        // OTIMIZAÇÃO MASSIVA: Todas as consultas ao Banco de Dados agora são feitas PARALELAMENTE.
-        // O tempo de espera cai de ~3000ms para ~50ms.
-        const [
-            totalLeadsPeriodo, novosLeads, leadsQualificados, leadsConvertidos,
-            agendamentosTotais, consultasHoje, pendentesHoje,
-            agendamentosHojeList, leadsRecentes,
-            leadsEsperandoHumano, transferidas,
-            contagemFunil, topTratamentosDb, origensAgrupadas,
-            allLeadsEvolucao, allAgendamentosEvolucao
-        ] = await Promise.all([
-            prisma.cliente.count({ where: { criadoEm: { gte: dataCorte } } }),
-            prisma.cliente.count({ where: { leadStatus: 'NOVO', criadoEm: { gte: dataCorte } } }),
-            prisma.cliente.count({ where: { leadStatus: 'QUALIFICADO', criadoEm: { gte: dataCorte } } }),
-            prisma.cliente.count({ where: { leadStatus: 'CLIENTE', criadoEm: { gte: dataCorte } } }),
-
-            prisma.agendamento.count({ where: { status: 'AGENDADO', tratamentoId: { not: null }, criadoEm: { gte: dataCorte } } }),
-            prisma.agendamento.count({ where: { tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } } }),
-            prisma.agendamento.count({ where: { status: 'AGENDADO', tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } } }),
-
+        // OTIMIZAÇÃO MASSIVA: Reduzimos 16 consultas para apenas 3! Evita travamento (Timeout) no banco de dados.
+        const [leadsNoPeriodo, agendamentosNoPeriodo, consultasHojeList] = await Promise.all([
+            // 1. Busca todos os Leads do período
+            prisma.cliente.findMany({
+                where: { criadoEm: { gte: dataCorte } },
+                select: { id: true, nome: true, leadStatus: true, origem: true, falarHumano: true, criadoEm: true, ultimaInteracao: true, tags: true }
+            }),
+            // 2. Busca Agendamentos criados no período
             prisma.agendamento.findMany({
-                where: { tratamentoId: { not: null } },
-                include: { cliente: true, tratamento: true, profissionalSaude: true },
-                orderBy: { criadoEm: 'desc' },
-                take: 5
+                where: { tratamentoId: { not: null }, criadoEm: { gte: dataCorte } },
+                include: { tratamento: true, profissionalSaude: true, cliente: true }
             }),
-
-            prisma.cliente.findMany({
-                take: 5,
-                orderBy: { ultimaInteracao: 'desc' },
-                select: { id: true, nome: true, leadStatus: true, origem: true, tags: true }
-            }),
-
-            prisma.cliente.findMany({
-                where: { falarHumano: true },
-                select: { id: true, nome: true }
-            }),
-
-            prisma.cliente.count({ where: { falarHumano: true, criadoEm: { gte: dataCorte } } }),
-
-            prisma.cliente.groupBy({ by: ['leadStatus'], _count: { leadStatus: true } }),
-
-            prisma.agendamento.groupBy({
-                by: ['tratamentoId'], _count: { tratamentoId: true },
-                where: { tratamentoId: { not: null }, status: 'AGENDADO', criadoEm: { gte: dataCorte } },
-                orderBy: { _count: { tratamentoId: 'desc' } }, take: 5
-            }),
-
-            prisma.cliente.groupBy({ by: ['origem'], _count: { origem: true } }),
-
-            // Traz apenas as datas do banco e fazemos o cálculo na RAM para não sobrecarregar o DB
-            prisma.cliente.findMany({ where: { criadoEm: { gte: dataCorte } }, select: { criadoEm: true } }),
-            prisma.agendamento.findMany({ where: { criadoEm: { gte: dataCorte }, tratamentoId: { not: null } }, select: { criadoEm: true } })
+            // 3. Busca Agendamentos que OCORREM hoje (Independente de quando foram criados)
+            prisma.agendamento.findMany({
+                where: { tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } },
+                include: { cliente: true, tratamento: true, profissionalSaude: true }
+            })
         ]);
+
+        // Processamento ultra-rápido na Memória RAM
+        const totalLeadsPeriodo = leadsNoPeriodo.length;
+        const novosLeads = leadsNoPeriodo.filter(l => l.leadStatus === 'NOVO').length;
+        const leadsQualificados = leadsNoPeriodo.filter(l => l.leadStatus === 'QUALIFICADO').length;
+        const leadsConvertidos = leadsNoPeriodo.filter(l => l.leadStatus === 'CLIENTE').length;
+        const transferidas = leadsNoPeriodo.filter(l => l.falarHumano).length;
+
+        const agendamentosTotais = agendamentosNoPeriodo.filter(a => a.status === 'AGENDADO').length;
+        
+        const consultasHoje = consultasHojeList.length;
+        const pendentesHoje = consultasHojeList.filter(a => a.status === 'AGENDADO').length;
 
         let taxaConversao = totalLeadsPeriodo > 0 ? ((leadsConvertidos / totalLeadsPeriodo) * 100).toFixed(1) : 0;
         
         const conversasIA = totalLeadsPeriodo;
         const resolvidas = Math.max(0, conversasIA - transferidas);
         let txRes = conversasIA > 0 ? ((resolvidas / conversasIA) * 100).toFixed(1) : 0;
-        
-        const desempenhoIA = { conversasIA, transferidas, resolvidas, taxaResolucao: txRes };
 
-        const atencaoNecessaria = leadsEsperandoHumano.map(lead => ({
-            clienteId: lead.id, clienteNome: lead.nome, motivo: 'Aguardando Atendimento Humano'
-        }));
+        // Avisos de Atenção (Gente esperando humano)
+        const atencaoNecessaria = leadsNoPeriodo
+            .filter(l => l.falarHumano)
+            .slice(0, 5)
+            .map(lead => ({ clienteId: lead.id, clienteNome: lead.nome, motivo: 'Aguardando Atendimento Humano' }));
 
-        const getCount = (status) => { const f = contagemFunil.find(c => c.leadStatus === status); return f ? f._count.leadStatus : 0; };
-        
+        // Leads Recentes
+        const leadsRecentes = leadsNoPeriodo
+            .sort((a, b) => new Date(b.ultimaInteracao) - new Date(a.ultimaInteracao))
+            .slice(0, 5);
+
+        // Consultas que acabaram de ser marcadas
+        const agendamentosHojeList = agendamentosNoPeriodo
+            .sort((a, b) => new Date(b.criadoEm) - new Date(a.criadoEm))
+            .slice(0, 5);
+
+        // FUNIL
+        const getCount = (status) => leadsNoPeriodo.filter(l => l.leadStatus === status).length;
         const graficoFunil = [
             { etapa: 'Conversas', valor: conversasIA },
             { etapa: 'Novos', valor: getCount('NOVO') },
@@ -95,48 +82,53 @@ exports.getDashboardStats = async (req, res) => {
             { etapa: 'Clientes', valor: getCount('CLIENTE') }
         ];
 
-        // Mapeamento super rápido dos Nomes dos Tratamentos
-        const tratamentoIds = topTratamentosDb.map(t => t.tratamentoId);
-        const tratamentosInfo = await prisma.tratamento.findMany({ where: { id: { in: tratamentoIds } }, select: { id: true, nome: true } });
-        
-        const topServicos = topTratamentosDb.map(t => {
-            const trat = tratamentosInfo.find(x => x.id === t.tratamentoId);
-            return { nome: trat ? trat.nome : 'Desconhecido', count: t._count.tratamentoId };
+        // SERVIÇOS MAIS PROCURADOS
+        const servicosMap = {};
+        agendamentosNoPeriodo.filter(a => a.status === 'AGENDADO').forEach(a => {
+            const nome = a.tratamento?.nome || 'Desconhecido';
+            servicosMap[nome] = (servicosMap[nome] || 0) + 1;
         });
+        const topServicos = Object.entries(servicosMap)
+            .map(([nome, count]) => ({ nome, count }))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 5);
 
-        const origensFormatadas = origensAgrupadas.map(o => ({ origem: o.origem || 'Outros', count: o._count.origem }));
+        // ORIGENS
+        const origensMap = {};
+        leadsNoPeriodo.forEach(l => {
+            const o = l.origem || 'Outros';
+            origensMap[o] = (origensMap[o] || 0) + 1;
+        });
+        const origensFormatadas = Object.entries(origensMap).map(([origem, count]) => ({ origem, count }));
 
-        // OTIMIZAÇÃO: Gráfico de Evolução montado Instantaneamente na Memória RAM (Javascript)
+        // EVOLUÇÃO (Gráfico de Linha Diário)
         const evolucaoMap = {};
         for (let i = dias - 1; i >= 0; i--) {
             const diaAlvo = subDays(new Date(), i);
             evolucaoMap[format(diaAlvo, 'dd/MM')] = { leads: 0, agendamentos: 0 };
         }
-
-        allLeadsEvolucao.forEach(l => {
+        leadsNoPeriodo.forEach(l => {
             const fd = format(l.criadoEm, 'dd/MM');
             if(evolucaoMap[fd]) evolucaoMap[fd].leads++;
         });
-        
-        allAgendamentosEvolucao.forEach(a => {
+        agendamentosNoPeriodo.forEach(a => {
             const fd = format(a.criadoEm, 'dd/MM');
             if(evolucaoMap[fd]) evolucaoMap[fd].agendamentos++;
         });
-
         const evolucao = Object.keys(evolucaoMap).map(k => ({ data: k, leads: evolucaoMap[k].leads, agendamentos: evolucaoMap[k].agendamentos }));
 
         res.status(200).json({
             kpis: { conversasTotais: conversasIA, novosLeads, leadsQualificados, agendamentosTotais, taxaConversao, consultasHoje, pendentesHoje },
             agendamentosHoje: agendamentosHojeList,
             leadsRecentes: leadsRecentes,
-            atencaoNecessaria: atencaoNecessaria.slice(0, 5),
-            desempenhoIA: desempenhoIA,
+            atencaoNecessaria: atencaoNecessaria,
+            desempenhoIA: { conversasIA, transferidas, resolvidas, taxaResolucao: txRes },
             graficos: { funil: graficoFunil, servicos: topServicos, origens: origensFormatadas, evolucao: evolucao }
         });
 
     } catch (error) { 
         console.error("Erro interno ao mapear o Dashboard:", error);
-        res.status(500).json({ error: "Erro interno ao mapear o Dashboard." }); 
+        res.status(500).json({ error: "Erro interno ao mapear o Dashboard. Detalhe: " + error.message }); 
     }
 };
 
