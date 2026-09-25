@@ -6,12 +6,20 @@ const automationEngine = require('../services/automationEngine');
 const demoService = require('../services/demoService');
 
 const stateMachine = new Map();
+const messageBuffer = new Map();
+const debounceTimers = new Map();
 
 function limparMemoriaEstado(telefone = null) { 
     if (telefone) {
         stateMachine.delete(telefone);
+        messageBuffer.delete(telefone);
+        if (debounceTimers.has(telefone)) clearTimeout(debounceTimers.get(telefone));
+        debounceTimers.delete(telefone);
     } else {
         stateMachine.clear(); 
+        messageBuffer.clear();
+        for (let timer of debounceTimers.values()) clearTimeout(timer);
+        debounceTimers.clear();
     }
 }
 
@@ -39,59 +47,69 @@ async function processarMensagemEntrante(message) {
     if (!message || !message.from) return; 
     if (demoService.isDemoActive()) return;
 
-    setTimeout(async () => {
-        const senderNumber = message.from;
-        const msgId = message.id;
+    const senderNumber = message.from;
+    const msgId = message.id;
 
-        try {
-            console.log(`\n===========================================`);
-            console.log(`🤖 [MOTOR CLÍNICA] PROCESSANDO: ${senderNumber}`);
-            console.log(`===========================================`);
-            
-            let pushName = message.profile?.name || null;
-            const { cliente, isNewPatient } = await getOrCreateCliente(senderNumber, pushName);
-            
-            if (cliente.falarHumano) {
-                console.log(`🛑 [MOTOR CLÍNICA] Lead em atendimento humano. IA pausada.`);
-                return; 
-            }
+    // 1. Acusa recebimento e leitura imediatamente
+    await whatsappService.markAsReadAndTyping(msgId, senderNumber);
 
-            await whatsappService.markAsReadAndTyping(msgId, senderNumber);
-            const delayMs = Math.floor(Math.random() * (3000 - 1500 + 1)) + 1500;
-            await new Promise(resolve => setTimeout(resolve, delayMs));
+    try {
+        const configDb = await prisma.configSistema.findFirst();
+        
+        let textoProcessado = "";
+        let isTranscribed = false;
 
-            // Busca as configs antes para saber o idioma do áudio
-            const configDb = await prisma.configSistema.findFirst();
-            const isEnglish = configDb?.idioma?.includes('Inglês');
-
-            let textoProcessado = "";
-            let isTranscribed = false;
-
-            if (message.type === 'audio') {
-                const mediaId = message.audio.id;
-                try { 
-                    const audioBuffer = await whatsappService.downloadMedia(mediaId);
-                    textoProcessado = await aiService.transcreverAudio(audioBuffer, configDb);
-                    isTranscribed = true;
-                    
-                    if (textoProcessado.includes("Não foi possível compreender") || textoProcessado.trim() === "") {
-                        textoProcessado = "[FALHA_AUDIO]";
-                    }
-                } catch(e) { 
-                    textoProcessado = "[FALHA_AUDIO]"; 
+        // 2. Extrai dados ou transcreve áudio
+        if (message.type === 'audio') {
+            const mediaId = message.audio.id;
+            try { 
+                const audioBuffer = await whatsappService.downloadMedia(mediaId);
+                textoProcessado = await aiService.transcreverAudio(audioBuffer, configDb);
+                isTranscribed = true;
+                if (textoProcessado.includes("Não foi possível compreender") || textoProcessado.trim() === "") {
+                    textoProcessado = "[FALHA_AUDIO]";
                 }
-            } else if (['image', 'video', 'document'].includes(message.type)) {
-                textoProcessado = message[message.type].caption || "[Mídia Recebida]"; 
-            } else if (message.type === 'text') {
-                textoProcessado = message.text.body;
-            } else if (message.type === 'interactive') {
-                textoProcessado = message.interactive.button_reply?.id || message.interactive.list_reply?.id;
+            } catch(e) { 
+                textoProcessado = "[FALHA_AUDIO]"; 
             }
+        } else if (['image', 'video', 'document'].includes(message.type)) {
+            textoProcessado = message[message.type].caption || "[Mídia Recebida]"; 
+        } else if (message.type === 'text') {
+            textoProcessado = message.text.body;
+        } else if (message.type === 'interactive') {
+            textoProcessado = message.interactive.button_reply?.id || message.interactive.list_reply?.id;
+        }
 
-            if (!textoProcessado) return;
+        if (!textoProcessado) return;
 
-            if (textoProcessado === "[FALHA_AUDIO]") {
+        // 3. Mecanismo de Fila com Retenção (Debounce Queue)
+        let buffer = messageBuffer.get(senderNumber) || [];
+        buffer.push({
+            texto: textoProcessado,
+            isTranscribed: isTranscribed,
+            isInteractive: message.type === 'interactive',
+            pushName: message.profile?.name || null
+        });
+        messageBuffer.set(senderNumber, buffer);
+
+        if (debounceTimers.has(senderNumber)) {
+            clearTimeout(debounceTimers.get(senderNumber));
+        }
+
+        // Aguarda 3.5 segundos em silêncio. Se o utilizador mandar algo, o timer reseta.
+        const timer = setTimeout(async () => {
+            debounceTimers.delete(senderNumber);
+            const msgs = messageBuffer.get(senderNumber);
+            messageBuffer.delete(senderNumber);
+
+            if (!msgs || msgs.length === 0) return;
+
+            // Une todos os textos guardados durante os 3.5 segundos
+            const falhas = msgs.filter(m => m.texto === "[FALHA_AUDIO]");
+            if (falhas.length === msgs.length) {
+                // Apenas falhas de áudio foram recebidas
                 await prisma.mensagemIA.create({ data: { role: 'user', content: '[Áudio Recebido - Incompreensível]', clienteId: senderNumber } });
+                const isEnglish = configDb?.idioma?.includes('Inglês');
                 const respFalha = isEnglish 
                     ? "Sorry, I couldn't hear your audio clearly. Could you record it again or type the message?" 
                     : "Desculpe, não consegui ouvir direito o seu áudio. Você poderia gravar novamente ou digitar a mensagem?";
@@ -100,127 +118,167 @@ async function processarMensagemEntrante(message) {
                 return;
             }
 
-            let contentToSave = isTranscribed ? `[Áudio Transcrito]: ${textoProcessado}` : textoProcessado;
-            await prisma.mensagemIA.create({ data: { role: 'user', content: contentToSave, clienteId: senderNumber } });
+            const validos = msgs.filter(m => m.texto !== "[FALHA_AUDIO]");
+            const textoUnificado = validos.map(m => m.texto).join('. ');
+            const temAudio = validos.some(m => m.isTranscribed);
+            const isInteractive = validos.some(m => m.isInteractive);
+            const nomePushName = validos[0].pushName;
 
-            const historicoRaw = await prisma.mensagemIA.findMany({ where: { clienteId: senderNumber }, take: 4, orderBy: { criadoEm: 'desc' } });
-            historicoRaw.reverse();
-            
-            const historicoLimpo = historicoRaw
-                .filter(h => !h.content.includes('[SISTEMA AUTOMÁTICO]') && !h.content.includes('[MEDIA:'))
-                .map(h => ({ role: h.role, content: h.content.replace(/\[.*?\]/g, '').trim() }));
-
-            let userState = stateMachine.get(senderNumber) || { step: 'IDLE', entities: {}, frustrationCount: 0 };
-
-            let isInteractive = message.type === 'interactive';
-            let nlpResult = { intent: "UNKNOWN", confidence: 1, entities: {} };
-
-            if (!isInteractive && textoProcessado) {
-                nlpResult = await aiService.analisarMensagemNLP(textoProcessado, historicoLimpo, userState, configDb);
-                console.log(`🧠 [NLP] Intenção: ${nlpResult.intent} | Entidades:`, JSON.stringify(nlpResult.entities));
-            } else if (isInteractive) {
-                if (textoProcessado === 'cmd_agendar') nlpResult.intent = 'BOOK_APPOINTMENT';
-                else if (textoProcessado === 'cmd_menu_tratamentos') nlpResult.intent = 'TREATMENT_LIST';
-                else if (textoProcessado === 'cmd_humano') nlpResult.intent = 'HUMAN_TRANSFER';
-                else if (textoProcessado.startsWith('trat_')) { nlpResult.intent = 'SELECT_TREATMENT'; nlpResult.entities = { treatment_id: textoProcessado.replace('trat_', '') }; }
-                else if (textoProcessado.startsWith('prof_')) { nlpResult.intent = 'SELECT_PROFESSIONAL'; nlpResult.entities = { professional_id: textoProcessado.replace('prof_', '') }; }
-                else if (textoProcessado.startsWith('data_')) { nlpResult.intent = 'SELECT_DATE'; nlpResult.entities = { date: textoProcessado.replace('data_', '') }; }
-                else if (textoProcessado === 'ver_mais_data') nlpResult.intent = 'REQUEST_MORE_DATES';
-                else if (textoProcessado.startsWith('hora_')) { nlpResult.intent = 'SELECT_TIME'; nlpResult.entities = { time: textoProcessado.replace('hora_', '') }; }
-                else if (textoProcessado === 'ver_mais_hora') nlpResult.intent = 'REQUEST_MORE_TIMES';
-                else if (textoProcessado === 'cmd_confirmar_reserva') nlpResult.intent = 'CONFIRM_APPOINTMENT';
-                else if (textoProcessado === 'cmd_cancelar_fluxo') nlpResult.intent = 'REJECT_APPOINTMENT';
-                else if (textoProcessado.startsWith('canc_')) { nlpResult.intent = 'CANCEL_APPOINTMENT'; nlpResult.entities = { appointment_id: textoProcessado.replace('canc_', '') }; }
-                else if (textoProcessado.startsWith('reag_')) { nlpResult.intent = 'RESCHEDULE_APPOINTMENT'; nlpResult.entities = { appointment_id: textoProcessado.replace('reag_', '') }; }
+            let textoComandoBase = textoUnificado;
+            // Se houve um clique de botão no meio do spam, priorizamos o comando daquele botão
+            if (isInteractive) {
+                const interativos = validos.filter(m => m.isInteractive);
+                textoComandoBase = interativos[interativos.length - 1].texto; 
             }
 
-            let activeIntent = nlpResult.intent || 'UNKNOWN';
+            // 4. Executa a lógica "Pesada" uma única vez com o lote consolidado!
+            await executarLogicaCoreClinica(senderNumber, nomePushName, textoComandoBase, textoUnificado, temAudio, isInteractive, configDb);
 
-            if (activeIntent === 'UNKNOWN') {
-                userState.frustrationCount = (userState.frustrationCount || 0) + 1;
-            } else {
-                userState.frustrationCount = 0;
-            }
+        }, 3500); 
 
-            if (userState.frustrationCount >= 3 || activeIntent === 'HUMAN_TRANSFER' || activeIntent === 'FRUSTRATION') {
-                await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
-                limparMemoriaEstado(senderNumber);
-                
-                const resp = isEnglish 
-                    ? "Chat transferred. From now on, you are talking directly to our human team. How can we help?" 
-                    : "Atendimento transferido. A partir de agora, você está falando diretamente com a nossa equipe humana. Como podemos ajudar?";
-                await prisma.mensagemIA.create({ data: { role: 'assistant', content: `[SISTEMA] ${resp}`, clienteId: senderNumber } });
-                await whatsappService.sendText(senderNumber, resp);
-                if (global.io) global.io.emit('atualizar_fila');
-                return;
-            }
+        debounceTimers.set(senderNumber, timer);
 
-            if (activeIntent === 'GREETING') {
-                userState.frustrationCount = 0;
-                if (userState.step !== 'IDLE') {
-                    const resp = isEnglish 
-                        ? "Hello again! We were in the middle of your booking. Do you want to continue or cancel?" 
-                        : "Olá novamente! Estávamos no meio do seu agendamento. Deseja continuar com a reserva ou prefere cancelar?";
-                    await whatsappService.sendInteractiveMenu(senderNumber, resp, [
-                        { id: 'cmd_agendar', title: isEnglish ? 'Continue' : 'Continuar' },
-                        { id: 'cmd_cancelar_fluxo', title: isEnglish ? 'Cancel' : 'Cancelar' }
-                    ]);
-                    return;
-                } else {
-                    const nomeClinica = configDb?.nomeClinica || (isEnglish ? 'our clinic' : 'nossa clínica');
-                    const resp = isEnglish 
-                        ? `Hello! Welcome to ${nomeClinica}. How can I help you today?` 
-                        : `Olá! Seja bem-vindo(a) à ${nomeClinica}. Como posso ajudar hoje?`;
-                    await whatsappService.sendInteractiveMenu(senderNumber, resp, [
-                        { id: 'cmd_agendar', title: isEnglish ? 'Book appointment' : 'Marcar consulta' },
-                        { id: 'cmd_menu_tratamentos', title: isEnglish ? 'View treatments' : 'Ver tratamentos' },
-                        { id: 'cmd_humano', title: isEnglish ? 'Talk to staff' : 'Falar com a equipe' }
-                    ]);
-                    return;
-                }
-            }
+    } catch (error) {
+        console.error("❌ ERRO CRÍTICO NO ACUMULADOR DA CLÍNICA:", error);
+    }
+}
 
-            const queryIntents = [
-                'TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST', 
-                'CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS', 
-                'CHECK_UPCOMING_APPOINTMENTS', 'CHECK_PAST_APPOINTMENTS', 
-                'UNKNOWN', 'GOODBYE', 'ASK_DATE_REFERENCE'
-            ];
+async function executarLogicaCoreClinica(senderNumber, nomePushName, textoProcessado, textoUnificadoParaBD, temAudio, isInteractive, configDb) {
+    try {
+        console.log(`\n===========================================`);
+        console.log(`🤖 [MOTOR CLÍNICA] PROCESSANDO LOTE: ${senderNumber}`);
+        console.log(`📝 Textos Consolidados: ${textoUnificadoParaBD}`);
+        console.log(`===========================================`);
 
-            if (queryIntents.includes(activeIntent)) {
-                const flowConsultas = require('./flowConsultas');
-                await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historicoLimpo, cliente, isNewPatient);
-                return;
-            }
-
-            stateMachine.set(senderNumber, userState);
-
-            const bookingIntents = ['BOOK_APPOINTMENT', 'SELECT_TREATMENT', 'SELECT_PROFESSIONAL', 'SELECT_DATE', 'SELECT_TIME', 'REQUEST_MORE_TIMES', 'REQUEST_MORE_DATES', 'REQUEST_SPECIFIC_TIME', 'CONFIRM_APPOINTMENT', 'REJECT_APPOINTMENT', 'CHANGE_TREATMENT', 'CHANGE_DATE', 'CHANGE_TIME'];
-            const cancelIntents = ['CANCEL_APPOINTMENT', 'RESCHEDULE_APPOINTMENT'];
-
-            if (bookingIntents.includes(activeIntent) || userState.step.startsWith('AGENDAMENTO_')) {
-                const flowAgendamento = require('./flowAgendamento');
-                await flowAgendamento.processarAgendamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, isNewPatient);
-            } 
-            else if (cancelIntents.includes(activeIntent) || userState.step.startsWith('CANCELAMENTO_')) {
-                const isRemarcacao = activeIntent === 'RESCHEDULE_APPOINTMENT';
-                const flowCancelamento = require('./flowCancelamento');
-                await flowCancelamento.processarCancelamento(senderNumber, textoProcessado, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao, cliente, isNewPatient);
-            }
-            else {
-                const flowConsultas = require('./flowConsultas');
-                await flowConsultas.processarDuvidas(senderNumber, textoProcessado, senderNumber, userState, nlpResult, configDb, historicoLimpo, cliente, isNewPatient);
-            }
-
-        } catch (error) {
-            console.error("❌ ERRO CRÍTICO NO MOTOR DA CLÍNICA:", error);
-            const isEnglish = (await prisma.configSistema.findFirst())?.idioma?.includes('Inglês');
-            const errMsg = isEnglish 
-                ? "A small connection error occurred. Could you send that again?" 
-                : "Ocorreu uma pequena falha na nossa conexão agora. Você poderia mandar novamente?";
-            await whatsappService.sendText(senderNumber, errMsg);
+        const { cliente, isNewPatient } = await getOrCreateCliente(senderNumber, nomePushName);
+        
+        if (cliente.falarHumano) {
+            console.log(`🛑 [MOTOR CLÍNICA] Lead em atendimento humano. IA pausada.`);
+            return; 
         }
-    }, 0);
+
+        const isEnglish = configDb?.idioma?.includes('Inglês');
+
+        // Salva tudo que o utilizador disse numa única linha no banco de dados
+        let contentToSave = temAudio ? `[Áudio Transcrito]: ${textoUnificadoParaBD}` : textoUnificadoParaBD;
+        await prisma.mensagemIA.create({ data: { role: 'user', content: contentToSave, clienteId: senderNumber } });
+
+        const historicoRaw = await prisma.mensagemIA.findMany({ where: { clienteId: senderNumber }, take: 4, orderBy: { criadoEm: 'desc' } });
+        historicoRaw.reverse();
+        
+        const historicoLimpo = historicoRaw
+            .filter(h => !h.content.includes('[SISTEMA AUTOMÁTICO]') && !h.content.includes('[MEDIA:'))
+            .map(h => ({ role: h.role, content: h.content.replace(/\[.*?\]/g, '').trim() }));
+
+        let userState = stateMachine.get(senderNumber) || { step: 'IDLE', entities: {}, frustrationCount: 0 };
+        let nlpResult = { intent: "UNKNOWN", confidence: 1, entities: {} };
+
+        if (isInteractive) {
+            if (textoProcessado === 'cmd_agendar') nlpResult.intent = 'BOOK_APPOINTMENT';
+            else if (textoProcessado === 'cmd_menu_tratamentos') nlpResult.intent = 'TREATMENT_LIST';
+            else if (textoProcessado === 'cmd_humano') nlpResult.intent = 'HUMAN_TRANSFER';
+            else if (textoProcessado.startsWith('trat_')) { nlpResult.intent = 'SELECT_TREATMENT'; nlpResult.entities = { treatment_id: textoProcessado.replace('trat_', '') }; }
+            else if (textoProcessado.startsWith('prof_')) { nlpResult.intent = 'SELECT_PROFESSIONAL'; nlpResult.entities = { professional_id: textoProcessado.replace('prof_', '') }; }
+            else if (textoProcessado.startsWith('data_')) { nlpResult.intent = 'SELECT_DATE'; nlpResult.entities = { date: textoProcessado.replace('data_', '') }; }
+            else if (textoProcessado === 'ver_mais_data') nlpResult.intent = 'REQUEST_MORE_DATES';
+            else if (textoProcessado.startsWith('hora_')) { nlpResult.intent = 'SELECT_TIME'; nlpResult.entities = { time: textoProcessado.replace('hora_', '') }; }
+            else if (textoProcessado === 'ver_mais_hora') nlpResult.intent = 'REQUEST_MORE_TIMES';
+            else if (textoProcessado === 'cmd_confirmar_reserva') nlpResult.intent = 'CONFIRM_APPOINTMENT';
+            else if (textoProcessado === 'cmd_cancelar_fluxo') nlpResult.intent = 'REJECT_APPOINTMENT';
+            else if (textoProcessado.startsWith('canc_')) { nlpResult.intent = 'CANCEL_APPOINTMENT'; nlpResult.entities = { appointment_id: textoProcessado.replace('canc_', '') }; }
+            else if (textoProcessado.startsWith('reag_')) { nlpResult.intent = 'RESCHEDULE_APPOINTMENT'; nlpResult.entities = { appointment_id: textoProcessado.replace('reag_', '') }; }
+        } else {
+            // Manda TODO o texto unificado para a IA NLP (assim ela tem contexto global do "spam")
+            nlpResult = await aiService.analisarMensagemNLP(textoUnificadoParaBD, historicoLimpo, userState, configDb);
+            console.log(`🧠 [NLP] Intenção: ${nlpResult.intent} | Entidades:`, JSON.stringify(nlpResult.entities));
+        }
+
+        let activeIntent = nlpResult.intent || 'UNKNOWN';
+
+        if (activeIntent === 'UNKNOWN') {
+            userState.frustrationCount = (userState.frustrationCount || 0) + 1;
+        } else {
+            userState.frustrationCount = 0;
+        }
+
+        if (userState.frustrationCount >= 3 || activeIntent === 'HUMAN_TRANSFER' || activeIntent === 'FRUSTRATION') {
+            await prisma.cliente.update({ where: { id: senderNumber }, data: { falarHumano: true, leadStatus: 'INTERESSADO' } });
+            limparMemoriaEstado(senderNumber);
+            
+            const resp = isEnglish 
+                ? "Chat transferred. From now on, you are talking directly to our human team. How can we help?" 
+                : "Atendimento transferido. A partir de agora, você está falando diretamente com a nossa equipe humana. Como podemos ajudar?";
+            await prisma.mensagemIA.create({ data: { role: 'assistant', content: `[SISTEMA] ${resp}`, clienteId: senderNumber } });
+            await whatsappService.sendText(senderNumber, resp);
+            if (global.io) global.io.emit('atualizar_fila');
+            return;
+        }
+
+        if (activeIntent === 'GREETING') {
+            userState.frustrationCount = 0;
+            if (userState.step !== 'IDLE') {
+                const resp = isEnglish 
+                    ? "Hello again! We were in the middle of your booking. Do you want to continue or cancel?" 
+                    : "Olá novamente! Estávamos no meio do seu agendamento. Deseja continuar com a reserva ou prefere cancelar?";
+                await whatsappService.sendInteractiveMenu(senderNumber, resp, [
+                    { id: 'cmd_agendar', title: isEnglish ? 'Continue' : 'Continuar' },
+                    { id: 'cmd_cancelar_fluxo', title: isEnglish ? 'Cancel' : 'Cancelar' }
+                ]);
+                return;
+            } else {
+                const nomeClinica = configDb?.nomeClinica || (isEnglish ? 'our clinic' : 'nossa clínica');
+                const resp = isEnglish 
+                    ? `Hello! Welcome to ${nomeClinica}. How can I help you today?` 
+                    : `Olá! Seja bem-vindo(a) à ${nomeClinica}. Como posso ajudar hoje?`;
+                await whatsappService.sendInteractiveMenu(senderNumber, resp, [
+                    { id: 'cmd_agendar', title: isEnglish ? 'Book appointment' : 'Marcar consulta' },
+                    { id: 'cmd_menu_tratamentos', title: isEnglish ? 'View treatments' : 'Ver tratamentos' },
+                    { id: 'cmd_humano', title: isEnglish ? 'Talk to staff' : 'Falar com a equipe' }
+                ]);
+                return;
+            }
+        }
+
+        const queryIntents = [
+            'TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST', 
+            'CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS', 
+            'CHECK_UPCOMING_APPOINTMENTS', 'CHECK_PAST_APPOINTMENTS', 
+            'UNKNOWN', 'GOODBYE', 'ASK_DATE_REFERENCE'
+        ];
+
+        if (queryIntents.includes(activeIntent)) {
+            const flowConsultas = require('./flowConsultas');
+            await flowConsultas.processarDuvidas(senderNumber, textoUnificadoParaBD, senderNumber, userState, nlpResult, configDb, historicoLimpo, cliente, isNewPatient);
+            return;
+        }
+
+        stateMachine.set(senderNumber, userState);
+
+        const bookingIntents = ['BOOK_APPOINTMENT', 'SELECT_TREATMENT', 'SELECT_PROFESSIONAL', 'SELECT_DATE', 'SELECT_TIME', 'REQUEST_MORE_TIMES', 'REQUEST_MORE_DATES', 'REQUEST_SPECIFIC_TIME', 'CONFIRM_APPOINTMENT', 'REJECT_APPOINTMENT', 'CHANGE_TREATMENT', 'CHANGE_DATE', 'CHANGE_TIME'];
+        const cancelIntents = ['CANCEL_APPOINTMENT', 'RESCHEDULE_APPOINTMENT'];
+
+        if (bookingIntents.includes(activeIntent) || userState.step.startsWith('AGENDAMENTO_')) {
+            const flowAgendamento = require('./flowAgendamento');
+            await flowAgendamento.processarAgendamento(senderNumber, textoUnificadoParaBD, senderNumber, stateMachine, nlpResult, isInteractive, configDb, cliente, isNewPatient);
+        } 
+        else if (cancelIntents.includes(activeIntent) || userState.step.startsWith('CANCELAMENTO_')) {
+            const isRemarcacao = activeIntent === 'RESCHEDULE_APPOINTMENT';
+            const flowCancelamento = require('./flowCancelamento');
+            await flowCancelamento.processarCancelamento(senderNumber, textoUnificadoParaBD, senderNumber, stateMachine, nlpResult, isInteractive, configDb, isRemarcacao, cliente, isNewPatient);
+        }
+        else {
+            const flowConsultas = require('./flowConsultas');
+            await flowConsultas.processarDuvidas(senderNumber, textoUnificadoParaBD, senderNumber, userState, nlpResult, configDb, historicoLimpo, cliente, isNewPatient);
+        }
+
+    } catch (error) {
+        console.error("❌ ERRO CRÍTICO NO NÚCLEO DA CLÍNICA:", error);
+        const isEnglish = (await prisma.configSistema.findFirst())?.idioma?.includes('Inglês');
+        const errMsg = isEnglish 
+            ? "A small connection error occurred. Could you send that again?" 
+            : "Ocorreu uma pequena falha na nossa conexão agora. Você poderia mandar novamente?";
+        await whatsappService.sendText(senderNumber, errMsg);
+    }
 }
 
 module.exports = { processarMensagemEntrante, limparMemoriaEstado, stateMachine };
