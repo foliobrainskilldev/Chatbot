@@ -15,6 +15,7 @@ async function registrarAtividade(usuarioId, acao, recurso, detalhes = "") {
 }
 
 exports.getDashboardStats = async (req, res) => {
+    // ... (Código original inalterado do dashboard)
     try {
         const dias = parseInt(req.query.dias) || 30;
         const dataCorte = startOfDay(subDays(new Date(), dias));
@@ -43,10 +44,8 @@ exports.getDashboardStats = async (req, res) => {
         const transferidas = leadsNoPeriodo.filter(l => l.falarHumano).length;
 
         const agendamentosTotais = agendamentosNoPeriodo.filter(a => a.status === 'AGENDADO').length;
-        
         const consultasHoje = consultasHojeList.length;
         const pendentesHoje = consultasHojeList.filter(a => a.status === 'AGENDADO').length;
-
         let taxaConversao = totalLeadsPeriodo > 0 ? ((leadsConvertidos / totalLeadsPeriodo) * 100).toFixed(1) : 0;
         
         const conversasIA = totalLeadsPeriodo;
@@ -123,6 +122,7 @@ exports.getDashboardStats = async (req, res) => {
 };
 
 exports.getLeads = async (req, res) => {
+    // ... (Código inalterado)
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 200;
@@ -130,7 +130,7 @@ exports.getLeads = async (req, res) => {
         const origem = req.query.origem || '';
         const responsavelId = req.query.responsavelId || '';
         const tags = req.query.tags || '';
-        const servicoId = req.query.servicoId || ''; // O Frontend envia 'servicoId', nós mapemos para 'tratamentoId' no Prisma
+        const servicoId = req.query.servicoId || ''; 
         const dias = parseInt(req.query.dias) || 0;
 
         const skip = (page - 1) * limit;
@@ -173,6 +173,7 @@ exports.getLeads = async (req, res) => {
 };
 
 exports.criarLeadManual = async (req, res) => {
+    // ... (Código inalterado)
     try {
         const { id, nome, origem } = req.body;
         if (!id) return res.status(400).json({ error: "O número/ID é obrigatório." });
@@ -192,6 +193,7 @@ exports.criarLeadManual = async (req, res) => {
 };
 
 exports.atualizarStatusLead = async (req, res) => {
+    // ... (Código inalterado)
     try {
         const { status, tags, valorPotencial, responsavelId } = req.body;
         const updateData = {};
@@ -246,10 +248,24 @@ exports.getEquipe = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Erro ao buscar equipe." }); }
 };
 
+// -------------------------------------------------------------
+// INÍCIO DAS REGRAS REFORÇADAS DE SEGURANÇA NA EQUIPE
+// -------------------------------------------------------------
+
 exports.criarMembroEquipe = async (req, res) => {
     try {
         const { nome, email, funcao } = req.body;
         
+        const userAtuador = req.user; 
+        if (!userAtuador || (userAtuador.funcao !== 'ADMIN' && userAtuador.funcao !== 'GESTOR')) {
+            return res.status(403).json({ error: "Acesso Negado. Apenas administradores ou gestores podem convidar novos membros." });
+        }
+
+        // Um GESTOR não pode criar um ADMIN
+        if (userAtuador.funcao === 'GESTOR' && funcao === 'ADMIN') {
+            return res.status(403).json({ error: "Gestores não podem criar contas de nível Administrador." });
+        }
+
         const verificaEmail = await prisma.usuario.findUnique({ where: { email }});
         if (verificaEmail) {
             return res.status(400).json({ error: "Este e-mail já está em uso na plataforma." });
@@ -259,7 +275,6 @@ exports.criarMembroEquipe = async (req, res) => {
         if(funcao === 'ADMIN') permissoesDefault = { crm: 'tudo', conversas: 'tudo', calendario: 'tudo', conf: 'tudo' };
         if(funcao === 'ATENDENTE') permissoesDefault = { crm: 'editar', conversas: 'atender', calendario: 'ver' };
         
-        // Gera uma senha temporária automática (8 caracteres aleatórios)
         const senhaTemporaria = Math.random().toString(36).slice(-8);
 
         const salt = await bcrypt.genSalt(10);
@@ -276,11 +291,9 @@ exports.criarMembroEquipe = async (req, res) => {
             }
         });
         
-        // DISPARA O E-MAIL COM RESEND
         await emailService.enviarConviteEquipe(nome, email, senhaTemporaria);
 
-        const atuadorId = req.user ? req.user.id : 1;
-        await registrarAtividade(atuadorId, 'Convidou Membro', 'Equipe', `Enviou convite de acesso para ${email}`);
+        await registrarAtividade(userAtuador.id, 'Convidou Membro', 'Equipe', `Enviou convite de acesso para ${email}`);
 
         res.status(201).json({ id: newUser.id, nome: newUser.nome, email: newUser.email, funcao: newUser.funcao });
     } catch (error) { 
@@ -291,32 +304,75 @@ exports.criarMembroEquipe = async (req, res) => {
 
 exports.atualizarMembroEquipe = async (req, res) => {
     try {
-        const { status, funcao, permissoes } = req.body;
+        const { status, funcao, permissoes, senha } = req.body;
         const updateData = {};
-        
-        if (status) updateData.status = status;
+        const idAlvo = parseInt(req.params.id);
+        const userAtuador = req.user;
+
+        const alvoDb = await prisma.usuario.findUnique({ where: { id: idAlvo } });
+        if (!alvoDb) return res.status(404).json({ error: "Usuário não encontrado." });
+
+        // Validação Mestre: Se não for ADMIN nem GESTOR e tentar editar outra pessoa
+        if (userAtuador.funcao !== 'ADMIN' && userAtuador.funcao !== 'GESTOR' && userAtuador.id !== idAlvo) {
+            return res.status(403).json({ error: "Você não tem permissão para editar perfis de outros membros." });
+        }
+
+        if (status) {
+            if (userAtuador.funcao !== 'ADMIN' && userAtuador.funcao !== 'GESTOR') {
+                return res.status(403).json({ error: "Apenas administradores ou gestores podem alterar status." });
+            }
+            if (userAtuador.funcao === 'GESTOR' && alvoDb.funcao === 'ADMIN') {
+                return res.status(403).json({ error: "Gestores não podem alterar o status de Administradores." });
+            }
+            updateData.status = status;
+        }
         
         if (funcao) {
-            if (req.user && req.user.funcao !== 'ADMIN') {
-                return res.status(403).json({ error: "Apenas administradores podem alterar as funções dos utilizadores." });
+            if (userAtuador.funcao !== 'ADMIN') {
+                return res.status(403).json({ error: "Acesso Negado. Apenas administradores (ADMIN) podem alterar cargos e funções." });
             }
             updateData.funcao = funcao;
         }
         
-        if (permissoes) updateData.permissoes = JSON.stringify(permissoes);
+        if (permissoes) {
+            if (userAtuador.funcao !== 'ADMIN') {
+                return res.status(403).json({ error: "Apenas administradores podem alterar permissões do sistema." });
+            }
+            updateData.permissoes = JSON.stringify(permissoes);
+        }
+
+        if (senha) {
+            if (userAtuador.funcao !== 'ADMIN' && userAtuador.id !== idAlvo) {
+                return res.status(403).json({ error: "Você só tem permissão para alterar a sua própria senha." });
+            }
+            const salt = await bcrypt.genSalt(10);
+            updateData.senha = await bcrypt.hash(senha, salt);
+        }
+
+        if (Object.keys(updateData).length === 0) {
+            return res.status(400).json({ error: "Nenhum dado válido para atualizar." });
+        }
 
         const updated = await prisma.usuario.update({
-            where: { id: parseInt(req.params.id) },
+            where: { id: idAlvo },
             data: updateData
         });
 
         let acaoStr = status === 'SUSPENSO' ? 'Suspendeu Acesso' : 'Alterou Perfil';
-        const atuadorId = req.user ? req.user.id : 1;
-        await registrarAtividade(atuadorId, acaoStr, 'Equipe', `Atualizou o perfil de ${updated.nome}`);
+        if (senha && !status && !funcao && !permissoes) acaoStr = 'Alterou Senha';
+
+        await registrarAtividade(userAtuador.id, acaoStr, 'Equipe', `Atualização no perfil de ${updated.nome}`);
 
         res.status(200).json({ id: updated.id, nome: updated.nome, funcao: updated.funcao, status: updated.status });
-    } catch (error) { res.status(500).json({ error: "Erro ao atualizar membro." }); }
+    } catch (error) { 
+        console.error("Erro em atualizarMembroEquipe:", error);
+        res.status(500).json({ error: "Erro ao atualizar membro." }); 
+    }
 };
+
+// -------------------------------------------------------------
+// FIM DAS REGRAS REFORÇADAS
+// -------------------------------------------------------------
 
 exports.getAtividadesEquipe = async (req, res) => {
     try {
