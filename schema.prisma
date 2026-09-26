@@ -10,7 +10,7 @@ datasource db {
 
 model ConfigSistema {
   id                  Int     @id @default(1)
-  modoAtivo           String  @default("BARBEARIA")
+  modoAtivo           String  @default("CLINICA")
   
   // --- IDENTIDADE DA CLÍNICA ---
   nomeClinica         String  @default("Clínica Saúde Mais")
@@ -197,20 +197,6 @@ model Feriado {
   descricao String?
 }
 
-model Servico {
-  id           Int           @id @default(autoincrement())
-  nome         String
-  preco        Float
-  duracaoMin   Int           @default(30)
-  agendamentos Agendamento[]
-}
-
-model Barbeiro {
-  id           Int           @id @default(autoincrement())
-  nome         String
-  agendamentos Agendamento[]
-}
-
 model Agendamento {
   id                  Int                @id @default(autoincrement())
   dataHora            DateTime
@@ -222,11 +208,6 @@ model Agendamento {
   tratamento          Tratamento?        @relation(fields: [tratamentoId], references: [id])
   profissionalSaudeId Int?
   profissionalSaude   ProfissionalSaude? @relation(fields: [profissionalSaudeId], references: [id])
-  
-  servicoId           Int?
-  servico             Servico?           @relation(fields: [servicoId], references: [id])
-  barbeiroId          Int?
-  barbeiro            Barbeiro?          @relation(fields: [barbeiroId], references: [id])
   
   observacoes         String?            @db.Text
   criadoEm            DateTime           @default(now())

@@ -1,6 +1,6 @@
 const { prisma } = require('../../db');
 const supabaseService = require('../../services/supabaseService');
-const botEngine = require('../botEngine'); // <--- CORREÇÃO AQUI: '../' em vez de './'
+const botEngine = require('../botEngine'); 
 
 exports.getConfigCompleta = async (req, res) => {
     try {
@@ -101,7 +101,6 @@ exports.testSupabase = async (req, res) => {
     }
 };
 
-// FORMATAÇÃO DO SISTEMA CLÍNICA
 exports.formatarSistemaClinica = async (req, res) => {
     try {
         await prisma.automacaoHistorico.deleteMany({});

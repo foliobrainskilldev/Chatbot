@@ -33,7 +33,7 @@ async function getProximosDiasUteis(qtdDias = 7) {
     return dias;
 }
 
-async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, profissionalSaudeId = null, nicho = 'CLINICA') {
+async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, profissionalSaudeId = null) {
     const configDb = await prisma.configSistema.findFirst();
     const fusoOffset = configDb?.fusoHorario === 'America/Sao_Paulo' ? '-03:00' : '+02:00';
     const clinicTZ = configDb?.fusoHorario || 'Africa/Maputo';
@@ -43,13 +43,9 @@ async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, prof
 
     if (profissionalSaudeId) {
         try {
-            if (nicho === 'CLINICA') {
-                const medico = await prisma.profissionalSaude.findUnique({ where: { id: parseInt(profissionalSaudeId) } });
-                if (medico && medico.horaInicioTrabalho) horaAbertura = parseInt(medico.horaInicioTrabalho);
-                if (medico && medico.horaFimTrabalho) horaFecho = parseInt(medico.horaFimTrabalho);
-            } else {
-                const barbeiro = await prisma.barbeiro.findUnique({ where: { id: parseInt(profissionalSaudeId) } });
-            }
+            const medico = await prisma.profissionalSaude.findUnique({ where: { id: parseInt(profissionalSaudeId) } });
+            if (medico && medico.horaInicioTrabalho) horaAbertura = parseInt(medico.horaInicioTrabalho);
+            if (medico && medico.horaFimTrabalho) horaFecho = parseInt(medico.horaFimTrabalho);
         } catch (e) { console.error("Aviso: Configuração de hora do profissional não encontrada."); }
     }
 
@@ -79,13 +75,12 @@ async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, prof
     };
     
     if (profissionalSaudeId) {
-        if (nicho === 'CLINICA') whereClause.profissionalSaudeId = parseInt(profissionalSaudeId);
-        else whereClause.barbeiroId = parseInt(profissionalSaudeId);
+        whereClause.profissionalSaudeId = parseInt(profissionalSaudeId);
     }
 
     const agendamentosDia = await prisma.agendamento.findMany({
         where: whereClause,
-        include: { tratamento: true, servico: true }
+        include: { tratamento: true }
     });
 
     const horariosLivres = [];
@@ -97,7 +92,7 @@ async function getHorariosDisponiveis(dataString, tratamentoDuracaoMinutos, prof
 
         for (let ag of agendamentosDia) {
             const inicioAg = new Date(ag.dataHora);
-            const duracaoDb = ag.tratamento ? ag.tratamento.duracaoMin : (ag.servico ? ag.servico.duracaoMin : 30);
+            const duracaoDb = ag.tratamento ? ag.tratamento.duracaoMin : 30;
             const fimAg = new Date(inicioAg.getTime() + duracaoDb * 60000);
             
             if ((horarioAtual >= inicioAg && horarioAtual < fimAg) || 

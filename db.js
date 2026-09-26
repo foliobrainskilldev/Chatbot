@@ -1,4 +1,3 @@
-// --- START OF FILE db.js ---
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
@@ -8,13 +7,13 @@ async function seedDatabase() {
         await prisma.configSistema.create({
             data: { 
                 id: 1, 
-                modoAtivo: 'BARBEARIA', 
+                modoAtivo: 'CLINICA', 
                 nomeAssistente: 'Assistente', 
                 tomDeVoz: 'Profissional e acolhedor',
                 distribuicaoLeads: 'MANUAL'
             }
         });
-        console.log('✅ Configuração global do CRM inicializada.');
+        console.log('✅ Configuração do CRM inicializada.');
     }
 
     const countUsers = await prisma.usuario.count();
@@ -83,7 +82,6 @@ async function getOrCreateCliente(numero, nomePushName = null) {
                 } 
             });
         } catch (error) {
-            // [FIX SECURITY]: Tratamento de Race Condition (Colisão P2002 Prisma)
             if (error.code === 'P2002') {
                 isNewPatient = false;
                 cliente = await prisma.cliente.findUnique({ where: { id: numero } });
@@ -101,8 +99,7 @@ async function getOrCreateCliente(numero, nomePushName = null) {
         });
     }
     
-    return { cliente, isNewPatient }; // Retornando ambos para compatibilidade
+    return { cliente, isNewPatient }; 
 }
 
 module.exports = { prisma, seedDatabase, getOrCreateCliente, atribuirLeadAutomaticamente };
-// --- END OF FILE db.js ---

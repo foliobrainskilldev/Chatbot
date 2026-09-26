@@ -10,44 +10,40 @@ const avaliacoesEnviadas = new Set();
 function iniciarAutomaçoes() {
     console.log('Robôs de Automação, Filas, CRM e Lembretes ativados.');
 
-    // 1. LEMBRETE DE COMPROMISSO (Roda a cada 15 minutos e lê as próximas 2 horas absolutas do servidor)
+    // 1. LEMBRETE DE COMPROMISSO
     cron.schedule('*/15 * * * *', async () => {
         const agora = new Date();
         const duasHorasFrente = new Date(agora.getTime() + 2 * 60 * 60 * 1000);
         try {
             const agendamentos = await prisma.agendamento.findMany({
                 where: { status: 'AGENDADO', dataHora: { gte: agora, lte: duasHorasFrente } },
-                include: { tratamento: true, servico: true, cliente: true }
+                include: { tratamento: true, cliente: true }
             });
 
             for (let ag of agendamentos) {
                 if (!lembretesEnviados.has(ag.id)) {
                     lembretesEnviados.add(ag.id);
-                    // Suporta tanto o modelo da barbearia (servico) quanto o da clínica (tratamento)
-                    const nomeT = ag.tratamento ? ag.tratamento.nome : (ag.servico ? ag.servico.nome : 'consulta/serviço');
+                    const nomeT = ag.tratamento ? ag.tratamento.nome : 'consulta/procedimento';
                     const msgLembrete = `Olá ${ag.cliente.nome || ''}! Passando para lembrar do seu agendamento de ${nomeT} hoje às ${format(ag.dataHora, 'HH:mm')}. Esperamos você!`;
                     
                     await whatsappService.sendText(ag.clienteId, msgLembrete);
                     
-                    // Adição de isolamento [SISTEMA] para que o NLP não confunda com o histórico de respostas da IA
                     await prisma.mensagemIA.create({ 
                         data: { role: 'assistant', content: `[SISTEMA - Lembrete Automático] ${msgLembrete}`, clienteId: ag.clienteId, atendenteHumano: false } 
                     });
                 }
             }
-        } catch (erro) { console.error("Erro no cron nativo de lembretes:", erro); }
+        } catch (erro) { console.error("Erro no cron de lembretes:", erro); }
     });
 
-    // 2. AVALIAÇÃO NPS (Roda a cada hora redonda - Verifica se é 10h da manhã no fuso configurado no banco)
+    // 2. AVALIAÇÃO NPS
     cron.schedule('0 * * * *', async () => {
         try {
             const configDb = await prisma.configSistema.findFirst();
             const fusoHorario = configDb?.fusoHorario || 'Africa/Maputo';
             
-            // Pega a hora atual exatamente no fuso horário configurado pelo usuário
             const horaLocalIntl = new Intl.DateTimeFormat('pt-BR', { timeZone: fusoHorario, hour: 'numeric', hourCycle: 'h23' }).format(new Date());
             
-            // Se for 10h da manhã no país configurado, dispara o NPS do dia anterior
             if (parseInt(horaLocalIntl) === 10) {
                 const ontem = subDays(new Date(), 1);
                 
@@ -73,7 +69,7 @@ function iniciarAutomaçoes() {
         }
     });
 
-    // 3. PROCESSADOR DA FILA DE AUTOMAÇÕES (DELAY/ATRASO) (A cada 1 minuto)
+    // 3. PROCESSADOR DA FILA DE AUTOMAÇÕES
     cron.schedule('* * * * *', async () => {
         try {
             const agora = new Date();

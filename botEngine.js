@@ -1,5 +1,4 @@
 const { prisma } = require('./db');
-const botBarbearia = require('./barbearia/botEngine'); 
 const botClinica = require('./clinica/botEngine');     
 
 const verificarWebhook = (req, res) => {
@@ -18,15 +17,13 @@ const verificarWebhook = (req, res) => {
 };
 
 const processarWebhook = (req, res) => {
-    // 1. Libera o WhatsApp Imediatamente para evitar loops de retry
     res.sendStatus(200); 
 
     (async () => {
         try {
             const body = req.body;
             
-            if (!body) return;
-            if (!body.object) return;
+            if (!body || !body.object) return;
 
             let changes = body.entry?.[0]?.changes?.[0]?.value;
             
@@ -40,32 +37,20 @@ const processarWebhook = (req, res) => {
             
             if (changes?.messages?.[0]) {
                 const message = changes.messages[0];
-                
                 const contact = changes.contacts?.[0];
                 if (contact?.profile?.name) {
                     message.profile = { name: contact.profile.name };
                 }
                 
-                const configDb = await prisma.configSistema.findUnique({ where: { id: 1 } });
-                const modoAtivo = configDb?.modoAtivo || 'BARBEARIA';
-                
-                // Roteia a mensagem bruta para as máquinas de Fila e Retenção recém-criadas
-                if (modoAtivo === 'BARBEARIA') {
-                    await botBarbearia.processarMensagemEntrante(message);
-                } else if (modoAtivo === 'CLINICA') {
-                    await botClinica.processarMensagemEntrante(message);
-                }
+                await botClinica.processarMensagemEntrante(message);
             } 
         } catch (error) {
-            console.error('❌ [ERRO CRÍTICO INTERNO NO HUB WEBHOOK]:', error);
+            console.error('❌ [ERRO CRÍTICO INTERNO NO WEBHOOK]:', error);
         }
     })();
 };
 
-// Quando um atendente assume a conversa ou o banco é reiniciado, 
-// ele zera tanto os timers quanto a memória do LLM
 function limparMemoriaEstado(telefone = null) {
-    if (botBarbearia.limparMemoriaEstado) botBarbearia.limparMemoriaEstado(telefone);
     if (botClinica.limparMemoriaEstado) botClinica.limparMemoriaEstado(telefone);
 }
 

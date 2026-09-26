@@ -93,16 +93,9 @@ app.post('/webhook', async (req, res) => {
             if (message) {
                 if (contact) message.profile = { name: contact.profile?.name };
 
-                const config = await prisma.configSistema.findFirst();
-                const modoAtivo = config?.modoAtivo || 'CLINICA';
-
-                if (modoAtivo === 'BARBEARIA') {
-                    const barbeariaEngine = require('./barbearia/botEngine');
-                    barbeariaEngine.processarMensagemEntrante(message);
-                } else {
-                    const clinicaEngine = require('./clinica/botEngine');
-                    clinicaEngine.processarMensagemEntrante(message);
-                }
+                // Redireciona DIRETAMENTE para a Clínica (SaaS Exclusivo)
+                const clinicaEngine = require('./clinica/botEngine');
+                clinicaEngine.processarMensagemEntrante(message);
             }
         }
     } catch (error) {
@@ -131,8 +124,6 @@ async function bootstrap() {
             cronJobs.iniciarAutomacoes();
         } else if (cronJobs && typeof cronJobs.iniciarAutomaçoes === 'function') {
             cronJobs.iniciarAutomaçoes();
-        } else {
-            console.warn("⚠️ Função do Cron Job não encontrada. Ignorando e seguindo em frente.");
         }
         
         server.listen(PORT, () => {
