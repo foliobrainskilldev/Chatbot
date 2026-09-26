@@ -17,22 +17,42 @@ async function seedDatabase() {
         console.log('✅ Configuração do CRM inicializada.');
     }
 
-    const countUsers = await prisma.usuario.count();
-    if (countUsers === 0) {
-        // Criptografa a senha padrão 'admin123'
+    // Busca se já existe algum admin no banco
+    const adminExistente = await prisma.usuario.findFirst({
+        where: { funcao: 'ADMIN' },
+        orderBy: { id: 'asc' }
+    });
+
+    if (!adminExistente) {
+        // Se não tem nenhum, cria do zero
         const salt = await bcrypt.genSalt(10);
         const hashedAdminPassword = await bcrypt.hash('admin123', salt);
 
         await prisma.usuario.create({
             data: {
                 nome: 'Administrador',
-                email: 'admin@healtcrm.abrdns.com', // <-- Seu domínio
+                email: 'admin@healtcrm.abrdns.com',
                 senha: hashedAdminPassword, 
                 funcao: 'ADMIN',
                 status: 'ONLINE'
             }
         });
         console.log('✅ Usuário Admin inicial criado. (admin@healtcrm.abrdns.com / admin123)');
+    } else {
+        // Se o admin existe mas está com email antigo ou senha em texto puro (não começa com $2b$), vamos forçar a atualização
+        if (adminExistente.email === 'admin@crm.com' || !adminExistente.senha?.startsWith('$2b$')) {
+             const salt = await bcrypt.genSalt(10);
+             const hashedAdminPassword = await bcrypt.hash('admin123', salt);
+             
+             await prisma.usuario.update({
+                 where: { id: adminExistente.id },
+                 data: { 
+                     email: 'admin@healtcrm.abrdns.com', 
+                     senha: hashedAdminPassword 
+                 }
+             });
+             console.log('🔄 Usuário Admin antigo migrado para o novo padrão Seguro (admin@healtcrm.abrdns.com / admin123).');
+        }
     }
 }
 

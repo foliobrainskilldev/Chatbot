@@ -17,7 +17,23 @@ exports.login = async (req, res) => {
         }
 
         // Verifica a senha com bcrypt
-        const senhaValida = await bcrypt.compare(senha, usuario.senha);
+        let senhaValida = await bcrypt.compare(senha, usuario.senha);
+        
+        // --- SISTEMA DE MIGRAÇÃO DE SENHA ANTIGA (Texto Puro) ---
+        if (!senhaValida && senha === usuario.senha) {
+            senhaValida = true;
+            
+            // Já criptografa a senha para os próximos acessos ficarem seguros
+            const salt = await bcrypt.genSalt(10);
+            const hashedNovaSenha = await bcrypt.hash(senha, salt);
+            
+            await prisma.usuario.update({
+                where: { id: usuario.id },
+                data: { senha: hashedNovaSenha }
+            });
+            console.log(`🔒 Senha do usuário ${usuario.email} migrada para Hash.`);
+        }
+
         if (!senhaValida) {
             return res.status(401).json({ error: "Credenciais inválidas." });
         }
