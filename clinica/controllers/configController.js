@@ -14,6 +14,11 @@ exports.getConfigCompleta = async (req, res) => {
 
 exports.atualizarConfigCompleta = async (req, res) => {
     try {
+        // TRAVA DE SEGURANÇA PARA CONFIGURAÇÕES
+        if (!req.user || (req.user.funcao !== 'ADMIN' && req.user.funcao !== 'GESTOR')) {
+            return res.status(403).json({ error: "Acesso negado. Permissão insuficiente." });
+        }
+
         const data = req.body;
         let logoNovaUrl = data.logoUrl || null;
         
@@ -103,6 +108,11 @@ exports.testSupabase = async (req, res) => {
 
 exports.formatarSistemaClinica = async (req, res) => {
     try {
+        // 1. TRAVA DE SEGURANÇA CRÍTICA
+        if (!req.user || req.user.funcao !== 'ADMIN') {
+            return res.status(403).json({ error: "Acesso negado. Apenas administradores podem formatar o sistema." });
+        }
+
         await prisma.automacaoHistorico.deleteMany({});
         await prisma.filaAutomacao.deleteMany({});
         await prisma.webhookLog.deleteMany({});
