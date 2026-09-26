@@ -15,7 +15,6 @@ async function registrarAtividade(usuarioId, acao, recurso, detalhes = "") {
 }
 
 exports.getDashboardStats = async (req, res) => {
-    // ... (Código original inalterado do dashboard)
     try {
         const dias = parseInt(req.query.dias) || 30;
         const dataCorte = startOfDay(subDays(new Date(), dias));
@@ -122,7 +121,6 @@ exports.getDashboardStats = async (req, res) => {
 };
 
 exports.getLeads = async (req, res) => {
-    // ... (Código inalterado)
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 200;
@@ -173,7 +171,6 @@ exports.getLeads = async (req, res) => {
 };
 
 exports.criarLeadManual = async (req, res) => {
-    // ... (Código inalterado)
     try {
         const { id, nome, origem } = req.body;
         if (!id) return res.status(400).json({ error: "O número/ID é obrigatório." });
@@ -193,7 +190,6 @@ exports.criarLeadManual = async (req, res) => {
 };
 
 exports.atualizarStatusLead = async (req, res) => {
-    // ... (Código inalterado)
     try {
         const { status, tags, valorPotencial, responsavelId } = req.body;
         const updateData = {};
@@ -248,10 +244,6 @@ exports.getEquipe = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Erro ao buscar equipe." }); }
 };
 
-// -------------------------------------------------------------
-// INÍCIO DAS REGRAS REFORÇADAS DE SEGURANÇA NA EQUIPE
-// -------------------------------------------------------------
-
 exports.criarMembroEquipe = async (req, res) => {
     try {
         const { nome, email, funcao } = req.body;
@@ -261,7 +253,6 @@ exports.criarMembroEquipe = async (req, res) => {
             return res.status(403).json({ error: "Acesso Negado. Apenas administradores ou gestores podem convidar novos membros." });
         }
 
-        // Um GESTOR não pode criar um ADMIN
         if (userAtuador.funcao === 'GESTOR' && funcao === 'ADMIN') {
             return res.status(403).json({ error: "Gestores não podem criar contas de nível Administrador." });
         }
@@ -312,7 +303,6 @@ exports.atualizarMembroEquipe = async (req, res) => {
         const alvoDb = await prisma.usuario.findUnique({ where: { id: idAlvo } });
         if (!alvoDb) return res.status(404).json({ error: "Usuário não encontrado." });
 
-        // Validação Mestre: Se não for ADMIN nem GESTOR e tentar editar outra pessoa
         if (userAtuador.funcao !== 'ADMIN' && userAtuador.funcao !== 'GESTOR' && userAtuador.id !== idAlvo) {
             return res.status(403).json({ error: "Você não tem permissão para editar perfis de outros membros." });
         }
@@ -365,14 +355,48 @@ exports.atualizarMembroEquipe = async (req, res) => {
 
         res.status(200).json({ id: updated.id, nome: updated.nome, funcao: updated.funcao, status: updated.status });
     } catch (error) { 
-        console.error("Erro em atualizarMembroEquipe:", error);
         res.status(500).json({ error: "Erro ao atualizar membro." }); 
     }
 };
 
 // -------------------------------------------------------------
-// FIM DAS REGRAS REFORÇADAS
+// NOVA FUNÇÃO: EXCLUIR MEMBRO DA EQUIPE (APENAS ADMIN)
 // -------------------------------------------------------------
+exports.excluirMembroEquipe = async (req, res) => {
+    try {
+        const userAtuador = req.user;
+        const idAlvo = parseInt(req.params.id);
+
+        if (!userAtuador || userAtuador.funcao !== 'ADMIN') {
+            return res.status(403).json({ error: "Acesso Negado. Apenas administradores (ADMIN) podem excluir membros permanentemente." });
+        }
+
+        if (userAtuador.id === idAlvo) {
+            return res.status(400).json({ error: "Você não pode excluir a sua própria conta." });
+        }
+
+        const alvoDb = await prisma.usuario.findUnique({ where: { id: idAlvo } });
+        if (!alvoDb) return res.status(404).json({ error: "Membro não encontrado." });
+
+        // Tira a responsabilidade dos leads antes de apagar para não dar erro de Foreign Key
+        await prisma.cliente.updateMany({
+            where: { responsavelId: idAlvo },
+            data: { responsavelId: null }
+        });
+
+        // Apaga fisicamente o usuário
+        await prisma.usuario.delete({
+            where: { id: idAlvo }
+        });
+
+        await registrarAtividade(userAtuador.id, 'Excluiu Membro', 'Equipe', `Excluiu permanentemente a conta de ${alvoDb.nome}`);
+
+        res.status(200).json({ message: "Membro excluído com sucesso." });
+    } catch (error) { 
+        console.error("Erro em excluirMembroEquipe:", error);
+        res.status(500).json({ error: "Não foi possível excluir. O membro pode ter registros muito complexos atrelados. Tente suspender o acesso." }); 
+    }
+};
 
 exports.getAtividadesEquipe = async (req, res) => {
     try {
