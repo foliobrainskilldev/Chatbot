@@ -13,7 +13,7 @@ const relatoriosController = require('./relatoriosController');
 const webhookController = require('./webhookController');
 const automacoesController = require('./automacoesController'); 
 
-// Serviço de Demonstração (Portfólio) - Caminho Exato
+// Serviço de Demonstração (Portfólio)
 const demoService = require('../services/demoService');
 
 const storage = multer.memoryStorage();
@@ -115,5 +115,6 @@ router.get('/equipe/:id/perfil', crmLeadsController.getMembroPerfil);
 router.get('/equipe', crmLeadsController.getEquipe);
 router.post('/equipe', crmLeadsController.criarMembroEquipe);
 router.put('/equipe/:id', crmLeadsController.atualizarMembroEquipe);
+router.delete('/equipe/:id', crmLeadsController.excluirMembroEquipe); // <--- NOVA ROTA
 
 module.exports = router;
