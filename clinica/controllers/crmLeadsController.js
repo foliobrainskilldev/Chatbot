@@ -1,9 +1,9 @@
-// --- START OF FILE crmLeadsController.js ---
 const { prisma } = require('../../db');
 const automationEngine = require('../../services/automationEngine');
 const webhookService = require('../../services/webhookService');
+const emailService = require('../../services/emailService');
 const { startOfDay, endOfDay, subDays, format } = require('date-fns');
-const bcrypt = require('bcrypt'); // [FIX SECURITY] Biblioteca de Hashing
+const bcrypt = require('bcrypt');
 
 async function registrarAtividade(usuarioId, acao, recurso, detalhes = "") {
     if(!usuarioId) return;
@@ -130,7 +130,7 @@ exports.getLeads = async (req, res) => {
         const origem = req.query.origem || '';
         const responsavelId = req.query.responsavelId || '';
         const tags = req.query.tags || '';
-        const servicoId = req.query.servicoId || '';
+        const servicoId = req.query.servicoId || ''; // O Frontend envia 'servicoId', nós mapemos para 'tratamentoId' no Prisma
         const dias = parseInt(req.query.dias) || 0;
 
         const skip = (page - 1) * limit;
@@ -246,18 +246,24 @@ exports.getEquipe = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Erro ao buscar equipe." }); }
 };
 
-// [FIX SECURITY] Criação de Utilizador com Senha Hasheada
 exports.criarMembroEquipe = async (req, res) => {
     try {
-        const { nome, email, funcao, senha } = req.body;
+        const { nome, email, funcao } = req.body;
         
+        const verificaEmail = await prisma.usuario.findUnique({ where: { email }});
+        if (verificaEmail) {
+            return res.status(400).json({ error: "Este e-mail já está em uso na plataforma." });
+        }
+
         let permissoesDefault = {};
         if(funcao === 'ADMIN') permissoesDefault = { crm: 'tudo', conversas: 'tudo', calendario: 'tudo', conf: 'tudo' };
         if(funcao === 'ATENDENTE') permissoesDefault = { crm: 'editar', conversas: 'atender', calendario: 'ver' };
         
-        // Hasheia a senha usando bcrypt (10 rounds de salt)
+        // Gera uma senha temporária automática (8 caracteres aleatórios)
+        const senhaTemporaria = Math.random().toString(36).slice(-8);
+
         const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(senha || "123456", salt);
+        const hashedPassword = await bcrypt.hash(senhaTemporaria, salt);
 
         const newUser = await prisma.usuario.create({
             data: { 
@@ -270,14 +276,19 @@ exports.criarMembroEquipe = async (req, res) => {
             }
         });
         
+        // DISPARA O E-MAIL COM RESEND
+        await emailService.enviarConviteEquipe(nome, email, senhaTemporaria);
+
         const atuadorId = req.user ? req.user.id : 1;
         await registrarAtividade(atuadorId, 'Convidou Membro', 'Equipe', `Enviou convite de acesso para ${email}`);
 
         res.status(201).json({ id: newUser.id, nome: newUser.nome, email: newUser.email, funcao: newUser.funcao });
-    } catch (error) { res.status(500).json({ error: "Erro ao criar convite de membro." }); }
+    } catch (error) { 
+        console.error(error);
+        res.status(500).json({ error: "Erro ao criar convite de membro." }); 
+    }
 };
 
-// [FIX SECURITY] Proteção contra Mass Assignment / Escalada de Privilégios
 exports.atualizarMembroEquipe = async (req, res) => {
     try {
         const { status, funcao, permissoes } = req.body;
@@ -285,7 +296,6 @@ exports.atualizarMembroEquipe = async (req, res) => {
         
         if (status) updateData.status = status;
         
-        // Só um administrador pode promover ou despromover alguém
         if (funcao) {
             if (req.user && req.user.funcao !== 'ADMIN') {
                 return res.status(403).json({ error: "Apenas administradores podem alterar as funções dos utilizadores." });
@@ -313,7 +323,7 @@ exports.getAtividadesEquipe = async (req, res) => {
         const atividades = await prisma.atividadeEquipe.findMany({
             take: 100,
             orderBy: { criadoEm: 'desc' },
-            include: { usuario: { select: { nome: true, funcao: true, avatarUrl: true } } }
+            include: { usuario: { select: { nome: true, funcao: true } } }
         });
         res.status(200).json(atividades);
     } catch (error) {
@@ -339,4 +349,3 @@ exports.getMembroPerfil = async (req, res) => {
         res.status(200).json({ usuario, stats: { leadsAtribuidos, agendamentos }, atividades });
     } catch (error) { res.status(500).json({ error: "Erro ao buscar perfil." }); }
 };
-// --- END OF FILE crmLeadsController.js ---

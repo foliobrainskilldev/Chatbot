@@ -1,4 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
+const bcrypt = require('bcrypt');
 const prisma = new PrismaClient();
 
 async function seedDatabase() {
@@ -18,16 +19,20 @@ async function seedDatabase() {
 
     const countUsers = await prisma.usuario.count();
     if (countUsers === 0) {
+        // Criptografa a senha padrão 'admin123'
+        const salt = await bcrypt.genSalt(10);
+        const hashedAdminPassword = await bcrypt.hash('admin123', salt);
+
         await prisma.usuario.create({
             data: {
-                nome: 'Admin',
-                email: 'admin@crm.com',
-                senha: 'admin', 
+                nome: 'Administrador',
+                email: 'admin@healtcrm.abrdns.com', // <-- Seu domínio
+                senha: hashedAdminPassword, 
                 funcao: 'ADMIN',
                 status: 'ONLINE'
             }
         });
-        console.log('✅ Usuário Admin inicial criado (admin@crm.com / admin).');
+        console.log('✅ Usuário Admin inicial criado. (admin@healtcrm.abrdns.com / admin123)');
     }
 }
 
@@ -39,10 +44,7 @@ async function atribuirLeadAutomaticamente() {
         }
 
         const whereClause = { funcao: { in: ['ATENDENTE', 'GESTOR', 'ADMIN'] } };
-        
-        if (config.distribuicaoLeads === 'DISPONIBILIDADE') {
-            whereClause.status = 'ONLINE'; 
-        }
+        if (config.distribuicaoLeads === 'DISPONIBILIDADE') whereClause.status = 'ONLINE'; 
 
         const usuarios = await prisma.usuario.findMany({ where: whereClause });
         if (usuarios.length === 0) return config.responsavelPadrao || null;
@@ -58,9 +60,7 @@ async function atribuirLeadAutomaticamente() {
             }
         }
         return userSelecionado;
-    } catch(e) {
-        return null;
-    }
+    } catch(e) { return null; }
 }
 
 async function getOrCreateCliente(numero, nomePushName = null) {
@@ -71,34 +71,20 @@ async function getOrCreateCliente(numero, nomePushName = null) {
         try {
             isNewPatient = true;
             const respId = await atribuirLeadAutomaticamente();
-            
             cliente = await prisma.cliente.create({ 
-                data: { 
-                    id: numero, 
-                    nome: nomePushName || 'Paciente',
-                    leadStatus: 'NOVO', 
-                    origem: 'WhatsApp Meta',
-                    responsavelId: respId
-                } 
+                data: { id: numero, nome: nomePushName || 'Paciente', leadStatus: 'NOVO', origem: 'WhatsApp Meta', responsavelId: respId } 
             });
         } catch (error) {
             if (error.code === 'P2002') {
                 isNewPatient = false;
                 cliente = await prisma.cliente.findUnique({ where: { id: numero } });
-            } else {
-                throw error;
-            }
+            } else throw error;
         }
     } else {
         const updates = { ultimaInteracao: new Date() };
         if (nomePushName && !cliente.nome) updates.nome = nomePushName;
-        
-        cliente = await prisma.cliente.update({
-            where: { id: numero },
-            data: updates
-        });
+        cliente = await prisma.cliente.update({ where: { id: numero }, data: updates });
     }
-    
     return { cliente, isNewPatient }; 
 }
 
