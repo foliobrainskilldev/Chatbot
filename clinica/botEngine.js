@@ -1,3 +1,4 @@
+// --- START OF FILE clinica/botEngine.js ---
 const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
 const aiService = require('../aiService');
@@ -28,17 +29,27 @@ async function getOrCreateCliente(numero, nomePushName = null) {
     let isNewPatient = false;
 
     if (!cliente) {
-        isNewPatient = true;
-        cliente = await prisma.cliente.create({ 
-            data: { id: numero, nome: nomePushName || 'Paciente', leadStatus: 'NOVO', origem: 'WhatsApp IA' } 
-        });
-        await webhookService.dispararEvento('lead.created', cliente);
-        await automationEngine.dispararAutomacoes('NOVO_LEAD', cliente);
+        try {
+            isNewPatient = true;
+            cliente = await prisma.cliente.create({ 
+                data: { id: numero, nome: nomePushName || 'Paciente', leadStatus: 'NOVO', origem: 'WhatsApp IA' } 
+            });
+            await webhookService.dispararEvento('lead.created', cliente);
+            await automationEngine.dispararAutomacoes('NOVO_LEAD', cliente);
+        } catch (error) {
+            // [FIX SECURITY]: Race Condition (Evita crash no P2002)
+            if (error.code === 'P2002') {
+                isNewPatient = false;
+                cliente = await prisma.cliente.findUnique({ where: { id: numero } });
+            } else {
+                throw error;
+            }
+        }
     } else {
         const updates = { ultimaInteracao: new Date() };
         if (nomePushName && !cliente.nome) updates.nome = nomePushName;
         if (cliente.leadStatus === 'NOVO') isNewPatient = true;
-        await prisma.cliente.update({ where: { id: numero }, data: updates });
+        cliente = await prisma.cliente.update({ where: { id: numero }, data: updates });
     }
     return { cliente, isNewPatient };
 }
@@ -50,7 +61,6 @@ async function processarMensagemEntrante(message) {
     const senderNumber = message.from;
     const msgId = message.id;
 
-    // 1. Acusa recebimento e leitura imediatamente
     await whatsappService.markAsReadAndTyping(msgId, senderNumber);
 
     try {
@@ -59,7 +69,6 @@ async function processarMensagemEntrante(message) {
         let textoProcessado = "";
         let isTranscribed = false;
 
-        // 2. Extrai dados ou transcreve áudio
         if (message.type === 'audio') {
             const mediaId = message.audio.id;
             try { 
@@ -82,8 +91,14 @@ async function processarMensagemEntrante(message) {
 
         if (!textoProcessado) return;
 
-        // 3. Mecanismo de Fila com Retenção (Debounce Queue)
         let buffer = messageBuffer.get(senderNumber) || [];
+        
+        // [FIX SECURITY]: Proteção contra Denial of Wallet / Ataque OOM
+        if (buffer.length >= 10) {
+            console.warn(`⚠️ [SECURITY] Spam detectado do número ${senderNumber}. Mensagem descartada.`);
+            return; 
+        }
+
         buffer.push({
             texto: textoProcessado,
             isTranscribed: isTranscribed,
@@ -96,7 +111,6 @@ async function processarMensagemEntrante(message) {
             clearTimeout(debounceTimers.get(senderNumber));
         }
 
-        // Aguarda 3.5 segundos em silêncio. Se o utilizador mandar algo, o timer reseta.
         const timer = setTimeout(async () => {
             debounceTimers.delete(senderNumber);
             const msgs = messageBuffer.get(senderNumber);
@@ -104,10 +118,8 @@ async function processarMensagemEntrante(message) {
 
             if (!msgs || msgs.length === 0) return;
 
-            // Une todos os textos guardados durante os 3.5 segundos
             const falhas = msgs.filter(m => m.texto === "[FALHA_AUDIO]");
             if (falhas.length === msgs.length) {
-                // Apenas falhas de áudio foram recebidas
                 await prisma.mensagemIA.create({ data: { role: 'user', content: '[Áudio Recebido - Incompreensível]', clienteId: senderNumber } });
                 const isEnglish = configDb?.idioma?.includes('Inglês');
                 const respFalha = isEnglish 
@@ -125,13 +137,11 @@ async function processarMensagemEntrante(message) {
             const nomePushName = validos[0].pushName;
 
             let textoComandoBase = textoUnificado;
-            // Se houve um clique de botão no meio do spam, priorizamos o comando daquele botão
             if (isInteractive) {
                 const interativos = validos.filter(m => m.isInteractive);
                 textoComandoBase = interativos[interativos.length - 1].texto; 
             }
 
-            // 4. Executa a lógica "Pesada" uma única vez com o lote consolidado!
             await executarLogicaCoreClinica(senderNumber, nomePushName, textoComandoBase, textoUnificado, temAudio, isInteractive, configDb);
 
         }, 3500); 
@@ -145,21 +155,12 @@ async function processarMensagemEntrante(message) {
 
 async function executarLogicaCoreClinica(senderNumber, nomePushName, textoProcessado, textoUnificadoParaBD, temAudio, isInteractive, configDb) {
     try {
-        console.log(`\n===========================================`);
-        console.log(`🤖 [MOTOR CLÍNICA] PROCESSANDO LOTE: ${senderNumber}`);
-        console.log(`📝 Textos Consolidados: ${textoUnificadoParaBD}`);
-        console.log(`===========================================`);
-
         const { cliente, isNewPatient } = await getOrCreateCliente(senderNumber, nomePushName);
         
-        if (cliente.falarHumano) {
-            console.log(`🛑 [MOTOR CLÍNICA] Lead em atendimento humano. IA pausada.`);
-            return; 
-        }
+        if (cliente.falarHumano) return; 
 
         const isEnglish = configDb?.idioma?.includes('Inglês');
 
-        // Salva tudo que o utilizador disse numa única linha no banco de dados
         let contentToSave = temAudio ? `[Áudio Transcrito]: ${textoUnificadoParaBD}` : textoUnificadoParaBD;
         await prisma.mensagemIA.create({ data: { role: 'user', content: contentToSave, clienteId: senderNumber } });
 
@@ -188,9 +189,7 @@ async function executarLogicaCoreClinica(senderNumber, nomePushName, textoProces
             else if (textoProcessado.startsWith('canc_')) { nlpResult.intent = 'CANCEL_APPOINTMENT'; nlpResult.entities = { appointment_id: textoProcessado.replace('canc_', '') }; }
             else if (textoProcessado.startsWith('reag_')) { nlpResult.intent = 'RESCHEDULE_APPOINTMENT'; nlpResult.entities = { appointment_id: textoProcessado.replace('reag_', '') }; }
         } else {
-            // Manda TODO o texto unificado para a IA NLP (assim ela tem contexto global do "spam")
             nlpResult = await aiService.analisarMensagemNLP(textoUnificadoParaBD, historicoLimpo, userState, configDb);
-            console.log(`🧠 [NLP] Intenção: ${nlpResult.intent} | Entidades:`, JSON.stringify(nlpResult.entities));
         }
 
         let activeIntent = nlpResult.intent || 'UNKNOWN';
@@ -239,12 +238,7 @@ async function executarLogicaCoreClinica(senderNumber, nomePushName, textoProces
             }
         }
 
-        const queryIntents = [
-            'TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST', 
-            'CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS', 
-            'CHECK_UPCOMING_APPOINTMENTS', 'CHECK_PAST_APPOINTMENTS', 
-            'UNKNOWN', 'GOODBYE', 'ASK_DATE_REFERENCE'
-        ];
+        const queryIntents = ['TREATMENT_PRICE', 'TREATMENT_INFO', 'TREATMENT_DURATION', 'TREATMENT_LIST', 'CLINIC_HOURS', 'CLINIC_LOCATION', 'CLINIC_CONTACT', 'CLINIC_PAYMENT_METHODS', 'CHECK_UPCOMING_APPOINTMENTS', 'CHECK_PAST_APPOINTMENTS', 'UNKNOWN', 'GOODBYE', 'ASK_DATE_REFERENCE'];
 
         if (queryIntents.includes(activeIntent)) {
             const flowConsultas = require('./flowConsultas');
@@ -282,3 +276,4 @@ async function executarLogicaCoreClinica(senderNumber, nomePushName, textoProces
 }
 
 module.exports = { processarMensagemEntrante, limparMemoriaEstado, stateMachine };
+// --- END OF FILE clinica/botEngine.js ---

@@ -1,4 +1,5 @@
-const { prisma, getOrCreateCliente } = require('../db');
+// --- START OF FILE barbearia/botEngine.js ---
+const { prisma } = require('../db');
 const whatsappService = require('../whatsappService');
 const aiService = require('../aiService'); 
 
@@ -20,13 +21,40 @@ function limparMemoriaEstado(telefone = null) {
     }
 }
 
+async function getOrCreateCliente(numero, nomePushName = null) {
+    let cliente = await prisma.cliente.findUnique({ where: { id: numero } });
+    let isNewPatient = false;
+
+    if (!cliente) {
+        try {
+            isNewPatient = true;
+            cliente = await prisma.cliente.create({ 
+                data: { id: numero, nome: nomePushName || 'Paciente', leadStatus: 'NOVO', origem: 'WhatsApp IA' } 
+            });
+        } catch (error) {
+            // [FIX SECURITY]: Tratamento P2002 para Barbearia também
+            if (error.code === 'P2002') {
+                isNewPatient = false;
+                cliente = await prisma.cliente.findUnique({ where: { id: numero } });
+            } else {
+                throw error;
+            }
+        }
+    } else {
+        const updates = { ultimaInteracao: new Date() };
+        if (nomePushName && !cliente.nome) updates.nome = nomePushName;
+        if (cliente.leadStatus === 'NOVO') isNewPatient = true;
+        cliente = await prisma.cliente.update({ where: { id: numero }, data: updates });
+    }
+    return { cliente, isNewPatient };
+}
+
 async function processarMensagemEntrante(message) {
     if (!message || !message.from) return; 
 
     const senderNumber = message.from;
     const msgId = message.id;
 
-    // 1. Marca como lida
     await whatsappService.markAsReadAndTyping(msgId, senderNumber);
 
     try {
@@ -35,12 +63,11 @@ async function processarMensagemEntrante(message) {
         let textoProcessado = "";
         let isTranscribed = false;
 
-        // 2. Extração
         if (message.type === 'audio') {
             const mediaId = message.audio.id;
             try {
                 const audioBuffer = await whatsappService.downloadMedia(mediaId);
-                textoProcessado = await aiService.transcreverAudio(audioBuffer);
+                textoProcessado = await aiService.transcreverAudio(audioBuffer, configDb);
                 isTranscribed = true;
             } catch (e) {
                 textoProcessado = "[FALHA_AUDIO]";
@@ -53,8 +80,14 @@ async function processarMensagemEntrante(message) {
         
         if (!textoProcessado) return;
 
-        // 3. Fila de Retenção (Debounce)
         let buffer = messageBuffer.get(senderNumber) || [];
+        
+        // [FIX SECURITY]: Proteção contra Denial of Wallet / Spam
+        if (buffer.length >= 10) {
+            console.warn(`⚠️ [SECURITY] Spam detectado na barbearia. Número: ${senderNumber}. Descartando.`);
+            return;
+        }
+
         buffer.push({
             texto: textoProcessado,
             isTranscribed: isTranscribed,
@@ -105,17 +138,9 @@ async function processarMensagemEntrante(message) {
 
 async function executarLogicaCoreBarbearia(senderNumber, nomePushName, textoProcessado, textoUnificadoParaBD, temAudio, isInteractive, configDb) {
     try {
-        console.log(`\n===========================================`);
-        console.log(`💈 [MOTOR BARBEARIA] PROCESSANDO LOTE: ${senderNumber}`);
-        console.log(`📝 Textos Consolidados: ${textoUnificadoParaBD}`);
-        console.log(`===========================================`);
-
         let { cliente, isNewPatient } = await getOrCreateCliente(senderNumber, nomePushName);
         
-        if (cliente.falarHumano) {
-            console.log(`🛑 [MOTOR BARBEARIA] Cliente em atendimento humano. Ignorando bot.`);
-            return; 
-        }
+        if (cliente.falarHumano) return; 
 
         const contentToSave = temAudio ? `[Áudio Transcrito]: ${textoUnificadoParaBD}` : textoUnificadoParaBD;
         await prisma.mensagemIA.create({ data: { role: 'user', content: contentToSave, clienteId: senderNumber } });
@@ -144,9 +169,7 @@ async function executarLogicaCoreBarbearia(senderNumber, nomePushName, textoProc
             
             userState.entities = { ...userState.entities, ...nlpResult.entities };
         } else {
-            // Unificado para o LLM não perder contexto
             nlpResult = await aiService.analisarMensagemNLP(textoUnificadoParaBD, historico, userState, configDb);
-            console.log(`🧠 [NLP Barbearia] Intenção: ${nlpResult.intent} | Entidades:`, JSON.stringify(nlpResult.entities));
             userState.entities = { ...userState.entities, ...nlpResult.entities };
         }
 
@@ -207,3 +230,4 @@ async function executarLogicaCoreBarbearia(senderNumber, nomePushName, textoProc
 }
 
 module.exports = { processarMensagemEntrante, limparMemoriaEstado, stateMachine };
+// --- END OF FILE barbearia/botEngine.js ---

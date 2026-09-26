@@ -1,3 +1,4 @@
+// --- START OF FILE db.js ---
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
@@ -40,7 +41,6 @@ async function atribuirLeadAutomaticamente() {
 
         const whereClause = { funcao: { in: ['ATENDENTE', 'GESTOR', 'ADMIN'] } };
         
-        // Verifica a lógica "Por Disponibilidade" (Online)
         if (config.distribuicaoLeads === 'DISPONIBILIDADE') {
             whereClause.status = 'ONLINE'; 
         }
@@ -51,7 +51,6 @@ async function atribuirLeadAutomaticamente() {
         let minLeads = Infinity;
         let userSelecionado = null;
 
-        // Lógica Stateless Round-Robin (Equilibra pela menor quantidade atribuída)
         for (let u of usuarios) {
             const count = await prisma.cliente.count({ where: { responsavelId: u.id } });
             if (count < minLeads) {
@@ -67,31 +66,43 @@ async function atribuirLeadAutomaticamente() {
 
 async function getOrCreateCliente(numero, nomePushName = null) {
     let cliente = await prisma.cliente.findUnique({ where: { id: numero } });
+    let isNewPatient = false;
     
     if (!cliente) {
-        // Usa o novo sistema de atribuição e distribuição de Pipeline para o Banco
-        const respId = await atribuirLeadAutomaticamente();
-        
-        cliente = await prisma.cliente.create({ 
-            data: { 
-                id: numero, 
-                nome: nomePushName || 'Paciente',
-                leadStatus: 'NOVO', 
-                origem: 'WhatsApp Meta',
-                responsavelId: respId
-            } 
-        });
+        try {
+            isNewPatient = true;
+            const respId = await atribuirLeadAutomaticamente();
+            
+            cliente = await prisma.cliente.create({ 
+                data: { 
+                    id: numero, 
+                    nome: nomePushName || 'Paciente',
+                    leadStatus: 'NOVO', 
+                    origem: 'WhatsApp Meta',
+                    responsavelId: respId
+                } 
+            });
+        } catch (error) {
+            // [FIX SECURITY]: Tratamento de Race Condition (Colisão P2002 Prisma)
+            if (error.code === 'P2002') {
+                isNewPatient = false;
+                cliente = await prisma.cliente.findUnique({ where: { id: numero } });
+            } else {
+                throw error;
+            }
+        }
     } else {
         const updates = { ultimaInteracao: new Date() };
         if (nomePushName && !cliente.nome) updates.nome = nomePushName;
         
-        await prisma.cliente.update({
+        cliente = await prisma.cliente.update({
             where: { id: numero },
             data: updates
         });
     }
     
-    return cliente;
+    return { cliente, isNewPatient }; // Retornando ambos para compatibilidade
 }
 
 module.exports = { prisma, seedDatabase, getOrCreateCliente, atribuirLeadAutomaticamente };
+// --- END OF FILE db.js ---

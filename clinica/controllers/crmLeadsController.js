@@ -1,7 +1,9 @@
+// --- START OF FILE crmLeadsController.js ---
 const { prisma } = require('../../db');
 const automationEngine = require('../../services/automationEngine');
 const webhookService = require('../../services/webhookService');
 const { startOfDay, endOfDay, subDays, format } = require('date-fns');
+const bcrypt = require('bcrypt'); // [FIX SECURITY] Biblioteca de Hashing
 
 async function registrarAtividade(usuarioId, acao, recurso, detalhes = "") {
     if(!usuarioId) return;
@@ -19,26 +21,21 @@ exports.getDashboardStats = async (req, res) => {
         const inicioHoje = startOfDay(new Date());
         const fimHoje = endOfDay(new Date());
 
-        // OTIMIZAÇÃO MASSIVA: Reduzimos 16 consultas para apenas 3! Evita travamento (Timeout) no banco de dados.
         const [leadsNoPeriodo, agendamentosNoPeriodo, consultasHojeList] = await Promise.all([
-            // 1. Busca todos os Leads do período
             prisma.cliente.findMany({
                 where: { criadoEm: { gte: dataCorte } },
                 select: { id: true, nome: true, leadStatus: true, origem: true, falarHumano: true, criadoEm: true, ultimaInteracao: true, tags: true }
             }),
-            // 2. Busca Agendamentos criados no período
             prisma.agendamento.findMany({
                 where: { tratamentoId: { not: null }, criadoEm: { gte: dataCorte } },
                 include: { tratamento: true, profissionalSaude: true, cliente: true }
             }),
-            // 3. Busca Agendamentos que OCORREM hoje (Independente de quando foram criados)
             prisma.agendamento.findMany({
                 where: { tratamentoId: { not: null }, dataHora: { gte: inicioHoje, lte: fimHoje } },
                 include: { cliente: true, tratamento: true, profissionalSaude: true }
             })
         ]);
 
-        // Processamento ultra-rápido na Memória RAM
         const totalLeadsPeriodo = leadsNoPeriodo.length;
         const novosLeads = leadsNoPeriodo.filter(l => l.leadStatus === 'NOVO').length;
         const leadsQualificados = leadsNoPeriodo.filter(l => l.leadStatus === 'QUALIFICADO').length;
@@ -56,23 +53,19 @@ exports.getDashboardStats = async (req, res) => {
         const resolvidas = Math.max(0, conversasIA - transferidas);
         let txRes = conversasIA > 0 ? ((resolvidas / conversasIA) * 100).toFixed(1) : 0;
 
-        // Avisos de Atenção (Gente esperando humano)
         const atencaoNecessaria = leadsNoPeriodo
             .filter(l => l.falarHumano)
             .slice(0, 5)
             .map(lead => ({ clienteId: lead.id, clienteNome: lead.nome, motivo: 'Aguardando Atendimento Humano' }));
 
-        // Leads Recentes
         const leadsRecentes = leadsNoPeriodo
             .sort((a, b) => new Date(b.ultimaInteracao) - new Date(a.ultimaInteracao))
             .slice(0, 5);
 
-        // Consultas que acabaram de ser marcadas
         const agendamentosHojeList = agendamentosNoPeriodo
             .sort((a, b) => new Date(b.criadoEm) - new Date(a.criadoEm))
             .slice(0, 5);
 
-        // FUNIL
         const getCount = (status) => leadsNoPeriodo.filter(l => l.leadStatus === status).length;
         const graficoFunil = [
             { etapa: 'Conversas', valor: conversasIA },
@@ -82,7 +75,6 @@ exports.getDashboardStats = async (req, res) => {
             { etapa: 'Clientes', valor: getCount('CLIENTE') }
         ];
 
-        // SERVIÇOS MAIS PROCURADOS
         const servicosMap = {};
         agendamentosNoPeriodo.filter(a => a.status === 'AGENDADO').forEach(a => {
             const nome = a.tratamento?.nome || 'Desconhecido';
@@ -93,7 +85,6 @@ exports.getDashboardStats = async (req, res) => {
             .sort((a, b) => b.count - a.count)
             .slice(0, 5);
 
-        // ORIGENS
         const origensMap = {};
         leadsNoPeriodo.forEach(l => {
             const o = l.origem || 'Outros';
@@ -101,7 +92,6 @@ exports.getDashboardStats = async (req, res) => {
         });
         const origensFormatadas = Object.entries(origensMap).map(([origem, count]) => ({ origem, count }));
 
-        // EVOLUÇÃO (Gráfico de Linha Diário)
         const evolucaoMap = {};
         for (let i = dias - 1; i >= 0; i--) {
             const diaAlvo = subDays(new Date(), i);
@@ -128,7 +118,7 @@ exports.getDashboardStats = async (req, res) => {
 
     } catch (error) { 
         console.error("Erro interno ao mapear o Dashboard:", error);
-        res.status(500).json({ error: "Erro interno ao mapear o Dashboard. Detalhe: " + error.message }); 
+        res.status(500).json({ error: "Erro interno ao mapear o Dashboard." }); 
     }
 };
 
@@ -256,35 +246,53 @@ exports.getEquipe = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Erro ao buscar equipe." }); }
 };
 
+// [FIX SECURITY] Criação de Utilizador com Senha Hasheada
 exports.criarMembroEquipe = async (req, res) => {
     try {
-        const { nome, email, funcao } = req.body;
+        const { nome, email, funcao, senha } = req.body;
         
         let permissoesDefault = {};
         if(funcao === 'ADMIN') permissoesDefault = { crm: 'tudo', conversas: 'tudo', calendario: 'tudo', conf: 'tudo' };
         if(funcao === 'ATENDENTE') permissoesDefault = { crm: 'editar', conversas: 'atender', calendario: 'ver' };
         
+        // Hasheia a senha usando bcrypt (10 rounds de salt)
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(senha || "123456", salt);
+
         const newUser = await prisma.usuario.create({
             data: { 
-                nome, email, 
+                nome, 
+                email, 
+                senha: hashedPassword, 
                 funcao: funcao || 'ATENDENTE', 
                 status: 'PENDENTE',
                 permissoes: JSON.stringify(permissoesDefault)
             }
         });
         
-        await registrarAtividade(1, 'Convidou Membro', 'Equipe', `Enviou convite de acesso para ${email}`);
+        const atuadorId = req.user ? req.user.id : 1;
+        await registrarAtividade(atuadorId, 'Convidou Membro', 'Equipe', `Enviou convite de acesso para ${email}`);
 
-        res.status(201).json(newUser);
+        res.status(201).json({ id: newUser.id, nome: newUser.nome, email: newUser.email, funcao: newUser.funcao });
     } catch (error) { res.status(500).json({ error: "Erro ao criar convite de membro." }); }
 };
 
+// [FIX SECURITY] Proteção contra Mass Assignment / Escalada de Privilégios
 exports.atualizarMembroEquipe = async (req, res) => {
     try {
         const { status, funcao, permissoes } = req.body;
         const updateData = {};
+        
         if (status) updateData.status = status;
-        if (funcao) updateData.funcao = funcao;
+        
+        // Só um administrador pode promover ou despromover alguém
+        if (funcao) {
+            if (req.user && req.user.funcao !== 'ADMIN') {
+                return res.status(403).json({ error: "Apenas administradores podem alterar as funções dos utilizadores." });
+            }
+            updateData.funcao = funcao;
+        }
+        
         if (permissoes) updateData.permissoes = JSON.stringify(permissoes);
 
         const updated = await prisma.usuario.update({
@@ -292,10 +300,11 @@ exports.atualizarMembroEquipe = async (req, res) => {
             data: updateData
         });
 
-        let acaoStr = status === 'SUSPENSO' ? 'Suspendeu Acesso' : 'Alterou Permissões';
-        await registrarAtividade(1, acaoStr, 'Equipe', `Atualizou o perfil de ${updated.nome}`);
+        let acaoStr = status === 'SUSPENSO' ? 'Suspendeu Acesso' : 'Alterou Perfil';
+        const atuadorId = req.user ? req.user.id : 1;
+        await registrarAtividade(atuadorId, acaoStr, 'Equipe', `Atualizou o perfil de ${updated.nome}`);
 
-        res.status(200).json(updated);
+        res.status(200).json({ id: updated.id, nome: updated.nome, funcao: updated.funcao, status: updated.status });
     } catch (error) { res.status(500).json({ error: "Erro ao atualizar membro." }); }
 };
 
@@ -330,3 +339,4 @@ exports.getMembroPerfil = async (req, res) => {
         res.status(200).json({ usuario, stats: { leadsAtribuidos, agendamentos }, atividades });
     } catch (error) { res.status(500).json({ error: "Erro ao buscar perfil." }); }
 };
+// --- END OF FILE crmLeadsController.js ---
